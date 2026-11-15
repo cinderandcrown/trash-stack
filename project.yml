@@ -48,7 +48,9 @@ targets:
       - path: TrashStack/Assets.xcassets
       - path: TrashStack/PrivacyInfo.xcprivacy
       - path: TrashStack/Resources
+        type: folder
       - path: Config
+        type: folder
       - path: StoreKit/Configuration.storekit
     settings:
       base:

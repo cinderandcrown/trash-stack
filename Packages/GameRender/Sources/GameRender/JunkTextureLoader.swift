@@ -6,18 +6,25 @@ import UIKit
 import SpriteKit
 
 /// Resolves junk / HUD art without SpriteKit's red-X placeholder path.
-/// Prefers asset-catalog `UIImage(named:)`, then loose `Junk/*.png` in the app bundle.
+/// Prefer GameRender package resources (`Bundle.module`) so CI unit tests and the
+/// SpriteKit scene share one reliable copy of every playable texture.
 public enum JunkTextureLoader {
     public static let appBundleId = "com.cinderandcrown.trashstack"
 
     public static func image(named name: String) -> UIImage? {
+        if let img = imageFromModule(named: name) { return img }
         if let img = UIImage(named: name) { return img }
         for bundle in candidateBundles() {
             if let img = UIImage(named: name, in: bundle, compatibleWith: nil) {
                 return img
             }
-            if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: "Junk")
-                ?? bundle.url(forResource: name, withExtension: "png"),
+            for sub in ["Junk", "HUD", "Resources/Junk", "Resources/HUD"] {
+                if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
+                   let img = UIImage(contentsOfFile: url.path) {
+                    return img
+                }
+            }
+            if let url = bundle.url(forResource: name, withExtension: "png"),
                let img = UIImage(contentsOfFile: url.path) {
                 return img
             }
@@ -33,9 +40,25 @@ public enum JunkTextureLoader {
         return t
     }
 
+    /// Package-local PNGs under Resources/Junk and Resources/HUD.
+    public static func imageFromModule(named name: String) -> UIImage? {
+        let bundle = Bundle.module
+        for sub in ["Junk", "HUD"] {
+            if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
+               let img = UIImage(contentsOfFile: url.path) {
+                return img
+            }
+        }
+        if let url = bundle.url(forResource: name, withExtension: "png"),
+           let img = UIImage(contentsOfFile: url.path) {
+            return img
+        }
+        return nil
+    }
+
     public static func candidateBundles() -> [Bundle] {
-        var out: [Bundle] = []
-        var seen = Set<ObjectIdentifier>()
+        var out: [Bundle] = [Bundle.module]
+        var seen = Set<ObjectIdentifier>([ObjectIdentifier(Bundle.module)])
         func add(_ b: Bundle?) {
             guard let b else { return }
             let id = ObjectIdentifier(b)
@@ -46,7 +69,10 @@ public enum JunkTextureLoader {
         add(Bundle.main)
         add(Bundle(identifier: appBundleId))
         for b in Bundle.allBundles {
-            if b.bundleIdentifier?.contains("trashstack") == true || b.bundlePath.hasSuffix(".app") {
+            if b.bundleIdentifier?.contains("trashstack") == true
+                || b.bundleIdentifier?.contains("GameRender") == true
+                || b.bundlePath.hasSuffix(".app")
+                || b.bundlePath.contains("GameRender") {
                 add(b)
             }
         }

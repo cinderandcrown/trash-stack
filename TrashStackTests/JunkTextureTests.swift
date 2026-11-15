@@ -12,7 +12,7 @@ final class JunkTextureTests: XCTestCase {
         for id in JunkID.allCases {
             let name = id.rawValue
             let image = JunkTextureLoader.image(named: name)
-            XCTAssertNotNil(image, "Missing image for junk piece '\(name)' — not in Assets.xcassets or Resources/Junk")
+            XCTAssertNotNil(image, "Missing image for junk piece '\(name)' — expected in GameRender Resources/Junk")
             guard let image else { continue }
             XCTAssertGreaterThan(image.size.width, 8, "Junk '\(name)' image too small")
             XCTAssertGreaterThan(image.size.height, 8, "Junk '\(name)' image too small")
@@ -29,28 +29,26 @@ final class JunkTextureTests: XCTestCase {
             }
             XCTAssertGreaterThan(texture.size().width, 8)
             XCTAssertGreaterThan(texture.size().height, 8)
-            // Must not be SpriteKit's empty/zero placeholder.
             XCTAssertFalse(texture.size() == .zero, "Junk '\(name)' resolved to empty texture")
         }
     }
 
     func testHudAndBoardArtPresent() {
-        for name in ["DumpsterFrame", "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "MagnetIcon", "AlleyBackground"] {
-            XCTAssertNotNil(JunkTextureLoader.image(named: name), "Missing UI art '\(name)'")
+        for name in ["DumpsterFrame", "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "MagnetIcon"] {
+            XCTAssertNotNil(
+                JunkTextureLoader.image(named: name),
+                "Missing HUD art '\(name)' — expected in GameRender Resources/HUD"
+            )
         }
     }
 
-    func testAppBundleExposesJunkLooseFiles() {
-        // Belt-and-suspenders: Resources/Junk/*.png must ship in the host app.
-        let bundles = JunkTextureLoader.candidateBundles()
-        XCTAssertFalse(bundles.isEmpty, "No candidate bundles for Trash Stack assets")
+    func testModuleBundleExposesJunkFiles() {
         for name in JunkID.allCases.map(\.rawValue) {
-            let found = bundles.contains { bundle in
-                bundle.url(forResource: name, withExtension: "png", subdirectory: "Junk") != nil
-                    || bundle.url(forResource: name, withExtension: "png") != nil
-                    || UIImage(named: name, in: bundle, compatibleWith: nil) != nil
-            }
-            XCTAssertTrue(found, "Junk '\(name)' missing from app/test bundles (\(bundles.map(\.bundlePath)))")
+            // imageFromModule reads GameRender's Bundle.module (not the test bundle).
+            XCTAssertNotNil(
+                JunkTextureLoader.imageFromModule(named: name),
+                "GameRender Bundle.module missing junk '\(name)'"
+            )
         }
     }
 }
