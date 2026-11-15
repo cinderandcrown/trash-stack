@@ -51,11 +51,25 @@ jobs:
         working-directory: ios/App
         run: |
           set -euo pipefail
+          # Prefer 16 Pro Max; fall back to any available iPhone simulator (some runners flake).
+          DEST='platform=iOS Simulator,name=iPhone 16 Pro Max'
+          if ! xcrun simctl list devices available | grep -q 'iPhone 16 Pro Max ('; then
+            FALLBACK="$(xcrun simctl list devices available | grep -E 'iPhone .*\(' | head -n 1 | sed -E 's/^\s+//' | sed -E 's/ \([0-9A-F-]+\).*//' || true)"
+            if [ -n "$FALLBACK" ]; then
+              DEST="platform=iOS Simulator,name=$FALLBACK"
+              echo "Using fallback simulator destination: $DEST"
+            else
+              echo "No iPhone simulators available — listing devices/runtimes:" >&2
+              xcrun simctl list devices available >&2 || true
+              xcrun simctl list runtimes >&2 || true
+              exit 1
+            fi
+          fi
           xcodebuild \
             -project App.xcodeproj \
             -scheme App \
             -configuration Release \
-            -destination 'platform=iOS Simulator,name=iPhone 16 Pro Max' \
+            -destination "$DEST" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData-sim" \
             CODE_SIGNING_ALLOWED=NO \
             MARKETING_VERSION=1.0.0 \
