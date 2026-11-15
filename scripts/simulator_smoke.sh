@@ -294,13 +294,13 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
 fi
 set -e
 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
-# 55s covers stack → Big Crush (~10s) → recycle (~22s) → game over/revive (~36s).
-sleep 55
+# Continuous autoplay (~50s): recycle/press/snatch/game-over beats without board teleport spam.
+sleep 50
 kill -INT "$REC_PID" 2>/dev/null || true
 wait "$REC_PID" 2>/dev/null || true
 sleep 3
 
-# simctl recordVideo has no app audio — mux game loop + beat-synced SFX onto the track.
+# simctl recordVideo has no app audio — mux music+SFX, re-encode under ~150MB.
 AUDIO_DIR="$(cd "$(dirname "$0")/.." && pwd)/TrashStack/Resources/Audio"
 MUSIC="$AUDIO_DIR/game_loop.wav"
 CRUSH="$AUDIO_DIR/crush.wav"
@@ -308,6 +308,7 @@ RECYCLE="$AUDIO_DIR/recycle.wav"
 COMBO="$AUDIO_DIR/combo.wav"
 LOCK="$AUDIO_DIR/lock.wav"
 LEVELUP="$AUDIO_DIR/levelup.wav"
+MAGNET="$AUDIO_DIR/magnet.wav"
 if [[ -f "$VIDEO_RAW" && -f "$MUSIC" ]] && command -v ffmpeg >/dev/null 2>&1; then
   ffmpeg -y -i "$VIDEO_RAW" \
     -i "$MUSIC" \
@@ -316,33 +317,39 @@ if [[ -f "$VIDEO_RAW" && -f "$MUSIC" ]] && command -v ffmpeg >/dev/null 2>&1; th
     -i "$COMBO" \
     -i "$LOCK" \
     -i "$LEVELUP" \
+    -i "$MAGNET" \
     -filter_complex "\
-[1:a]volume=0.32,aloop=loop=-1:size=2e+09,atrim=0:55,apad=whole_dur=55[music];\
-[5:a]adelay=2000|2000,volume=0.7[lock1];\
-[5:a]adelay=5000|5000,volume=0.65[lock2];\
-[5:a]adelay=8000|8000,volume=0.65[lock3];\
-[2:a]adelay=10000|10000,volume=0.95[crush];\
-[6:a]adelay=10500|10500,volume=0.8[lvl];\
-[5:a]adelay=15000|15000,volume=0.6[lock4];\
-[5:a]adelay=18000|18000,volume=0.6[lock5];\
-[3:a]adelay=22000|22000,volume=0.9[rec];\
-[4:a]adelay=22300|22300,volume=0.85[combo];\
-[5:a]adelay=28000|28000,volume=0.55[lock6];\
-[6:a]adelay=36000|36000,volume=0.85[revive];\
-[music][lock1][lock2][lock3][crush][lvl][lock4][lock5][rec][combo][lock6][revive]amix=inputs=12:duration=first:dropout_transition=0[aout]" \
-    -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k -shortest "$VIDEO_OUT" \
+[1:a]volume=0.34,aloop=loop=-1:size=2e+09,atrim=0:50,apad=whole_dur=50[music];\
+[5:a]adelay=2500|2500,volume=0.55[lock1];\
+[5:a]adelay=7000|7000,volume=0.5[lock2];\
+[3:a]adelay=12000|12000,volume=0.85[rec1];\
+[4:a]adelay=12400|12400,volume=0.75[combo1];\
+[2:a]adelay=18000|18000,volume=0.95[press];\
+[5:a]adelay=22000|22000,volume=0.5[lock3];\
+[3:a]adelay=25000|25000,volume=0.8[rec2];\
+[7:a]adelay=28000|28000,volume=0.9[snatch];\
+[6:a]adelay=30000|30000,volume=0.75[order];\
+[5:a]adelay=36000|36000,volume=0.45[lock4];\
+[6:a]adelay=46000|46000,volume=0.85[revive];\
+[music][lock1][lock2][rec1][combo1][press][lock3][rec2][snatch][order][lock4][revive]amix=inputs=12:duration=first:dropout_transition=0[aout]" \
+    -map 0:v -map "[aout]" -c:v libx264 -pix_fmt yuv420p -crf 28 -preset veryfast -c:a aac -b:a 128k -movflags +faststart -shortest "$VIDEO_OUT" \
     >/tmp/ffmpeg-mux.log 2>&1 || {
       echo "ffmpeg mux failed; keeping silent video as gameplay-demo.mp4" >&2
       cat /tmp/ffmpeg-mux.log >&2 || true
       mv -f "$VIDEO_RAW" "$VIDEO_OUT"
     }
   rm -f "$VIDEO_RAW"
-  # Confirm an audio stream exists.
   if ! ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
     echo "Gameplay video missing audio track after mux" >&2
     exit 1
   fi
-  echo "Muxed music+SFX onto gameplay-demo.mp4" >&2
+  bytes=$(wc -c < "$VIDEO_OUT")
+  if (( bytes > 150000000 )); then
+    echo "Gameplay video too large ($bytes bytes); recompressing" >&2
+    ffmpeg -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1
+    mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
+  fi
+  echo "Muxed music+SFX onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
 else
   echo "ffmpeg/audio missing — using silent capture" >&2
   mv -f "$VIDEO_RAW" "$VIDEO_OUT"

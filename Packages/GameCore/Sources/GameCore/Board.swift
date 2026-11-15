@@ -3,16 +3,26 @@
 public struct Cell: Sendable, Equatable {
     public var piece: JunkID
     public var material: Material
+    /// Sticky goo — cannot recycle until crushed by the press.
+    public var sticky: Bool
+    public var hazard: HazardKind?
 
-    public init(piece: JunkID, material: Material) {
+    public init(
+        piece: JunkID,
+        material: Material,
+        sticky: Bool = false,
+        hazard: HazardKind? = nil
+    ) {
         self.piece = piece
         self.material = material
+        self.sticky = sticky
+        self.hazard = hazard
     }
 }
 
 public struct Board: Sendable, Equatable {
     public let config: BoardConfig
-    /// Row-major, y=0 is top (hidden+visible).
+    /// Row-major, y=0 is top (hidden + visible).
     public private(set) var cells: [[Cell?]]
 
     public init(config: BoardConfig = .dumpster) {
@@ -42,17 +52,17 @@ public struct Board: Sendable, Equatable {
         self[x, y] != nil
     }
 
-    public mutating func clearRows(_ rows: [Int]) {
-        let unique = Array(Set(rows)).sorted()
-        for r in unique.reversed() {
-            cells.remove(at: r)
-            cells.insert(Array(repeating: nil, count: config.cols), at: 0)
+    /// Crush / remove specific cells (press slam or recycle).
+    public mutating func clearCells(_ coords: [(Int, Int)]) {
+        for (x, y) in coords {
+            self[x, y] = nil
         }
     }
 
-    public func fullRows() -> [Int] {
-        (0..<config.rows).filter { y in
-            cells[y].allSatisfy { $0 != nil }
-        }
+    /// Bottom `count` visible rows (absolute board y indices).
+    public func bottomRowIndices(count: Int) -> [Int] {
+        let last = config.rows - 1
+        let first = max(config.hiddenRows, config.rows - count)
+        return Array(first...last)
     }
 }

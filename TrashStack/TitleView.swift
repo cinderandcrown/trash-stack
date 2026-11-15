@@ -25,9 +25,12 @@ struct TitleView: View {
                     .foregroundStyle(
                         LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
                     )
-                Text("Neon junk. Night shift.")
+                Text("Recycling Night Shift")
                     .font(.system(.title3, design: .rounded).weight(.semibold))
                     .foregroundStyle(Color.white.opacity(0.92))
+                Text("Match materials · slam the press · fill orders")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.72))
                 HStack(spacing: 10) {
                     CurrencyChip(kind: .scrap, value: profile.scrap)
                     CurrencyChip(kind: .gems, value: profile.gems)

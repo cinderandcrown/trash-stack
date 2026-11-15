@@ -20,11 +20,15 @@ struct GameContainerView: View {
     @State private var raccoonMood: CompactorScene.RaccoonMood = .idle
     @State private var showPause = false
     @State private var scoreAnimTask: Task<Void, Never>?
+    @State private var pressMeter = 0
+    @State private var pressMax = 8
+    @State private var snatchReady = true
+    @State private var orders: [OrderTicket] = []
 
     var body: some View {
-        // No SwiftUI AlleyBackdrop here — SpriteKit owns the playfield wash.
         VStack(spacing: 0) {
             hudBar
+            orderStrip
 
             SpriteView(scene: scene)
                 .ignoresSafeArea(edges: .horizontal)
@@ -36,39 +40,79 @@ struct GameContainerView: View {
                 gestureHint
             }
 
-            Button {
-                scene.magnet()
-                AudioService.shared.playSFX("magnet")
-                HapticsService.shared.tap()
-            } label: {
-                HStack(spacing: 8) {
-                    BundleImage(name: "MagnetIcon").frame(width: 28, height: 28)
-                    Text("MAGNET \(scene.engine.state.magnetCharge)")
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(.black)
+            HStack(spacing: 12) {
+                Button {
+                    scene.slamPress()
+                    AudioService.shared.playSFX("crush")
+                    HapticsService.shared.clear()
+                    syncHUD()
+                } label: {
+                    VStack(spacing: 4) {
+                        Text("PRESS")
+                            .font(.caption.weight(.black))
+                        ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
+                            .tint(pressMeter >= pressMax ? NeonTheme.magenta : NeonTheme.teal)
+                        Text(pressMeter >= pressMax ? "READY" : "\(pressMeter)/\(pressMax)")
+                            .font(.caption2.monospacedDigit().weight(.bold))
+                    }
+                    .foregroundStyle(pressMeter >= pressMax ? .black : .white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity)
+                    .background(
+                        LinearGradient(
+                            colors: pressMeter >= pressMax
+                                ? [NeonTheme.magenta, NeonTheme.teal]
+                                : [NeonTheme.panel, NeonTheme.panel],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(
-                    LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
-                )
-                .clipShape(Capsule())
+                .buttonStyle(.plain)
+                .disabled(pressMeter < pressMax)
+
+                Button {
+                    scene.magnet()
+                    AudioService.shared.playSFX("magnet")
+                    HapticsService.shared.tap()
+                    syncHUD()
+                } label: {
+                    HStack(spacing: 8) {
+                        BundleImage(name: raccoonAsset).frame(width: 28, height: 28)
+                        Text(snatchReady ? "SNATCH" : "USED")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(.black)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
+                    .background(
+                        LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
+                            .opacity(snatchReady ? 1 : 0.35)
+                    )
+                    .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .disabled(!snatchReady)
             }
-            .buttonStyle(.plain)
+            .padding(.horizontal, 12)
             .padding(.bottom, 8)
         }
         .background(Color(red: 0.02, green: 0.02, blue: 0.06).ignoresSafeArea())
         .onAppear(perform: bootstrap)
         .onDisappear { scoreAnimTask?.cancel(); scoreAnimTask = nil }
-        .onChange(of: hudScore) { _, newValue in
-            animateScore(to: newValue)
-        }
+        .onChange(of: hudScore) { _, newValue in animateScore(to: newValue) }
         .sheet(isPresented: $showPause) {
             ZStack {
                 NeonTheme.bgBottom.ignoresSafeArea()
                 NeonPanel {
                     VStack(spacing: 16) {
                         Text("PAUSED").font(.title2.bold()).foregroundStyle(NeonTheme.teal)
+                        Text("Match 4+ of the same material to recycle. Fill the PRESS meter, then slam.")
+                            .font(.caption)
+                            .foregroundStyle(NeonTheme.muted)
+                            .multilineTextAlignment(.center)
                         NeonButton(title: "Resume") { showPause = false }
                         NeonButton(title: "Quit to title", style: .ghost) {
                             showPause = false
@@ -105,7 +149,7 @@ struct GameContainerView: View {
                                 }
                             }
                         }
-                        NeonButton(title: "Stack out", style: .ghost) {
+                        NeonButton(title: "Clock out", style: .ghost) {
                             showContinue = false
                             Task { await finalizeOver() }
                         }
@@ -129,11 +173,7 @@ struct GameContainerView: View {
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .stroke(
-                                    LinearGradient(
-                                        colors: [NeonTheme.teal, NeonTheme.magenta],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
+                                    LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .topLeading, endPoint: .bottomTrailing),
                                     lineWidth: 1.4
                                 )
                         )
@@ -184,6 +224,29 @@ struct GameContainerView: View {
         .padding(.bottom, 4)
     }
 
+    private var orderStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(orders) { order in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(order.label)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(order.done ? NeonTheme.teal : .white)
+                            .lineLimit(1)
+                        ProgressView(value: Double(min(order.progress, order.target)), total: Double(max(1, order.target)))
+                            .tint(order.done ? NeonTheme.teal : NeonTheme.magenta)
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(Color.white.opacity(0.07))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(height: orders.isEmpty ? 0 : 44)
+    }
+
     private var raccoonAsset: String {
         switch raccoonMood {
         case .cheer: return "RaccoonCheer"
@@ -193,7 +256,7 @@ struct GameContainerView: View {
     }
 
     private var gestureHint: some View {
-        Text("Drag · Tap rotate · Swipe down soft · Flick hard · Swipe up stash")
+        Text("Drag · Tap rotate · Flick drop · PRESS when ready · SNATCH once")
             .font(.caption2.weight(.semibold))
             .foregroundStyle(NeonTheme.muted)
             .padding(.vertical, 6)
@@ -209,7 +272,7 @@ struct GameContainerView: View {
             }
             HStack {
                 pad("Soft") { scene.soft() }
-                pad("HARD") { scene.hard(); AudioService.shared.playSFX("lock"); HapticsService.shared.lock() }
+                pad("DROP") { scene.hard(); AudioService.shared.playSFX("lock"); HapticsService.shared.lock() }
             }
         }
         .padding(.horizontal, 10)
@@ -228,6 +291,16 @@ struct GameContainerView: View {
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(NeonTheme.teal.opacity(0.35), lineWidth: 1))
         }
         .buttonStyle(.plain)
+    }
+
+    private func syncHUD() {
+        hudScore = scene.engine.state.score
+        hudLevel = scene.engine.state.level
+        pressMeter = scene.engine.state.pressMeter
+        pressMax = scene.engine.state.pressMeterMax
+        snatchReady = scene.engine.state.snatchAvailable
+        orders = scene.engine.state.orders
+        raccoonMood = scene.raccoonMood
     }
 
     private func animateScore(to target: Int) {
@@ -253,52 +326,46 @@ struct GameContainerView: View {
         scene.configureForProMotion(false)
         let shot = UserDefaults.standard.string(forKey: "trashStack.shotActive")
             ?? PlayerProfile.shotArgument()
-        // Still-frame evidence shots must NOT autoplay — autoplay erases distinct boards.
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
         scene.autoplay = auto
-        scene.onGameOver = { [weak scene] state in
+        scene.onGameOver = { state in
             Task { @MainActor in
                 hudScore = state.score
                 raccoonMood = .panic
                 await handleGameOver(state)
             }
-            _ = scene
         }
         scene.onEvents = { [weak scene] events in
             Task { @MainActor in
                 guard let scene else { return }
-                hudScore = scene.engine.state.score
-                hudLevel = scene.engine.state.level
-                raccoonMood = scene.raccoonMood
+                syncHUD()
                 for e in events {
                     switch e {
                     case .locked:
                         AudioService.shared.playSFX("lock")
                         HapticsService.shared.lock()
-                    case .cleared(let rows, _, _):
-                        AudioService.shared.playSFX("crush")
-                        HapticsService.shared.clear()
-                        if rows.count >= 3 {
-                            AudioService.shared.playSFX("levelup", pitch: 1.1)
-                        }
                     case .recycled:
                         let pitch = 1.0 + Double(scene.engine.state.combo) * 0.08
                         AudioService.shared.playSFX("recycle", pitch: pitch)
                         AudioService.shared.playSFX("combo", pitch: pitch)
                         HapticsService.shared.recycle()
+                    case .pressed:
+                        AudioService.shared.playSFX("crush")
+                        HapticsService.shared.clear()
+                    case .orderCompleted:
+                        AudioService.shared.playSFX("levelup")
+                    case .snatchUsed:
+                        AudioService.shared.playSFX("magnet")
                     case .leveledUp:
                         AudioService.shared.playSFX("levelup")
-                    case .magnetUsed:
-                        AudioService.shared.playSFX("magnet")
                     default: break
                     }
                 }
                 UserDefaults.standard.set(scene.measuredFPS, forKey: "trashStack.measuredFPS")
             }
         }
-        // Apply shot after SpriteView has sized the scene (didMove/didChangeSize).
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            if let shot, ["game", "gameplay", "compactor", "recycle", "revive", "demo", "autoplay"].contains(shot) {
+            if let shot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay"].contains(shot) {
                 scene.applyShot(shot)
                 if shot == "demo" || shot == "autoplay" {
                     scene.autoplay = true
@@ -307,7 +374,6 @@ struct GameContainerView: View {
                         Task { @MainActor in
                             raccoonMood = .panic
                             showContinue = true
-                            // Auto-revive for CI video beat, then keep playing briefly.
                             try? await Task.sleep(nanoseconds: 2_200_000_000)
                             showContinue = false
                             continued = true
@@ -322,15 +388,12 @@ struct GameContainerView: View {
                     raccoonMood = .panic
                 }
             }
-            hudScore = scene.engine.state.score
+            syncHUD()
             displayScore = scene.engine.state.score
-            hudLevel = scene.engine.state.level
-            raccoonMood = scene.raccoonMood
             AudioService.shared.playMusic("game_loop")
         }
-        hudScore = scene.engine.state.score
+        syncHUD()
         displayScore = scene.engine.state.score
-        hudLevel = scene.engine.state.level
     }
 
     @MainActor
@@ -348,6 +411,11 @@ struct GameContainerView: View {
         guard let state = lastState ?? Optional(scene.engine.state) else { return }
         profile.addScrap(state.runScrap)
         profile.battlePassXP += state.lines * 2 + 5
+        // Order rewards
+        for order in state.orders where order.done {
+            profile.addGems(2)
+            profile.battlePassXP += 15
+        }
         if state.score > profile.highScore {
             profile.highScore = state.score
         }

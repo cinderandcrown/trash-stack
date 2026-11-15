@@ -1,6 +1,6 @@
 // Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 
-/// Material recycle: 3+ connected same-material cells pop (signature Trash Stack mechanic).
+/// Material recycle: 4+ connected same-material cells (sticky excluded) get recycled.
 public struct RecycleGroup: Sendable, Equatable {
     public let material: Material
     public let cells: [(Int, Int)]
@@ -15,13 +15,15 @@ public struct RecycleGroup: Sendable, Equatable {
 }
 
 public enum RecycleMatcher {
-    public static func findGroups(on board: Board, minSize: Int = 3) -> [RecycleGroup] {
+    public static let defaultMinSize = 4
+
+    public static func findGroups(on board: Board, minSize: Int = defaultMinSize) -> [RecycleGroup] {
         var seen = Set<String>()
         var groups: [RecycleGroup] = []
         for y in 0..<board.config.rows {
             for x in 0..<board.config.cols {
                 let key = "\(x),\(y)"
-                guard !seen.contains(key), let cell = board[x, y] else { continue }
+                guard !seen.contains(key), let cell = board[x, y], !cell.sticky else { continue }
                 var stack = [(x, y)]
                 var cluster: [(Int, Int)] = []
                 seen.insert(key)
@@ -30,7 +32,8 @@ public enum RecycleMatcher {
                     for (nx, ny) in [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)] {
                         let nk = "\(nx),\(ny)"
                         guard !seen.contains(nk), board.inBounds(x: nx, y: ny),
-                              let n = board[nx, ny], n.material == cell.material else { continue }
+                              let n = board[nx, ny], !n.sticky,
+                              n.material == cell.material else { continue }
                         seen.insert(nk)
                         stack.append((nx, ny))
                     }

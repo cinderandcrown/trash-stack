@@ -2,7 +2,13 @@
 
 Steam-neon-punk style: magenta + teal neon, rainy alley, wet metal.
 
-- Junk piece sprites live in `TrashStack/Assets.xcassets/Junk.spriteatlas` (baked rim light).
-- Environment / mascot: `AlleyBackground`, `DumpsterFrame`, `RaccoonIdle|Cheer|Panic`, `JunkyardScene`.
-- Magpie `Assets` did not yet contain Trash Panda production art at time of import; new sprites were generated to match the intended steam-neon-punk Trash Panda look. Prefer swapping in official Magpie/Trash Panda atlas frames when those land.
-- Glow is baked into textures. Runtime FX uses solid flashes/sparks/shake — no per-node glow or heavy shaders (jetsam-safe).
+## Gameplay
+
+- Junk item sprites in GameRender `Resources/Junk` + app asset catalog (baked rim light). Texture keys map from item ids (`bottle` → `tube.png`, `plank` → `scrap.png`, `bentPipe` → `bag.png`, `fridge` → `box.png`).
+- FX: `SparkTeal`, `SparkMagenta`, `SparkGold`, `DebrisMetal`, `DebrisNeon` — baked alpha sparks/debris (no flat color squares).
+- Environment / mascot: `AlleyBackground`, `DumpsterFrame`, `RaccoonIdle|Cheer|Panic`, `JunkyardScene`, `LaunchLogo`.
+- Runtime FX uses textured sparks + short flashes/shake — jetsam-safe.
+
+## Design
+
+See `docs/DESIGN.md` for Recycling Night Shift rules.

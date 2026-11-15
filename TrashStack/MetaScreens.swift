@@ -45,7 +45,9 @@ struct MetaChromeHeader: View {
                 .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 16)
-        .padding(.top, 4)
+        // Extra top pad so Close clears Dynamic Island / status bar even if chrome sits in a full-bleed ZStack.
+        .padding(.top, 12)
+        .safeAreaPadding(.top, 12)
     }
 }
 
@@ -231,7 +233,7 @@ struct SeasonPassView: View {
                     }
                 }
             }
-            .frame(width: 84)
+            .frame(width: 96)
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 14)
@@ -246,19 +248,38 @@ struct SeasonPassView: View {
     }
 
     private func rewardThumb(_ reward: SeasonReward?, premium: Bool) -> some View {
-        VStack(spacing: 4) {
-            BundleImage(name: premium ? "RaccoonCheer" : "ScrapIcon")
+        let art = rewardArt(reward, premium: premium)
+        return VStack(spacing: 4) {
+            Text(premium ? "PREMIUM" : "FREE")
+                .font(.system(size: 8, weight: .black))
+                .foregroundStyle(premium ? NeonTheme.magenta : NeonTheme.teal)
+            BundleImage(name: art)
                 .scaledToFit()
-                .frame(width: 36, height: 36)
+                .frame(width: 44, height: 44)
             Text(shortLabel(reward))
                 .font(.caption2.weight(.bold))
                 .foregroundStyle(premium ? NeonTheme.magenta : NeonTheme.teal)
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
         }
-        .frame(width: 72, height: 64)
-        .background(Color.white.opacity(0.05))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .frame(width: 88, height: 92)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(premium ? NeonTheme.magenta.opacity(0.5) : NeonTheme.teal.opacity(0.45), lineWidth: 1)
+                )
+        )
+    }
+
+    private func rewardArt(_ reward: SeasonReward?, premium: Bool) -> String {
+        guard let reward else { return premium ? "GemIcon" : "ScrapIcon" }
+        if reward.legendary == true { return "RaccoonCheer" }
+        if reward.outfit != nil { return "RaccoonIdle" }
+        if reward.gems != nil { return "GemIcon" }
+        if reward.scrap != nil { return "ScrapIcon" }
+        return premium ? "RaccoonCheer" : "ScrapIcon"
     }
 
     private func rewardCard(_ season: SeasonConfig) -> some View {
@@ -376,8 +397,9 @@ struct QuestsView: View {
                 MetaChromeHeader(title: "QUESTS") { screen = .title }
                 NeonPanel(title: "Tonight's board") {
                     questRow("Crush 20 rows", "⚙ 120")
-                    questRow("Recycle 5 metal stacks", "◆ 3")
-                    questRow("Survive to level 5", "⚙ 80")
+                    questRow("Recycle 20 metal cells", "◆ 3")
+                    questRow("Slam the press twice", "⚙ 80")
+                    questRow("Complete a 3× recycle chain", "◆ 5")
                 }
                 .padding(.horizontal, 16)
                 Spacer()
@@ -407,6 +429,12 @@ struct SettingsView: View {
             AlleyBackdrop()
             VStack(spacing: 12) {
                 MetaChromeHeader(title: "SETTINGS") { screen = .title }
+                NeonPanel(title: "How to play") {
+                    Text("Recycle 4+ touching cells of the same material. Fill the PRESS meter, then slam to crush the bottom rows into Scrap. Complete order tickets. Snatch once per run.")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.8))
+                }
+                .padding(.horizontal, 16)
                 NeonPanel {
                     Toggle(isOn: Binding(
                         get: { !muted },

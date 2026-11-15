@@ -1,12 +1,12 @@
 // Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 
-/// 7-bag style RNG over the junk catalog (not a branded tetromino bag).
+/// Weighted junk-item bag (fridge rare). Deterministic from seed.
 public struct RNGBag: Sendable {
+    private var state: UInt64
     private var bag: [JunkID] = []
-    private var rng: SeededGenerator
 
-    public init(seed: UInt64 = 0xC1A55) {
-        self.rng = SeededGenerator(seed: seed)
+    public init(seed: UInt64) {
+        state = seed == 0 ? 0xC0FFEE : seed
         refill()
     }
 
@@ -16,35 +16,23 @@ public struct RNGBag: Sendable {
     }
 
     public mutating func peekQueue(_ n: Int) -> [JunkID] {
-        var copy = self
-        return (0..<n).map { _ in copy.next() }
+        while bag.count < n { refill() }
+        return Array(bag.suffix(n).reversed())
     }
 
     private mutating func refill() {
-        bag = JunkID.allCases
-        for i in stride(from: bag.count - 1, through: 1, by: -1) {
-            let j = Int(rng.next() % UInt64(i + 1))
-            bag.swapAt(i, j)
+        var pool: [JunkID] = []
+        for def in JunkCatalog.all {
+            for _ in 0..<def.weight {
+                pool.append(def.id)
+            }
         }
-    }
-}
-
-/// Simple xorshift64* for deterministic tests.
-public struct SeededGenerator: Sendable {
-    private var state: UInt64
-
-    public init(seed: UInt64) {
-        self.state = seed == 0 ? 0xDEADBEEF : seed
-    }
-
-    public mutating func next() -> UInt64 {
-        state ^= state << 13
-        state ^= state >> 7
-        state ^= state << 17
-        return state
-    }
-
-    public mutating func unit() -> Double {
-        Double(next() % 10_000) / 10_000.0
+        // Fisher–Yates with LCG
+        for i in stride(from: pool.count - 1, through: 1, by: -1) {
+            state = state &* 636_413_622_384_679_3005 &+ 1
+            let j = Int(state % UInt64(i + 1))
+            pool.swapAt(i, j)
+        }
+        bag.append(contentsOf: pool)
     }
 }

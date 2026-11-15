@@ -8,45 +8,75 @@ struct TutorialView: View {
     @EnvironmentObject var profile: PlayerProfile
     @State private var step = 0
 
-    private let steps: [(title: String, body: String)] = [
-        ("Drag to shove junk", "Slide left or right to steer the falling scrap across the dumpster."),
-        ("Tap to twist", "Tap once to rotate. Swipe down to soft-drop. Flick down to slam."),
-        ("Crush & recycle", "Fill a row for a hydraulic crush. Match 3+ of the same material to recycle. Swipe up to stash."),
+    private let steps: [(title: String, body: String, cta: String)] = [
+        (
+            "Drop junk items",
+            "Drag cans, bottles, pipes, and crates into the 8×14 dumpster. Tap to rotate bent pieces. This is a night-shift recycle bin — not a puzzle of letter blocks.",
+            "Got it"
+        ),
+        (
+            "Recycle materials",
+            "When 4 or more touching cells share a material (metal, plastic, glass, paper), they get sucked into the recycle chute. Chains can cascade when junk settles.",
+            "Next"
+        ),
+        (
+            "Slam the PRESS",
+            "Placing items fills the PRESS meter. When it’s full, tap PRESS to crush the bottom two rows into scrap. That’s your timed power move — then finish order tickets and use Snatch once.",
+            "Start shift"
+        ),
     ]
 
     var body: some View {
         ZStack {
             AlleyBackdrop()
-            NeonPanel {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("NIGHT SHIFT 101")
-                        .font(.system(.title2, design: .rounded).weight(.black))
-                        .foregroundStyle(NeonTheme.teal)
-                    Text("Step \(step + 1) of 3")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(NeonTheme.magenta)
-                    Text(steps[step].title)
-                        .font(.system(.title3, design: .rounded).weight(.bold))
-                        .foregroundStyle(.white)
-                    Text(steps[step].body)
-                        .foregroundStyle(NeonTheme.muted)
-                    BundleImage(name: "RaccoonIdle")
-                        .scaledToFit()
-                        .frame(height: 110)
-                        .frame(maxWidth: .infinity)
-                    NeonButton(title: step < 2 ? "Next" : "Into the alley") {
-                        if step < 2 {
-                            step += 1
-                        } else {
-                            profile.tutorialDone = true
-                            profile.persist()
-                            AudioService.shared.playMusic("game_loop")
-                            screen = .game
-                        }
+            VStack(spacing: 20) {
+                Text("NIGHT SHIFT INTRO")
+                    .font(.system(.title2, design: .rounded).weight(.black))
+                    .foregroundStyle(NeonTheme.teal)
+                    .padding(.top, 12)
+
+                BundleImage(name: step == 2 ? "RaccoonCheer" : "RaccoonIdle")
+                    .scaledToFit()
+                    .frame(height: 120)
+
+                NeonPanel {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(steps[step].title)
+                            .font(.title3.weight(.black))
+                            .foregroundStyle(.white)
+                        Text(steps[step].body)
+                            .foregroundStyle(Color.white.opacity(0.82))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Step \(step + 1) of \(steps.count)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.magenta)
                     }
                 }
+                .padding(.horizontal, 16)
+
+                NeonButton(title: steps[step].cta) {
+                    if step < steps.count - 1 {
+                        step += 1
+                    } else {
+                        profile.tutorialDone = true
+                        profile.persist()
+                        screen = .game
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                Button("Skip") {
+                    profile.tutorialDone = true
+                    profile.persist()
+                    screen = .title
+                }
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(NeonTheme.muted)
+
+                Spacer(minLength: 0)
             }
-            .padding(24)
+            .safeAreaPadding(.top, 16)
+            .padding(.bottom, 12)
         }
     }
 }

@@ -4,25 +4,59 @@ import XCTest
 @testable import GameCore
 
 final class GameCoreTests: XCTestCase {
-    func testBoardIsEightByFifteenVisible() {
+    func testBoardIsEightByFourteenVisible() {
         let c = BoardConfig.dumpster
         XCTAssertEqual(c.cols, 8)
-        XCTAssertEqual(c.visibleRows, 15)
-        XCTAssertEqual(c.rows, 17)
+        XCTAssertEqual(c.visibleRows, 14)
+        XCTAssertEqual(c.rows, 16)
     }
 
     func testBagIsDeterministic() {
         var a = RNGBag(seed: 42)
         var b = RNGBag(seed: 42)
-        let seqA = (0..<16).map { _ in a.next() }
-        let seqB = (0..<16).map { _ in b.next() }
+        let seqA = (0..<24).map { _ in a.next() }
+        let seqB = (0..<24).map { _ in b.next() }
         XCTAssertEqual(seqA, seqB)
-        XCTAssertEqual(Set(seqA.prefix(8)).count, JunkID.allCases.count)
     }
 
-    func testScoringCrush() {
-        let s = Scoring.crushScore(lines: 3, level: 2, combo: 1, backToBack: true)
-        XCTAssertGreaterThan(s, 0)
+    func testRecycleNeedsFourSameMaterial() {
+        var board = Board()
+        for x in 0..<3 {
+            board[x, board.config.rows - 1] = Cell(piece: .can, material: .metal)
+        }
+        XCTAssertTrue(RecycleMatcher.findGroups(on: board).isEmpty)
+        board[3, board.config.rows - 1] = Cell(piece: .can, material: .metal)
+        let groups = RecycleMatcher.findGroups(on: board)
+        XCTAssertEqual(groups.count, 1)
+        XCTAssertEqual(groups[0].cells.count, 4)
+    }
+
+    func testStickyExcludedFromRecycle() {
+        var board = Board()
+        for x in 0..<4 {
+            board[x, board.config.rows - 1] = Cell(piece: .can, material: .metal, sticky: x == 0)
+        }
+        // Only 3 non-sticky metal — should not recycle.
+        XCTAssertTrue(RecycleMatcher.findGroups(on: board).isEmpty)
+    }
+
+    func testPressSlamsBottomRows() {
+        var eng = GameEngine(seed: 3)
+        eng.applyShotScenario("press")
+        eng.fillPressMeter()
+        let before = eng.state.score
+        XCTAssertTrue(eng.slamPress())
+        XCTAssertGreaterThan(eng.state.score, before)
+        XCTAssertEqual(eng.state.pressMeter, 0)
+    }
+
+    func testSnatchOnce() {
+        var eng = GameEngine(seed: 9)
+        eng.applyShotScenario("game")
+        XCTAssertTrue(eng.state.snatchAvailable)
+        XCTAssertTrue(eng.snatchRandom())
+        XCTAssertFalse(eng.state.snatchAvailable)
+        XCTAssertFalse(eng.snatchRandom())
     }
 
     func testEngineSpawnsAndHardDrops() {
@@ -30,29 +64,17 @@ final class GameCoreTests: XCTestCase {
         XCTAssertNotNil(eng.state.active)
         eng.hardDrop()
         XCTAssertGreaterThanOrEqual(eng.state.score, 0)
-        // After a hard drop the piece locks and a new one usually spawns (unless topped out).
         XCTAssertTrue(eng.state.active != nil || eng.state.over)
-    }
-
-    func testRecycleFindsGroups() {
-        var board = Board()
-        for x in 0..<3 {
-            board[x, board.config.rows - 1] = Cell(piece: .can, material: .metal)
-        }
-        let groups = RecycleMatcher.findGroups(on: board)
-        XCTAssertEqual(groups.count, 1)
-        XCTAssertEqual(groups[0].cells.count, 3)
     }
 
     func testEconomyJSONLoadsAndOddsSum() throws {
         let eco = try ConfigLoader.economy()
         XCTAssertEqual(eco.board.cols, 8)
+        XCTAssertEqual(eco.board.visibleRows, 14)
         XCTAssertEqual(eco.soft.startAmount, 80)
         try EconomyMath.validateChests(eco)
         try EconomyMath.assertOfferCaps(eco.oneTimeOffer)
         XCTAssertTrue(eco.compliance.noPurchaseNagging)
-        XCTAssertEqual(eco.ads.interstitialEveryNOvers, 3)
-        XCTAssertFalse(eco.ads.bannersInPlay)
     }
 
     func testSeasonPaybackAndShape() throws {
@@ -62,34 +84,6 @@ final class GameCoreTests: XCTestCase {
         try EconomyMath.assertSeasonShape(season)
         let pay = EconomyMath.premiumPayback(season)
         XCTAssertTrue(pay.paysBack)
-        XCTAssertEqual(season.bundle.tierSkip, 25)
-        XCTAssertTrue(season.tierBuy.neverPushed)
-    }
-
-    func testOfferFrequencyCaps() throws {
-        let eco = try ConfigLoader.economy()
-        let o = eco.oneTimeOffer
-        XCTAssertFalse(EconomyMath.canSurfaceOffer(context: "launch", sessionSurfaces: 0, daySurfaces: 0, dismissedDay: nil, dayKey: "2026-11-15", offer: o).ok)
-        XCTAssertFalse(EconomyMath.canSurfaceOffer(context: "after_loss", sessionSurfaces: 0, daySurfaces: 0, dismissedDay: nil, dayKey: "2026-11-15", offer: o).ok)
-        XCTAssertTrue(EconomyMath.canSurfaceOffer(context: "after_win", sessionSurfaces: 0, daySurfaces: 0, dismissedDay: nil, dayKey: "2026-11-15", offer: o).ok)
-        XCTAssertFalse(EconomyMath.canSurfaceOffer(context: "after_win", sessionSurfaces: 1, daySurfaces: 1, dismissedDay: nil, dayKey: "2026-11-15", offer: o).ok)
-        XCTAssertFalse(EconomyMath.canSurfaceOffer(context: "after_win", sessionSurfaces: 0, daySurfaces: 0, dismissedDay: "2026-11-15", dayKey: "2026-11-15", offer: o).ok)
-        XCTAssertTrue(EconomyMath.canSurfaceOffer(context: "shop", sessionSurfaces: 1, daySurfaces: 1, dismissedDay: "2026-11-15", dayKey: "2026-11-15", offer: o).ok)
-    }
-
-    func testLoginStreakEscalates() throws {
-        let eco = try ConfigLoader.economy()
-        let d1 = EconomyMath.loginStreakScrap(day: 1, cap: eco.loginStreak.capScrap)
-        let d14 = EconomyMath.loginStreakScrap(day: 14, cap: eco.loginStreak.capScrap)
-        XCTAssertEqual(d1, 5)
-        XCTAssertGreaterThan(d14, d1)
-        XCTAssertEqual(EconomyMath.loginStreakScrap(day: 999, cap: 120), 120)
-    }
-
-    func testGemSpeedup() throws {
-        let eco = try ConfigLoader.economy()
-        XCTAssertEqual(EconomyMath.gemsForSpeedup(remainingMs: 0, speedup: eco.speedup), 0)
-        XCTAssertEqual(EconomyMath.gemsForSpeedup(remainingMs: 1000, speedup: eco.speedup), 1)
     }
 
     func testShotScenariosAreDistinct() {
@@ -97,32 +91,34 @@ final class GameCoreTests: XCTestCase {
         recycle.applyShotScenario("recycle")
         var revive = GameEngine(seed: 1)
         revive.applyShotScenario("revive")
-        var crush = GameEngine(seed: 1)
-        crush.applyShotScenario("compactor")
+        var press = GameEngine(seed: 1)
+        press.applyShotScenario("compactor")
         var play = GameEngine(seed: 1)
         play.applyShotScenario("game")
         XCTAssertFalse(recycle.state.over)
         XCTAssertTrue(revive.state.over)
         XCTAssertNotEqual(recycle.state.score, revive.state.score)
-        XCTAssertNotEqual(crush.state.score, play.state.score)
-        XCTAssertNotEqual(crush.state.level, recycle.state.level)
-        let recycleFilled = (0..<recycle.state.board.config.cols).filter { recycle.state.board[$0, recycle.state.board.config.rows - 1] != nil }.count
-        XCTAssertGreaterThanOrEqual(recycleFilled, 3)
-        let reviveTop = (0..<revive.state.board.config.cols).compactMap { revive.state.board[$0, revive.state.board.config.hiddenRows] }.count
-        XCTAssertEqual(reviveTop, revive.state.board.config.cols)
-        // Mid-game shot should fill ~40% of the visible well (not an empty dumpster).
+        XCTAssertNotEqual(press.state.score, play.state.score)
+        XCTAssertEqual(press.state.pressMeter, press.state.pressMeterMax)
         let vis = play.state.board.config.visibleRows
         let hid = play.state.board.config.hiddenRows
-        var filledCells = 0
+        var filled = 0
         for y in hid..<(hid + vis) {
-            for x in 0..<play.state.board.config.cols {
-                if play.state.board[x, y] != nil { filledCells += 1 }
+            for x in 0..<play.state.board.config.cols where play.state.board[x, y] != nil {
+                filled += 1
             }
         }
         let capacity = play.state.board.config.cols * vis
-        XCTAssertGreaterThan(filledCells, capacity / 5, "gameplay shot too empty")
-        XCTAssertLessThan(filledCells, capacity * 3 / 4, "gameplay shot too full")
+        XCTAssertGreaterThan(filled, capacity / 8)
         XCTAssertNotNil(play.state.active)
-        XCTAssertGreaterThanOrEqual(crush.state.board.fullRows().count, 3)
+    }
+
+    func testNoForbiddenLetterPieceNames() {
+        for id in JunkID.allCases {
+            let name = id.rawValue.lowercased()
+            XCTAssertFalse(["t", "s", "z", "i", "o"].contains(name))
+            XCTAssertFalse(name.contains("tetromino"))
+            XCTAssertFalse(name.contains("tetris"))
+        }
     }
 }

@@ -1,6 +1,8 @@
 # Trash Stack (Native iOS)
 
-Neon junk puzzle by **Cinder and Crown LLC**.
+**Recycling Night Shift** — neon dumpster game by **Cinder and Crown LLC**.
+
+Match materials, slam the press, fill order tickets. See `docs/DESIGN.md`.
 
 This branch is a **native Swift** rewrite (SpriteKit + SwiftUI). The Capacitor/web packaging work stays on PR #1 as reference and is **not** merged.
 

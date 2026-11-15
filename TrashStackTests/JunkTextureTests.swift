@@ -6,21 +6,21 @@ import SpriteKit
 import GameCore
 @testable import GameRender
 
-/// Fails CI if any junk piece would draw SpriteKit's red-X missing-texture placeholder.
+/// Fails CI if any junk item would draw SpriteKit's red-X missing-texture placeholder.
 final class JunkTextureTests: XCTestCase {
     func testEveryJunkPieceHasBundleImage() {
-        for id in JunkID.allCases {
-            let name = id.rawValue
+        for def in JunkCatalog.all {
+            let name = def.textureName
             let image = JunkTextureLoader.image(named: name)
-            XCTAssertNotNil(image, "Missing image for junk piece '\(name)' — expected in GameRender Resources/Junk")
+            XCTAssertNotNil(image, "Missing image for junk '\(def.id.rawValue)' texture '\(name)'")
             guard let image else { continue }
-            XCTAssertGreaterThan(image.size.width, 8, "Junk '\(name)' image too small")
-            XCTAssertGreaterThan(image.size.height, 8, "Junk '\(name)' image too small")
+            XCTAssertGreaterThan(image.size.width, 8)
+            XCTAssertGreaterThan(image.size.height, 8)
         }
     }
 
     func testSKTextureFromUIImageIsNotPlaceholder() {
-        let names = JunkID.allCases.map(\.rawValue)
+        let names = JunkCatalog.all.map(\.textureName)
         XCTAssertEqual(names, CompactorScene.requiredJunkTextureNames)
         for name in names {
             guard let texture = JunkTextureLoader.texture(named: name) else {
@@ -29,25 +29,23 @@ final class JunkTextureTests: XCTestCase {
             }
             XCTAssertGreaterThan(texture.size().width, 8)
             XCTAssertGreaterThan(texture.size().height, 8)
-            XCTAssertFalse(texture.size() == .zero, "Junk '\(name)' resolved to empty texture")
         }
     }
 
     func testHudAndBoardArtPresent() {
-        for name in ["DumpsterFrame", "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "MagnetIcon"] {
+        for name in ["DumpsterFrame", "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "MagnetIcon", "SparkTeal"] {
             XCTAssertNotNil(
                 JunkTextureLoader.image(named: name),
-                "Missing HUD art '\(name)' — expected in GameRender Resources/HUD"
+                "Missing HUD art '\(name)'"
             )
         }
     }
 
     func testModuleBundleExposesJunkFiles() {
-        for name in JunkID.allCases.map(\.rawValue) {
-            // imageFromModule reads GameRender's Bundle.module (not the test bundle).
+        for def in JunkCatalog.all {
             XCTAssertNotNil(
-                JunkTextureLoader.imageFromModule(named: name),
-                "GameRender Bundle.module missing junk '\(name)'"
+                JunkTextureLoader.imageFromModule(named: def.textureName),
+                "GameRender Bundle.module missing '\(def.textureName)'"
             )
         }
     }

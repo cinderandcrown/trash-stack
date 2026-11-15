@@ -88,15 +88,15 @@ struct RootView: View {
         case "demo", "autoplay":
             screen = .game
         case "mkt-play":
-            marketingCaption = "Crush neon junk in a rainy alley"
+            marketingCaption = "Night shift in a neon dumpster"
             UserDefaults.standard.set("game", forKey: "trashStack.shotActive")
             screen = .game
         case "mkt-crush":
-            marketingCaption = "Hydraulic Big Crush clears"
+            marketingCaption = "Slam the PRESS for scrap"
             UserDefaults.standard.set("compactor", forKey: "trashStack.shotActive")
             screen = .game
         case "mkt-recycle":
-            marketingCaption = "Recycle matching materials"
+            marketingCaption = "Recycle 4+ matching materials"
             UserDefaults.standard.set("recycle", forKey: "trashStack.shotActive")
             screen = .game
         case "mkt-base":

@@ -6,7 +6,7 @@ import GameCore
 final class SmokeTests: XCTestCase {
     func testBoardIdentity() {
         XCTAssertEqual(BoardConfig.dumpster.cols, 8)
-        XCTAssertEqual(BoardConfig.dumpster.visibleRows, 15)
+        XCTAssertEqual(BoardConfig.dumpster.visibleRows, 14)
     }
 
     func testEconomyResourceLoads() throws {

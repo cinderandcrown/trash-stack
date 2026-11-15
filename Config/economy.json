@@ -500,7 +500,7 @@
   },
   "board": {
     "cols": 8,
-    "visibleRows": 15,
+    "visibleRows": 14,
     "hiddenRows": 2
   },
   "removeAds": {

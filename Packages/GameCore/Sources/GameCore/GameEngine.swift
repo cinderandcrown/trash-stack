@@ -3,11 +3,40 @@
 public enum GameEvent: Sendable, Equatable {
     case spawned(JunkID)
     case locked
-    case cleared(rows: [Int], score: Int, scrap: Int)
-    case recycled(groups: Int, score: Int, scrap: Int)
-    case magnetUsed
+    case recycled(groups: Int, cells: Int, score: Int, scrap: Int, material: Material)
+    case pressed(cells: Int, score: Int, scrap: Int)
+    case orderCompleted(OrderTicket)
+    case snatchUsed
+    case magnetUsed // legacy alias unused
     case gameOver
     case leveledUp(Int)
+}
+
+public struct OrderTicket: Sendable, Equatable, Identifiable {
+    public var id: String
+    public var label: String
+    public var kind: Kind
+    public var target: Int
+    public var progress: Int
+    public var done: Bool { progress >= target }
+
+    public enum Kind: String, Sendable, Equatable {
+        case recycleMaterial
+        case recycleChain
+        case pressSlam
+        case recycleAny
+    }
+
+    public var material: Material?
+
+    public init(id: String, label: String, kind: Kind, target: Int, progress: Int = 0, material: Material? = nil) {
+        self.id = id
+        self.label = label
+        self.kind = kind
+        self.target = target
+        self.progress = progress
+        self.material = material
+    }
 }
 
 public struct GameState: Sendable, Equatable {
@@ -17,13 +46,18 @@ public struct GameState: Sendable, Equatable {
     public var holdUsed: Bool
     public var queue: [JunkID]
     public var score: Int
-    public var lines: Int
+    public var lines: Int // recycled clusters (legacy field name kept for profile XP hooks)
     public var level: Int
     public var combo: Int
     public var backToBack: Bool
-    public var magnetCharge: Int
+    public var magnetCharge: Int // unused; snatch replaces
+    public var pressMeter: Int
+    public var pressMeterMax: Int
+    public var snatchAvailable: Bool
+    public var orders: [OrderTicket]
     public var over: Bool
     public var runScrap: Int
+    public var recycledByMaterial: [Material: Int]
 
     public init(config: BoardConfig = .dumpster) {
         board = Board(config: config)
@@ -37,21 +71,28 @@ public struct GameState: Sendable, Equatable {
         combo = 0
         backToBack = false
         magnetCharge = 0
+        pressMeter = 0
+        pressMeterMax = 8
+        snatchAvailable = true
+        orders = []
         over = false
         runScrap = 0
+        recycledByMaterial = [:]
     }
 }
 
-/// Pure game rules — no SpriteKit / UIKit.
+/// Pure Recycling Night Shift rules — no SpriteKit / UIKit.
 public struct GameEngine: Sendable {
     public private(set) var state: GameState
     private var bag: RNGBag
     public var events: [GameEvent] = []
+    private var placeCount = 0
 
     public init(seed: UInt64 = 0xC1A55, config: BoardConfig = .dumpster) {
         state = GameState(config: config)
         bag = RNGBag(seed: seed)
         fillQueue()
+        seedOrders(level: 1)
         spawn()
     }
 
@@ -59,13 +100,21 @@ public struct GameEngine: Sendable {
         state = GameState(config: state.board.config)
         bag = RNGBag(seed: seed)
         events = []
+        placeCount = 0
         fillQueue()
+        seedOrders(level: 1)
         spawn()
     }
 
-    /// Clear game-over and respawn for a one-time revive.
     public mutating func revive() {
         state.over = false
+        // Clear top lip so the run can continue.
+        let hid = state.board.config.hiddenRows
+        for y in hid..<(hid + 3) {
+            for x in 0..<state.board.config.cols {
+                state.board[x, y] = nil
+            }
+        }
         if state.active == nil {
             _ = spawn()
         }
@@ -74,6 +123,20 @@ public struct GameEngine: Sendable {
     private mutating func fillQueue() {
         while state.queue.count < 5 {
             state.queue.append(bag.next())
+        }
+    }
+
+    private mutating func seedOrders(level: Int) {
+        let mats = Material.allCases
+        let m1 = mats[Int(level) % mats.count]
+        let m2 = mats[(Int(level) + 2) % mats.count]
+        state.orders = [
+            OrderTicket(id: "ord-mat", label: "Recycle 12 \(m1.rawValue)", kind: .recycleMaterial, target: 12, material: m1),
+            OrderTicket(id: "ord-chain", label: "Make a 3× chain", kind: .recycleChain, target: 3),
+            OrderTicket(id: "ord-press", label: "Slam the press", kind: .pressSlam, target: 1),
+        ]
+        if level >= 2 {
+            state.orders[0] = OrderTicket(id: "ord-mat", label: "Recycle 20 \(m2.rawValue)", kind: .recycleMaterial, target: 20, material: m2)
         }
     }
 
@@ -105,13 +168,13 @@ public struct GameEngine: Sendable {
 
     public mutating func tryRotate() -> Bool {
         guard var p = state.active, !state.over else { return false }
+        if p.def.isSquare { return false }
         let old = p.rot
         p.rot = (p.rot + 1) % p.def.rotations.count
         if p.fits(state.board) {
             state.active = p
             return true
         }
-        // simple wall kicks
         for kick in [-1, 1, -2, 2] {
             var k = p
             k.x += kick
@@ -131,6 +194,7 @@ public struct GameEngine: Sendable {
         lock()
     }
 
+    @discardableResult
     public mutating func softDrop() -> Bool {
         tryMove(dx: 0, dy: 1)
     }
@@ -139,57 +203,87 @@ public struct GameEngine: Sendable {
         guard let p = state.active else { return }
         let def = p.def
         for (x, y) in p.cells {
-            state.board[x, y] = Cell(piece: p.id, material: def.material)
+            var cell = Cell(piece: p.id, material: def.material)
+            // Sticky / battery hazards appear after level 3 on occasional placements.
+            if state.level >= 3, placeCount % 11 == 7, p.id == .can {
+                cell.sticky = true
+            }
+            if state.level >= 4, placeCount % 17 == 5, p.id == .pipe {
+                cell.hazard = .leakingBattery
+                cell.material = .metal
+            }
+            state.board[x, y] = cell
         }
         state.active = nil
+        placeCount += 1
         events.append(.locked)
+        // Press meter fills on place.
+        state.pressMeter = min(state.pressMeterMax, state.pressMeter + max(1, p.cells.count / 2))
+        applyHazards()
         resolveAfterLock()
     }
 
+    private mutating func applyHazards() {
+        var conversions: [(Int, Int)] = []
+        for y in 0..<state.board.config.rows {
+            for x in 0..<state.board.config.cols {
+                guard let c = state.board[x, y], c.hazard == .leakingBattery else { continue }
+                for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
+                    guard var n = state.board[nx, ny], n.material != .metal else { continue }
+                    conversions.append((nx, ny))
+                }
+            }
+        }
+        for (x, y) in conversions {
+            guard var n = state.board[x, y] else { continue }
+            n.material = .metal
+            state.board[x, y] = n
+        }
+    }
+
     private mutating func resolveAfterLock() {
-        // Recycle first (signature), then full-row compactor crush.
-        let groups = RecycleMatcher.findGroups(on: state.board)
-        let didRecycle = !groups.isEmpty
-        if didRecycle {
+        var chain = 0
+        var any = false
+        while true {
+            let groups = RecycleMatcher.findGroups(on: state.board)
+            guard !groups.isEmpty else { break }
+            any = true
+            chain += 1
             var cells = 0
+            var primary = groups[0].material
             for g in groups {
                 cells += g.cells.count
+                primary = g.material
                 for (x, y) in g.cells { state.board[x, y] = nil }
+                state.recycledByMaterial[g.material, default: 0] += g.cells.count
+                bumpOrderMaterial(g.material, amount: g.cells.count)
             }
+            let score = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
             let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
-            let score = cells * 40 * state.level + groups.count * 60
             state.score += score
             state.runScrap += scrap
-            state.combo += 1
-            state.magnetCharge = min(3, state.magnetCharge + (groups.count >= 2 ? 1 : 0))
-            events.append(.recycled(groups: groups.count, score: score, scrap: scrap))
+            state.combo = chain
+            state.lines += groups.count
+            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary))
+            if chain >= 3 {
+                bumpOrder(kind: .recycleChain, amount: chain)
+            }
             applyGravity()
         }
-
-        let full = state.board.fullRows().filter { $0 >= state.board.config.hiddenRows }
-        if !full.isEmpty {
-            let n = full.count
+        if any {
+            bumpOrder(kind: .recycleAny, amount: 1)
+            checkOrders()
             let leveledBefore = state.level
-            let score = Scoring.crushScore(lines: n, level: state.level, combo: state.combo, backToBack: state.backToBack)
-            let scrap = Scoring.scrapForClear(lines: n, combo: state.combo, leveled: false)
-            state.board.clearRows(full)
-            state.score += score
-            state.lines += n
-            state.runScrap += scrap
-            state.combo += 1
-            state.backToBack = n >= 3
-            state.level = 1 + state.lines / 10
+            state.level = 1 + state.lines / 8
             if state.level > leveledBefore {
                 events.append(.leveledUp(state.level))
             }
-            events.append(.cleared(rows: full, score: score, scrap: scrap))
-        } else if !didRecycle {
+        } else {
             state.combo = 0
-            state.backToBack = false
         }
 
         if !spawn() {
-            // game over already flagged
+            // game over
         }
     }
 
@@ -210,8 +304,161 @@ public struct GameEngine: Sendable {
         }
     }
 
-    /// Stash bin — not a classic "hold" lookalike naming in UI; mechanic is stash.
+    /// Player-timed hydraulic press — crushes bottom 2 rows into scrap.
+    @discardableResult
+    public mutating func slamPress() -> Bool {
+        guard !state.over, state.pressMeter >= state.pressMeterMax else { return false }
+        let rows = state.board.bottomRowIndices(count: 2)
+        var coords: [(Int, Int)] = []
+        for y in rows {
+            for x in 0..<state.board.config.cols {
+                if state.board[x, y] != nil {
+                    coords.append((x, y))
+                }
+            }
+        }
+        guard !coords.isEmpty else {
+            state.pressMeter = 0
+            return false
+        }
+        // Press unsticks sticky cells in those rows by crushing them.
+        state.board.clearCells(coords)
+        let score = Scoring.pressScore(cells: coords.count, level: state.level)
+        let scrap = Scoring.scrapForPress(cells: coords.count)
+        state.score += score
+        state.runScrap += scrap
+        state.pressMeter = 0
+        events.append(.pressed(cells: coords.count, score: score, scrap: scrap))
+        bumpOrder(kind: .pressSlam, amount: 1)
+        applyGravity()
+        // Settling can create recycle chains.
+        var chain = 0
+        while true {
+            let groups = RecycleMatcher.findGroups(on: state.board)
+            guard !groups.isEmpty else { break }
+            chain += 1
+            var cells = 0
+            var primary = groups[0].material
+            for g in groups {
+                cells += g.cells.count
+                primary = g.material
+                for (x, y) in g.cells { state.board[x, y] = nil }
+                state.recycledByMaterial[g.material, default: 0] += g.cells.count
+                bumpOrderMaterial(g.material, amount: g.cells.count)
+            }
+            let sc = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
+            let sp = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
+            state.score += sc
+            state.runScrap += sp
+            state.combo = chain
+            state.lines += groups.count
+            events.append(.recycled(groups: groups.count, cells: cells, score: sc, scrap: sp, material: primary))
+            applyGravity()
+        }
+        checkOrders()
+        return true
+    }
+
+    /// Once-per-run raccoon Snatch — remove one locked cell.
+    @discardableResult
+    public mutating func snatch(atX x: Int, y: Int) -> Bool {
+        guard state.snatchAvailable, !state.over else { return false }
+        guard state.board[x, y] != nil else { return false }
+        state.board[x, y] = nil
+        state.snatchAvailable = false
+        events.append(.snatchUsed)
+        applyGravity()
+        // May trigger recycles after settle.
+        resolveRecyclesOnly()
+        return true
+    }
+
+    /// Snatch a random filled cell (autoplay / demo helper).
+    @discardableResult
+    public mutating func snatchRandom() -> Bool {
+        var opts: [(Int, Int)] = []
+        for y in state.board.config.hiddenRows..<state.board.config.rows {
+            for x in 0..<state.board.config.cols {
+                if state.board[x, y] != nil { opts.append((x, y)) }
+            }
+        }
+        guard let pick = opts.randomElement() else { return false }
+        return snatch(atX: pick.0, y: pick.1)
+    }
+
+    private mutating func resolveRecyclesOnly() {
+        var chain = 0
+        while true {
+            let groups = RecycleMatcher.findGroups(on: state.board)
+            guard !groups.isEmpty else { break }
+            chain += 1
+            var cells = 0
+            var primary = groups[0].material
+            for g in groups {
+                cells += g.cells.count
+                primary = g.material
+                for (x, y) in g.cells { state.board[x, y] = nil }
+                state.recycledByMaterial[g.material, default: 0] += g.cells.count
+                bumpOrderMaterial(g.material, amount: g.cells.count)
+            }
+            let score = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
+            let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
+            state.score += score
+            state.runScrap += scrap
+            state.combo = chain
+            state.lines += groups.count
+            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary))
+            if chain >= 3 { bumpOrder(kind: .recycleChain, amount: chain) }
+            applyGravity()
+        }
+        checkOrders()
+    }
+
+    private mutating func bumpOrderMaterial(_ mat: Material, amount: Int) {
+        for i in state.orders.indices {
+            guard !state.orders[i].done else { continue }
+            if state.orders[i].kind == .recycleMaterial, state.orders[i].material == mat {
+                state.orders[i].progress = min(state.orders[i].target, state.orders[i].progress + amount)
+            }
+            if state.orders[i].kind == .recycleAny {
+                state.orders[i].progress = min(state.orders[i].target, state.orders[i].progress + amount)
+            }
+        }
+    }
+
+    private mutating func bumpOrder(kind: OrderTicket.Kind, amount: Int) {
+        for i in state.orders.indices {
+            guard !state.orders[i].done, state.orders[i].kind == kind else { continue }
+            if kind == .recycleChain {
+                state.orders[i].progress = max(state.orders[i].progress, amount)
+            } else {
+                state.orders[i].progress = min(state.orders[i].target, state.orders[i].progress + amount)
+            }
+        }
+    }
+
+    private var completedOrderIDs: Set<String> = []
+
+    private mutating func checkOrders() {
+        finalizeOrders()
+    }
+
+    private mutating func finalizeOrders() {
+        for order in state.orders where order.done && !completedOrderIDs.contains(order.id) {
+            completedOrderIDs.insert(order.id)
+            events.append(.orderCompleted(order))
+            state.score += 400
+            state.runScrap += 8
+        }
+    }
+
+    /// Evidence / UI helper — fill the press meter without slamming.
+    public mutating func fillPressMeter() {
+        state.pressMeter = state.pressMeterMax
+    }
+
     public mutating func stash() {
+        // Stash kept as optional hold bin — not required for Night Shift loop.
         guard let cur = state.active, !state.holdUsed, !state.over else { return }
         state.holdUsed = true
         if let h = state.hold {
@@ -230,134 +477,154 @@ public struct GameEngine: Sendable {
         }
     }
 
-    /// Magnet power-up: pull matching material scraps toward the active piece column.
     public mutating func useMagnet() {
-        guard state.magnetCharge > 0, let p = state.active, !state.over else { return }
-        state.magnetCharge -= 1
-        let mat = p.def.material
-        let targetX = p.x
-        for y in 0..<state.board.config.rows {
-            for x in 0..<state.board.config.cols where x != targetX {
-                guard let c = state.board[x, y], c.material == mat else { continue }
-                if state.board[targetX, y] == nil {
-                    state.board[targetX, y] = c
-                    state.board[x, y] = nil
-                }
-            }
-        }
-        events.append(.magnetUsed)
+        // Deprecated — Snatch replaces magnet. No-op for API compat.
     }
 
-    /// Autoplay helper for CI smoke: hard-drop repeatedly.
+    /// Autoplay: soft-ish play with occasional press / snatch.
     public mutating func autoplayStep() {
         guard !state.over else { return }
+        if state.pressMeter >= state.pressMeterMax, Bool.random() {
+            _ = slamPress()
+            return
+        }
+        if state.snatchAvailable, placeCount > 6, Bool.random(), Bool.random() {
+            _ = snatchRandom()
+        }
         if Bool.random() { _ = tryRotate() }
         if Bool.random() { _ = tryMove(dx: Bool.random() ? 1 : -1, dy: 0) }
-        hardDrop()
+        // Prefer soft drops for readable video; hard drop less often.
+        if Bool.random() {
+            hardDrop()
+        } else {
+            for _ in 0..<3 { _ = softDrop() }
+            if !(state.active.map { softDropFitsBelow($0) } ?? false) {
+                hardDrop()
+            }
+        }
+    }
+
+    private func softDropFitsBelow(_ p: ActivePiece) -> Bool {
+        var q = p
+        q.y += 1
+        return q.fits(state.board)
     }
 
     public mutating func drainEvents() -> [GameEvent] {
+        finalizeOrders()
         let e = events
         events.removeAll()
         return e
     }
 
-    /// Seed boards for App Store evidence shots so each screenshot is visually distinct.
+    /// Seed boards for App Store evidence shots.
     public mutating func applyShotScenario(_ shot: String) {
         state = GameState(config: state.board.config)
         events = []
+        completedOrderIDs = []
         bag = RNGBag(seed: 0x5C01)
+        placeCount = 0
         fillQueue()
+        seedOrders(level: 2)
         let rows = state.board.config.rows
         let cols = state.board.config.cols
         let hid = state.board.config.hiddenRows
 
         switch shot {
         case "recycle":
-            // Connected metal chain (left) + glass tubes (right) for a readable recycle beat.
-            for y in (rows - 7)..<rows {
-                state.board[0, y] = Cell(piece: .can, material: .metal)
-                state.board[1, y] = Cell(piece: .pipe, material: .metal)
-                state.board[2, y] = Cell(piece: .can, material: .metal)
-            }
-            for y in (rows - 5)..<rows {
-                state.board[5, y] = Cell(piece: .tube, material: .glass)
-                state.board[6, y] = Cell(piece: .tube, material: .glass)
-                if y >= rows - 3 {
-                    state.board[7, y] = Cell(piece: .tube, material: .glass)
-                }
-            }
-            // Mixed scrap clutter so the well doesn't look empty.
+            // Metal cluster of 6+ ready to read as a recycle beat.
             for y in (rows - 4)..<rows {
-                state.board[3, y] = Cell(piece: .scrap, material: .metal)
-                if y >= rows - 2 {
-                    state.board[4, y] = Cell(piece: .tire, material: .rubber)
+                for x in 0..<3 {
+                    state.board[x, y] = Cell(piece: .can, material: .metal)
                 }
+            }
+            state.board[1, rows - 5] = Cell(piece: .pipe, material: .metal)
+            // Glass side clutter
+            for y in (rows - 3)..<rows {
+                state.board[5, y] = Cell(piece: .bottle, material: .glass)
+                state.board[6, y] = Cell(piece: .bottle, material: .glass)
             }
             state.score = 4200
-            state.combo = 4
-            state.magnetCharge = 2
+            state.combo = 2
+            state.pressMeter = 5
             state.level = 3
-            state.active = ActivePiece(id: .can, x: 1, y: hid + 3)
-        case "compactor":
-            // ~3 full rows + dense stack above — Big Crush target mid-animation.
-            for y in (rows - 8)..<rows {
+            state.active = ActivePiece(id: .can, x: 1, y: hid + 2)
+        case "compactor", "press":
+            // Bottom rows filled for a press slam showcase + meter full.
+            for y in (rows - 2)..<rows {
                 for x in 0..<cols {
-                    // Leave a small notch at the very top of the stack for the falling piece.
-                    if y == rows - 8, x == 3 || x == 4 { continue }
-                    let ids: [JunkID] = [.box, .bag, .tire, .crate, .can, .scrap, .pipe, .tube]
-                    let id = ids[(x * 3 + y) % ids.count]
+                    let id: JunkID = [.can, .bottle, .plank, .tire, .crate, .pipe][(x + y) % 6]
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            // Mid clutter
+            for y in (rows - 6)..<(rows - 2) {
+                for x in 0..<cols where (x + y) % 3 != 0 {
+                    let id: JunkID = [.can, .bentPipe, .plank, .tire][(x * 2 + y) % 4]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
             state.score = 7600
-            state.level = 5
-            state.combo = 3
-            state.lines = 24
+            state.level = 4
+            state.pressMeter = state.pressMeterMax
+            state.combo = 1
             state.active = ActivePiece(id: .crate, x: 3, y: hid + 2)
         case "revive", "game-over":
-            // Topped-out dumpster (checkerboard bags/boxes) + game over for revive sheet.
-            for y in hid..<(hid + 12) {
-                for x in 0..<cols {
-                    let id: JunkID = (x + y) % 2 == 0 ? .bag : .box
-                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+            // Believable topped-out bin from "real play" — jagged, mixed materials.
+            let skyline = [12, 11, 13, 12, 14, 13, 12, 11]
+            for x in 0..<cols {
+                let fill = min(skyline[x], rows - hid)
+                for i in 0..<fill {
+                    let y = rows - 1 - i
+                    let id: JunkID = [.can, .bottle, .plank, .pipe, .crate, .tire, .bentPipe, .fridge][(x * 5 + i * 3) % 8]
+                    var cell = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                    if i == 2, x == 3 { cell.sticky = true }
+                    state.board[x, y] = cell
                 }
+            }
+            // Overflow lip
+            for x in 2..<6 {
+                state.board[x, hid] = Cell(piece: .can, material: .metal)
             }
             state.score = 8800
             state.level = 6
             state.over = true
             state.active = nil
+            state.pressMeter = 3
             events.append(.gameOver)
         case "game", "gameplay":
-            // Mid-game: ~40% of the visible well filled + active piece in play.
-            let fillFrom = rows - 6 // 6 of 15 visible rows ≈ 40%
+            // Mid-run ~40% fill + active item + orders in progress.
+            let fillFrom = rows - 5
             for y in fillFrom..<rows {
                 for x in 0..<cols {
-                    // Jagged skyline so it reads as a real stack, not a flat fill.
-                    let peak = fillFrom + ((x * 5) % 4)
+                    let peak = fillFrom + ((x * 5) % 3)
                     if y < peak { continue }
-                    if (x + y) % 7 == 0 { continue }
-                    let id: JunkID = [.can, .tire, .scrap, .pipe, .crate, .box, .bag, .tube][(x + y * 3) % 8]
+                    if (x + y) % 5 == 0 { continue }
+                    let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle, .bentPipe][(x + y * 3) % 7]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
             state.score = 3180
             state.level = 3
             state.combo = 1
-            state.magnetCharge = 2
-            state.lines = 11
-            state.active = ActivePiece(id: .can, rot: 0, x: 3, y: hid + 1)
+            state.pressMeter = 6
+            state.orders[0].progress = 7
+            state.active = ActivePiece(id: .bottle, rot: 0, x: 3, y: hid + 1)
         case "demo", "autoplay":
-            // Denser seed so autoplay hits crush/recycle quickly on video.
-            for y in (rows - 5)..<rows {
-                for x in 0..<cols where (x + y) % 5 != 0 {
-                    let id: JunkID = [.can, .tire, .scrap, .pipe, .crate, .box][(x + y) % 6]
+            for y in (rows - 4)..<rows {
+                for x in 0..<cols where (x + y) % 4 != 0 {
+                    let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle][(x + y) % 6]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
+            // Seed a near-recycle metal pocket
+            for y in (rows - 3)..<rows {
+                state.board[0, y] = Cell(piece: .can, material: .metal)
+                state.board[1, y] = Cell(piece: .pipe, material: .metal)
+            }
             state.score = 900
             state.level = 2
-            state.magnetCharge = 2
+            state.pressMeter = 4
             spawn()
         default:
             spawn()
