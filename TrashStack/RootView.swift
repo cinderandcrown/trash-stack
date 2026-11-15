@@ -173,8 +173,8 @@ struct RootView: View {
         }
     }
 
-    private func sampleShareGrid() -> [[Material?]] {
-        let row: [Material?] = [.metal, .glass, .plastic, .paper, nil, .metal, .glass, .plastic]
+    private func sampleShareGrid() -> [[GameCore.Material?]] {
+        let row: [GameCore.Material?] = [.metal, .glass, .plastic, .paper, nil, .metal, .glass, .plastic]
         return Array(repeating: row, count: 6)
     }
 }
