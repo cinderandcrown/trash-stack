@@ -18,7 +18,7 @@ public enum JunkTextureLoader {
             if let img = UIImage(named: name, in: bundle, compatibleWith: nil) {
                 return img
             }
-            for sub in ["Junk", "HUD", "Resources/Junk", "Resources/HUD"] {
+            for sub in ["Junk", "HUD", "UI", "Resources/Junk", "Resources/HUD", "Resources/UI"] {
                 if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
                    let img = UIImage(contentsOfFile: url.path) {
                     return img
@@ -58,25 +58,14 @@ public enum JunkTextureLoader {
         return nil
     }
 
+    /// Keep this tiny — scanning `Bundle.allBundles` hung CI unit tests for 25+ minutes.
     public static func candidateBundles() -> [Bundle] {
         var out: [Bundle] = [Bundle.module]
-        var seen = Set<ObjectIdentifier>([ObjectIdentifier(Bundle.module)])
-        func add(_ b: Bundle?) {
-            guard let b else { return }
-            let id = ObjectIdentifier(b)
-            guard !seen.contains(id) else { return }
-            seen.insert(id)
-            out.append(b)
+        if Bundle.main !== Bundle.module {
+            out.append(Bundle.main)
         }
-        add(Bundle.main)
-        add(Bundle(identifier: appBundleId))
-        for b in Bundle.allBundles {
-            if b.bundleIdentifier?.contains("trashstack") == true
-                || b.bundleIdentifier?.contains("GameRender") == true
-                || b.bundlePath.hasSuffix(".app")
-                || b.bundlePath.contains("GameRender") {
-                add(b)
-            }
+        if let app = Bundle(identifier: appBundleId), app !== Bundle.main, app !== Bundle.module {
+            out.append(app)
         }
         return out
     }

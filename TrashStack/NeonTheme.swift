@@ -9,7 +9,7 @@ import GameRender
 enum BundleArt {
     static func uiImage(_ name: String) -> UIImage? {
         if let img = UIImage(named: name) { return img }
-        for bundle in [Bundle.main] + JunkTextureLoader.candidateBundles() {
+        for bundle in JunkTextureLoader.candidateBundles() {
             if let img = UIImage(named: name, in: bundle, compatibleWith: nil) { return img }
             for sub in ["UI", "Resources/UI", "Junk", "HUD", "Resources/Junk", "Resources/HUD"] {
                 if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
@@ -22,7 +22,7 @@ enum BundleArt {
                 return img
             }
         }
-        return JunkTextureLoader.image(named: name)
+        return JunkTextureLoader.imageFromModule(named: name)
     }
 }
 
