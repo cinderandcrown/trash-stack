@@ -11,7 +11,7 @@ enum NeonTheme {
     static let magenta = Color(red: 0.95, green: 0.2, blue: 0.75)
     static let teal = Color(red: 0.0, green: 0.92, blue: 0.95)
     static let text = Color.white
-    static let muted = Color.white.opacity(0.55)
+    static let muted = Color.white.opacity(0.78)
 
     static var alleyGradient: LinearGradient {
         LinearGradient(colors: [bgTop, bgBottom], startPoint: .top, endPoint: .bottom)
@@ -89,12 +89,12 @@ struct NeonButton: View {
         case .secondary:
             LinearGradient(colors: [NeonTheme.magenta.opacity(0.85), NeonTheme.magenta.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
         case .ghost:
-            Color.white.opacity(0.06)
+            Color.white.opacity(0.14)
         }
     }
 
     private var border: Color {
-        style == .ghost ? NeonTheme.teal.opacity(0.5) : .clear
+        style == .ghost ? NeonTheme.teal.opacity(0.85) : .clear
     }
 }
 

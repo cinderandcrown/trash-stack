@@ -27,8 +27,8 @@ struct TitleView: View {
                         LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
                     )
                 Text("Neon junk. Night shift.")
-                    .font(.system(.subheadline, design: .rounded))
-                    .foregroundStyle(NeonTheme.muted)
+                    .font(.system(.title3, design: .rounded).weight(.semibold))
+                    .foregroundStyle(Color.white.opacity(0.92))
                 HStack(spacing: 10) {
                     CurrencyChip(kind: .scrap, value: profile.scrap)
                     CurrencyChip(kind: .gems, value: profile.gems)
@@ -44,7 +44,7 @@ struct TitleView: View {
                 }
                 .padding(.horizontal, 36)
 
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     NeonButton(title: "Junkyard", style: .ghost) { screen = .base }
                     NeonButton(title: "Season Pass", style: .ghost) { screen = .pass }
                     NeonButton(title: "Shop", style: .ghost) { screen = .shop }
@@ -55,8 +55,8 @@ struct TitleView: View {
                 .padding(.horizontal, 22)
 
                 Text("Free to play · odds shown · no real-money gambling")
-                    .font(.caption2)
-                    .foregroundStyle(NeonTheme.muted)
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.7))
                 Spacer(minLength: 12)
             }
             .padding(.horizontal, 8)

@@ -130,6 +130,44 @@ print(f"Frame OK {path} (dark={darks} white={whites} beige={beiges})")
 PY
 }
 
+# Fail if gameplay shots still show SpriteKit's red-X missing-texture tiles.
+assert_no_missing_textures() {
+  local file="$1"
+  python3 - "$file" <<'PY'
+import sys, struct, zlib, pathlib
+path = pathlib.Path(sys.argv[1])
+data = path.read_bytes()
+# Prefer Pillow when present
+try:
+    from PIL import Image
+    im = Image.open(path).convert("RGB")
+    w, h = im.size
+    # Sample the playfield band
+    red_x = 0
+    total = 0
+    for yy in range(int(h * 0.28), int(h * 0.72), max(1, h // 40)):
+        for xx in range(int(w * 0.18), int(w * 0.82), max(1, w // 40)):
+            r, g, b = im.getpixel((xx, yy))
+            total += 1
+            # Classic missing-texture: bright white with strong red channel / red X
+            if r > 200 and g > 180 and b > 180:
+                red_x += 1
+            elif r > 180 and g < 90 and b < 90:
+                red_x += 1
+    ratio = red_x / max(1, total)
+    if ratio > 0.18:
+        print(f"Likely missing-texture / red-X tiles in {path} (ratio={ratio:.2f})", file=sys.stderr)
+        sys.exit(4)
+    print(f"Junk art OK {path} (bright/red ratio={ratio:.2f})")
+except Exception as e:
+    # Size floor only if we cannot sample
+    if path.stat().st_size < 200_000:
+        print(f"Gameplay frame suspiciously small: {path} ({e})", file=sys.stderr)
+        sys.exit(4)
+    print(f"Junk art size-OK {path}")
+PY
+}
+
 launch_shot() {
   local mode="$1"
   local outfile="$2"
@@ -192,17 +230,24 @@ xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -b
 
 launch_shot "" "$OUT_DIR/01-title.png" 5
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 6
+assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
 launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 6
+assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
 launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 6
+assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 6
+assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
 launch_shot "base" "$OUT_DIR/06-base.png" 5
 launch_shot "pass" "$OUT_DIR/07-pass.png" 5
 launch_shot "shop" "$OUT_DIR/08-shop.png" 5
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 5
 
 launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 6
+assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
 launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 6
+assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
 launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 6
+assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
 launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 5
 launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 5
 launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 5

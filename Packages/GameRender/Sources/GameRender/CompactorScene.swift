@@ -79,11 +79,17 @@ public final class CompactorScene: SKScene {
     }
 
     private func tex(_ name: String) -> SKTexture? {
-        let t = SKTexture(imageNamed: name)
-        if t.size().width <= 1 { return nil }
-        t.filteringMode = .nearest
+        // SKTexture(imageNamed:) returns a red-X placeholder on miss (non-1×1).
+        // Resolve via UIImage first so missing assets become nil, not placeholders.
+        guard let image = UIImage(named: name) else { return nil }
+        let t = SKTexture(image: image)
+        if t.size().width < 4 || t.size().height < 4 { return nil }
+        t.filteringMode = .linear
         return t
     }
+
+    /// Names every board piece must resolve from the app asset catalog (no red-X).
+    public static let requiredJunkTextureNames: [String] = JunkID.allCases.map(\.rawValue)
 
     private func rebuild() {
         removeAllChildren()
@@ -182,15 +188,18 @@ public final class CompactorScene: SKScene {
         addChild(combo)
         comboLabel = combo
 
-        let fps = SKLabelNode(fontNamed: "Menlo-Bold")
-        fps.fontSize = 10
-        fps.fontColor = SKColor(white: 1, alpha: 0.35)
-        fps.horizontalAlignmentMode = .left
-        fps.position = CGPoint(x: 10, y: 8)
-        fps.zPosition = 50
-        fps.text = "60 fps"
-        addChild(fps)
-        fpsLabel = fps
+        // FPS is opt-in only (`-showFPS`). Never on release or smoke/screenshot builds.
+        if ProcessInfo.processInfo.arguments.contains("-showFPS") {
+            let fps = SKLabelNode(fontNamed: "Menlo-Bold")
+            fps.fontSize = 10
+            fps.fontColor = SKColor(white: 1, alpha: 0.35)
+            fps.horizontalAlignmentMode = .left
+            fps.position = CGPoint(x: 10, y: 8)
+            fps.zPosition = 50
+            fps.text = "60 fps"
+            addChild(fps)
+            fpsLabel = fps
+        }
 
         didBuild = true
         updateRaccoon()

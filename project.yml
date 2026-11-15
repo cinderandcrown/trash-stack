@@ -42,6 +42,8 @@ targets:
           - "**/*.plist"
           - "**/*.xcprivacy"
           - "**/*.storekit"
+          - "**/*.xcassets"
+          - "Resources/**"
     resources:
       - path: TrashStack/Assets.xcassets
       - path: TrashStack/PrivacyInfo.xcprivacy
