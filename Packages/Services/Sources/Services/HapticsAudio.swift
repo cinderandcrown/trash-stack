@@ -57,7 +57,6 @@ public final class AudioService {
     public static let shared = AudioService()
 #if canImport(AVFoundation)
     private var engine: AVAudioEngine?
-    private var sfxPlayers: [String: AVAudioPlayerNode] = [:]
     private var buffers: [String: AVAudioPCMBuffer] = [:]
     private var musicPlayer: AVAudioPlayerNode?
     private var musicBuffers: [String: AVAudioPCMBuffer] = [:]
