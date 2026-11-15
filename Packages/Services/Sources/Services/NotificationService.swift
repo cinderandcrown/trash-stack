@@ -6,7 +6,7 @@ import Combine
 #endif
 
 #if canImport(UserNotifications)
-import UserNotifications
+@preconcurrency import UserNotifications
 #endif
 
 @MainActor
@@ -24,8 +24,13 @@ public final class NotificationService: ObservableObject {
 
     public func refreshStatus() async {
 #if canImport(UserNotifications)
-        let s = await UNUserNotificationCenter.current().notificationSettings()
-        authorized = s.authorizationStatus == .authorized || s.authorizationStatus == .provisional
+        // Callback API avoids sending non-Sendable UNNotificationSettings across isolation.
+        let status: UNAuthorizationStatus = await withCheckedContinuation { cont in
+            UNUserNotificationCenter.current().getNotificationSettings { settings in
+                cont.resume(returning: settings.authorizationStatus)
+            }
+        }
+        authorized = status == .authorized || status == .provisional
 #else
         authorized = false
 #endif
@@ -56,7 +61,11 @@ public final class NotificationService: ObservableObject {
         content.sound = .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1.5, afterSeconds), repeats: false)
         let req = UNNotificationRequest(identifier: "ts-\(kind)-\(UUID().uuidString)", content: content, trigger: trigger)
-        try? await UNUserNotificationCenter.current().add(req)
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            UNUserNotificationCenter.current().add(req) { _ in
+                cont.resume()
+            }
+        }
 #endif
         sentToday += 1
     }

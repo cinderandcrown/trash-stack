@@ -75,11 +75,14 @@ public final class AudioService {
         let player = AVAudioPlayerNode()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: format)
-        player.scheduleBuffer(buffer, completionHandler: nil)
-        player.play()
-        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.05) { [weak engine] in
-            engine?.detach(player)
+        player.scheduleBuffer(buffer) { [weak engine] in
+            Task { @MainActor in
+                if let engine {
+                    engine.detach(player)
+                }
+            }
         }
+        player.play()
 #endif
     }
 }

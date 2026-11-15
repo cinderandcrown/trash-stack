@@ -2,8 +2,8 @@
 
 import Foundation
 import AppTrackingTransparency
-import UserMessagingPlatform
-import GoogleMobileAds
+@preconcurrency import UserMessagingPlatform
+@preconcurrency import GoogleMobileAds
 import Services
 
 /// Wires Google Mobile Ads (test IDs), UMP, and ATT.

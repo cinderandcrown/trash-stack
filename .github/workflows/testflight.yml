@@ -85,13 +85,46 @@ jobs:
           printf '%s\n' "$ASC_KEY_P8" > "$key"
           echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
 
+      - name: Register bundle ID if missing
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          python3 scripts/appstore_connect.py ensure-bundle-id \
+            --bundle-id "$BUNDLE_ID" --name "Trash Stack"
+
+      - name: Check App Store Connect app record
+        id: ascapp
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          set +e
+          out="$(python3 scripts/appstore_connect.py check-app --bundle-id "$BUNDLE_ID" 2>&1)"
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" = 2 ]; then
+            echo "missing=true" >> "$GITHUB_OUTPUT"
+            echo "::warning::ASC app record missing. Sign/check still run; altool validate/upload wait for Nicholas."
+            if [ "${{ steps.version.outputs.upload }}" = true ]; then
+              echo "::error::Cannot upload without the ASC app record."
+              exit 1
+            fi
+          else
+            echo "missing=false" >> "$GITHUB_OUTPUT"
+            exit "$code"
+          fi
+
       - name: Install XcodeGen and generate
         if: steps.gate.outputs.ready == 'true'
         run: |
           brew install xcodegen
           xcodegen generate
 
-      - name: Archive
+      - name: Archive (ad hoc; export applies App Store signature)
         if: steps.gate.outputs.ready == 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -106,6 +139,7 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/TrashStack.xcarchive" \
             -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            -hideShellScriptEnvironment \
             APP_CODE_SIGN_IDENTITY=- \
             APP_AD_HOC_SIGNING=YES \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
@@ -114,7 +148,7 @@ jobs:
           | tee "$RUNNER_TEMP/xcodebuild-archive.log" \
           | xcbeautify --renderer github-actions
 
-      - name: Export for App Store
+      - name: Sign for the App Store (cloud-managed via API key)
         if: steps.gate.outputs.ready == 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -141,7 +175,12 @@ jobs:
             -allowProvisioningUpdates \
             -authenticationKeyPath "$ASC_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+          | tee "$RUNNER_TEMP/xcodebuild-export.log" || status=$?
+          if grep -q "Cloud signing permission error" "$RUNNER_TEMP/xcodebuild-export.log" 2>/dev/null; then
+            echo "::error::Cloud signing failed. Admin ASC API key required."
+          fi
+          exit "${status:-0}"
 
       - name: Check the signed app
         if: steps.gate.outputs.ready == 'true'
@@ -165,7 +204,7 @@ jobs:
             --build "$BUILD"
 
       - name: Validate with Apple
-        if: steps.gate.outputs.ready == 'true'
+        if: steps.gate.outputs.ready == 'true' && steps.ascapp.outputs.missing != 'true'
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
