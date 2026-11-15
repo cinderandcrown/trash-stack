@@ -28,6 +28,7 @@ clear_shot_pref() {
   xcrun simctl spawn "$udid" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
 }
 
+# Echo ONLY the UDID on stdout. All simctl chatter goes to stderr.
 prepare_device() {
   local device_name="$1"
   local udid=""
@@ -40,45 +41,54 @@ prepare_device() {
     echo "No UDID for $device_name" >&2
     return 1
   fi
-  xcrun simctl bootstatus "$udid" -b 2>/dev/null || xcrun simctl boot "$udid" || true
-  xcrun simctl bootstatus "$udid" -b
+  echo "Booting $device_name ($udid)" >&2
+  xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "$udid" -b >/dev/null 2>&1 || true
+  # Give SpringBoard a moment after first boot migrations
+  sleep 3
   xcrun simctl uninstall "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
-  xcrun simctl install "$udid" "$APP_PATH"
-  echo "$udid"
+  xcrun simctl install "$udid" "$APP_PATH" >&2
+  printf '%s\n' "$udid"
 }
 
 shot_once() {
   local udid="$1"
-  local label="$2"
-  local shot="$3"
-  local outfile="$4"
+  local shot="$2"
+  local outfile="$3"
   xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
   if [[ -n "$shot" ]]; then
     set_shot_pref "$udid" "$shot"
   else
     clear_shot_pref "$udid"
   fi
-  xcrun simctl launch "$udid" "$BUNDLE_ID" || true
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
   sleep 5
   xcrun simctl io "$udid" screenshot "$outfile"
-  echo "Wrote $outfile"
+  echo "Wrote $outfile" >&2
 }
 
 boot_and_shot() {
   local device_name="$1"
   local label="$2"
   local udid
-  echo "Preparing simulator: $device_name ($label)"
-  udid="$(prepare_device "$device_name")" || return 0
+  echo "Preparing simulator: $device_name ($label)" >&2
+  if ! udid="$(prepare_device "$device_name")"; then
+    echo "Skipping $label — device unavailable" >&2
+    return 0
+  fi
+  # Sanity: UDID must be a UUID only
+  if ! [[ "$udid" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+    echo "Bad UDID capture: [$udid]" >&2
+    return 1
+  fi
 
-  shot_once "$udid" "$label" "" "$OUT/${label}-title.png"
-  shot_once "$udid" "$label" "game" "$OUT/${label}-game.png"
-  shot_once "$udid" "$label" "shop" "$OUT/${label}-shop.png"
-  shot_once "$udid" "$label" "challenges" "$OUT/${label}-challenges.png"
-  shot_once "$udid" "$label" "achievements" "$OUT/${label}-achievements.png"
-  shot_once "$udid" "$label" "settings" "$OUT/${label}-settings.png"
+  shot_once "$udid" "" "$OUT/${label}-title.png"
+  shot_once "$udid" "game" "$OUT/${label}-game.png"
+  shot_once "$udid" "shop" "$OUT/${label}-shop.png"
+  shot_once "$udid" "challenges" "$OUT/${label}-challenges.png"
+  shot_once "$udid" "achievements" "$OUT/${label}-achievements.png"
+  shot_once "$udid" "settings" "$OUT/${label}-settings.png"
 
-  # Captioned marketing copies (same frames; captions noted in STORE.md)
   cp "$OUT/${label}-title.png" "$OUT/${label}-01-title-caption.png"
   cp "$OUT/${label}-game.png" "$OUT/${label}-02-compactor-caption.png"
   cp "$OUT/${label}-shop.png" "$OUT/${label}-03-shop-caption.png"
@@ -93,8 +103,15 @@ boot_and_shot() {
 record_demo_video() {
   local device_name="iPhone 16 Pro Max"
   local udid
-  echo "Recording gameplay demo on $device_name"
-  udid="$(prepare_device "$device_name")" || return 0
+  echo "Recording gameplay demo on $device_name" >&2
+  if ! udid="$(prepare_device "$device_name")"; then
+    echo "WARNING: could not prepare device for demo video" >&2
+    return 0
+  fi
+  if ! [[ "$udid" =~ ^[0-9A-Fa-f-]{36}$ ]]; then
+    echo "Bad UDID for video: [$udid]" >&2
+    return 1
+  fi
 
   local raw="$VID/gameplay-demo-raw.mp4"
   local out="$VID/gameplay-demo.mp4"
@@ -102,31 +119,35 @@ record_demo_video() {
 
   clear_shot_pref "$udid"
   set_shot_pref "$udid" "demo"
-  # Start recording, then launch so the demo sequence is captured
-  xcrun simctl io "$udid" recordVideo --codec=h264 --force "$raw" &
-  local rec_pid=$!
-  sleep 1
-  xcrun simctl launch "$udid" "$BUNDLE_ID" || true
 
-  # Demo script is ~50s; record 55s then stop
+  # Record in background; stop with SIGINT so simctl finalizes the file
+  xcrun simctl io "$udid" recordVideo --codec=h264 --force "$raw" >/dev/null 2>&1 &
+  local rec_pid=$!
+  sleep 2
+  xcrun simctl launch "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
+
   sleep 55
   kill -INT "$rec_pid" 2>/dev/null || true
+  # Wait up to 30s for finalize
+  for _ in $(seq 1 30); do
+    if ! kill -0 "$rec_pid" 2>/dev/null; then break; fi
+    sleep 1
+  done
   wait "$rec_pid" 2>/dev/null || true
   sleep 2
 
-  if [[ -f "$raw" ]]; then
-    # Prefer a trimmed copy under 60s if ffmpeg exists; else keep raw
+  if [[ -f "$raw" && -s "$raw" ]]; then
     if command -v ffmpeg >/dev/null 2>&1; then
       ffmpeg -y -i "$raw" -t 58 -c copy "$out" >/dev/null 2>&1 || cp "$raw" "$out"
     else
       cp "$raw" "$out"
     fi
-    # Also place under screenshots folder for a single artifact upload convenience
     cp "$out" "$OUT/gameplay-demo.mp4"
-    ls -la "$out" "$OUT/gameplay-demo.mp4"
-    echo "Demo video ready"
+    ls -la "$out" "$OUT/gameplay-demo.mp4" >&2
+    echo "Demo video ready" >&2
   else
-    echo "WARNING: demo video was not produced" >&2
+    echo "ERROR: demo video was not produced at $raw" >&2
+    return 1
   fi
 
   xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
@@ -147,6 +168,6 @@ fi
 
 record_demo_video
 
-ls -la "$OUT" || true
-ls -la "$VID" || true
+ls -la "$OUT" >&2 || true
+ls -la "$VID" >&2 || true
 echo "Screenshot + video capture complete"
