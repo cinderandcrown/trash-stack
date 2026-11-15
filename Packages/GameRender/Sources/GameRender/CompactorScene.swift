@@ -79,13 +79,8 @@ public final class CompactorScene: SKScene {
     }
 
     private func tex(_ name: String) -> SKTexture? {
-        // SKTexture(imageNamed:) returns a red-X placeholder on miss (non-1×1).
-        // Resolve via UIImage first so missing assets become nil, not placeholders.
-        guard let image = UIImage(named: name) else { return nil }
-        let t = SKTexture(image: image)
-        if t.size().width < 4 || t.size().height < 4 { return nil }
-        t.filteringMode = .linear
-        return t
+        // Never call SKTexture(imageNamed:) alone — miss → red-X placeholder.
+        JunkTextureLoader.texture(named: name)
     }
 
     /// Names every board piece must resolve from the app asset catalog (no red-X).
