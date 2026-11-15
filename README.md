@@ -1,11 +1,12 @@
 # Trash Stack
 
-Neon falling-block puzzle by **Cinder and Crown LLC**.
+Neon junk / compactor puzzle by **Cinder and Crown LLC** (Trash Panda universe).
 
 - Web: [`web/`](web/) → https://trash-stack.pages.dev/
 - Native: Capacitor 8 → `ios/` + `android/`
-- Store name: **Trash Stack: Neon Blocks** (home-screen: **Trash Stack**)
+- Store name: **Trash Stack: Neon Junk Puzzle** (home-screen: **Trash Stack**)
 - Bundle ID: `com.cinderandcrown.trashstack` · ASC Apple ID `6834995780`
+- Identity: **8×15** dumpster bin, junk triomino/pentomino set, compactor + recycle + Magnet
 
 ## Develop
 
@@ -23,7 +24,7 @@ Open native IDEs: `npm run cap:ios` / `npm run cap:android`.
 | Workflow | Purpose |
 |----------|---------|
 | `web-validate.yml` | Offline + trademark smoke checks |
-| `ios.yml` | Simulator build, App Store screenshots; TestFlight upload **only** on `testflight/*` tags |
+| `ios.yml` | Simulator build, screenshots + gameplay demo video (`app-store-review-evidence`); TestFlight upload **only** on `testflight/*` tags |
 | `android.yml` | Debug APK always; signed AAB when keystore secrets exist |
 
 Do **not** push `testflight/*` tags from agents — Fire Fox tags TestFlight builds.

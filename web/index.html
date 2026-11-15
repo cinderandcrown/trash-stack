@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trash Stack">
 <meta name="theme-color" content="#07070f">
-<meta name="description" content="Trash Stack — neon night-city falling-block puzzle. Stack, clear, and chase Shinies.">
+<meta name="description" content="Trash Stack — neon junk puzzle. Crush rows in the compactor, recycle materials, chase Shinies.">
 <title>Trash Stack</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
@@ -197,6 +197,44 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 .bp-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--mag))}
 .trail-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:4px}
 #continueOv .card{border-color:rgba(255,43,214,.45)}
+
+/* DISTINCT IDENTITY: dumpster bin + mascot + magnet */
+#boardWrap{border-radius:14px 14px 22px 22px;background:
+  linear-gradient(180deg,rgba(20,10,18,.95),rgba(4,6,14,.92));
+  box-shadow:0 0 0 3px #1a2438,0 0 0 5px rgba(255,43,214,.35),0 0 0 7px rgba(0,245,255,.25),
+  0 18px 40px rgba(0,0,0,.55),inset 0 0 40px rgba(0,0,0,.5);
+  overflow:hidden;position:relative}
+#boardWrap::before{content:"";position:absolute;left:8%;right:8%;top:0;height:10px;z-index:3;pointer-events:none;
+  background:linear-gradient(180deg,#4a5568,#2a303c);border-radius:0 0 6px 6px;
+  box-shadow:0 2px 0 rgba(0,245,255,.35),inset 0 1px 0 rgba(255,255,255,.2)}
+#boardWrap::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;
+  background:
+    repeating-linear-gradient(90deg,transparent 0 22px,rgba(0,245,255,.035) 22px 23px),
+    linear-gradient(180deg,rgba(255,43,214,.05),transparent 18%,transparent 82%,rgba(0,0,0,.35));
+  border:1px solid rgba(0,245,255,.12);border-radius:14px 14px 22px 22px;margin:0}
+#binChrome{position:absolute;left:-10px;right:-10px;bottom:-6px;height:18px;z-index:4;pointer-events:none;
+  background:linear-gradient(180deg,#2a3144,#12161f);border-radius:0 0 16px 16px;
+  box-shadow:inset 0 2px 0 rgba(0,245,255,.25),0 4px 0 #070918}
+#pressBar{position:absolute;left:4%;right:4%;top:-8%;height:14px;z-index:6;pointer-events:none;opacity:0;
+  background:linear-gradient(180deg,#cfd6e6,#6a7388 40%,#3a4254);border-radius:4px;
+  box-shadow:0 0 12px rgba(0,245,255,.5),0 6px 0 rgba(0,0,0,.45);transition:none}
+#pressBar.on{opacity:1}
+#mascot{position:absolute;right:2px;bottom:8px;width:54px;height:54px;z-index:7;pointer-events:none;
+  filter:drop-shadow(0 0 8px rgba(255,43,214,.45));transition:transform .2s}
+#mascot svg{width:100%;height:100%}
+#mascot.cheer{animation:mascotCheer .55s ease}
+#mascot.sad{animation:mascotSad .6s ease}
+@keyframes mascotCheer{0%{transform:translateY(0) rotate(0)}40%{transform:translateY(-8px) rotate(-8deg)}100%{transform:translateY(0)}}
+@keyframes mascotSad{0%{transform:translateY(0)}50%{transform:translateY(4px) scale(.96)}100%{transform:translateY(0)}}
+#magnetChip{position:absolute;left:6px;bottom:10px;z-index:7;font-size:10px;font-weight:800;letter-spacing:.08em;
+  background:rgba(10,14,28,.88);border:1px solid rgba(0,245,255,.4);color:var(--cyan);padding:4px 8px;border-radius:999px}
+#controls{grid-template-columns:1fr 1fr 1fr 1fr 1fr;grid-template-areas:"stash left rot right mag" "soft soft hard hard hard"}
+.pad.hold,.pad.stash{grid-area:stash}
+.pad.mag{grid-area:mag;background:linear-gradient(180deg,#183040,#0c1824);border-color:rgba(0,245,255,.45);color:#9ef6ff;font-size:11px}
+.mini.stash{border-color:rgba(255,43,214,.35);background:linear-gradient(180deg,#1a1020,#0e1220)}
+.mini.stash label{color:var(--mag)}
+.mini.next label{color:var(--cyan)}
+
 /* META_V2_END */
 
 </style>
@@ -216,7 +254,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
       </svg>
       <h1>TRASH STACK</h1>
     </div>
-    <div class="tag">Neon docks · night shift</div>
+    <div class="tag">Neon junk · compactor shift</div>
     <div class="meta-row">
       <div class="chip"><span class="k">BEST</span> <span id="hiChip">0</span></div>
       <div class="chip gold"><span class="k">SHINIES</span> <span id="shChip">0</span></div>
@@ -238,6 +276,9 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     </div>
     <div class="rowbtns" style="margin-top:14px">
       <button class="btn ghost small" id="howBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">How to play</button>
+      <button class="btn ghost small" id="settingsBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">Settings</button>
+    </div>
+    <div class="rowbtns" style="margin-top:8px">
       <button class="btn ghost small" id="muteTitle" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">Sound on</button>
     </div>
     
@@ -272,23 +313,41 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     <div id="stage">
       <div id="stageRow">
       <aside class="rail">
-        <div class="mini"><label>Hold</label><canvas id="holdC" width="72" height="72"></canvas></div>
+        <div class="mini stash"><label>Stash bin</label><canvas id="holdC" width="72" height="72"></canvas></div>
       </aside>
       <div id="boardWrap">
         <canvas id="c"></canvas>
+        <div id="pressBar"></div>
+        <div id="binChrome"></div>
+        <div id="magnetChip">MAG 0</div>
+        <div id="mascot" aria-hidden="true">
+          <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="32" cy="40" rx="18" ry="16" fill="#1a1020" stroke="#00f5ff" stroke-width="2"/>
+            <circle cx="20" cy="22" r="8" fill="#1a1020" stroke="#ff2bd6" stroke-width="1.5"/>
+            <circle cx="44" cy="22" r="8" fill="#1a1020" stroke="#ff2bd6" stroke-width="1.5"/>
+            <ellipse cx="32" cy="36" rx="12" ry="10" fill="#241828"/>
+            <ellipse cx="26" cy="34" rx="4" ry="4.5" fill="#111" stroke="#ff2bd6" stroke-width="1"/>
+            <ellipse cx="38" cy="34" rx="4" ry="4.5" fill="#111" stroke="#ff2bd6" stroke-width="1"/>
+            <circle cx="27" cy="34" r="1.6" fill="#00f5ff"/>
+            <circle cx="37" cy="34" r="1.6" fill="#00f5ff"/>
+            <path d="M28 42c2 3 6 3 8 0" fill="none" stroke="#ffd166" stroke-width="1.5" stroke-linecap="round"/>
+            <text x="32" y="58" text-anchor="middle" fill="#ff2bd6" font-size="6" font-family="sans-serif" font-weight="700">TP</text>
+          </svg>
+        </div>
         <div id="announce"></div>
         <div id="fxNums"></div>
       </div>
       <aside class="rail">
-        <div class="mini"><label>Next</label><canvas id="nextC" width="72" height="216"></canvas></div>
+        <div class="mini next"><label>Conveyor</label><canvas id="nextC" width="72" height="216"></canvas></div>
       </aside>
       </div>
     </div>
     <div id="controls">
-      <button class="pad hold" type="button" data-act="hold">Hold</button>
+      <button class="pad stash" type="button" data-act="hold">Stash</button>
       <button class="pad left" type="button" data-act="left">◀</button>
       <button class="pad rot" type="button" data-act="rot">↻</button>
       <button class="pad right" type="button" data-act="right">▶</button>
+      <button class="pad mag" type="button" data-act="magnet">Magnet</button>
       <button class="pad soft" type="button" data-act="soft">Soft ▼</button>
       <button class="pad hard" type="button" data-act="hard">Hard drop</button>
     </div>
@@ -332,12 +391,12 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 <div id="howOv" class="overlay hidden"><div class="card" id="how">
   <h2>HOW TO PLAY</h2>
   <ol>
-    <li>Move falling stacks to fill rows. Full rows vanish.</li>
-    <li>Tap the well to rotate. Swipe left or right to move.</li>
-    <li>Swipe down to soft drop. Flick down to hard drop.</li>
-    <li>Hold a piece for later. Chain clears for combos.</li>
-    <li>Earn Shinies (soft currency), level up, unlock looks, chase achievements.</li>
-    <li>Optional rewarded ads for continue, double Shinies, or an extra daily spin. Odds shown for random rewards.</li>
+    <li>Drop junk into the <b>compactor bin</b> (8×15). Full rows get crushed by the hydraulic press for scrap points.</li>
+    <li>Match <b>3+ same-material</b> tiles (metal, plastic, paper, glass) for a recycle pop bonus.</li>
+    <li>Tap the bin to rotate. Swipe to move. Soft / hard drop as usual. DAS + lock delay kept snappy.</li>
+    <li>Stash one piece in the stash bin. Spend a <b>Magnet</b> charge (Trash Panda’s trick) to yank the falling junk into stash.</li>
+    <li>Junk looks like cans, boxes, tires, bags, pipes, and tubes — not plain bricks.</li>
+    <li>Earn Shinies, level up, unlock looks. Rewarded ads are optional (revive / double / spin). Odds shown for random rewards.</li>
   </ol>
   <button class="btn wide" id="howClose" type="button" style="margin-top:8px">Got it</button>
 </div></div>
@@ -394,87 +453,99 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   <button class="btn ghost wide" id="calClose" type="button">Close</button>
 </div></div>
 
+<div id="settingsOv" class="overlay hidden"><div class="card">
+  <h2>SETTINGS</h2>
+  <p>Trash Stack by Cinder and Crown — neon junk puzzle. Cross-promotes Trash Panda.</p>
+  <button class="btn wide" id="settingsMute" type="button" style="margin-top:8px">Sound on</button>
+  <button class="btn ghost wide" id="settingsHow" type="button" style="margin-top:10px">How to play</button>
+  <button class="btn ghost wide" id="settingsPrivacy" type="button" style="margin-top:10px">Privacy</button>
+  <button class="btn ghost wide" id="settingsSupport" type="button" style="margin-top:10px">Support</button>
+  <p style="margin-top:12px;font-size:11px">Ads use Google AdMob (test IDs in builds). ATT + UMP consent on iOS. Remove Ads / Premium Pass coming soon — stubs only.</p>
+  <button class="btn ghost wide" id="settingsClose" type="button" style="margin-top:10px">Close</button>
+</div></div>
+
 <div id="flash"></div>
 <div id="toast"></div>
 <script>
 (() => {
 "use strict";
 
-const COLS = 10, VIS = 20, HID = 2, ROWS = VIS + HID;
-const LOCK_MS = 520, LOCK_RESETS = 15, CLEAR_MS = 420;
+const COLS = 8, VIS = 15, HID = 2, ROWS = VIS + HID; // 8×15 compactor bin (not a 10×20 well)
+const LOCK_MS = 520, LOCK_RESETS = 15, CLEAR_MS = 560;
 const DAS = 160, ARR = 36, SOFT_MS = 42;
-const KEY = "trashStack.v1";
+const KEY = "trashStack.v2"; // bump: new board + junk set
+const SAVE_MIGRATE_FROM = "trashStack.v1";
 
-const COLORS = {
-  I: "#3dffff", O: "#ffd84a", T: "#e85cff",
-  S: "#5dff6a", Z: "#ff4b6b", J: "#4a7dff", L: "#ff9a3c"
+// Materials for recycle matching (3+ adjacent same material)
+const MATERIALS = ["metal","plastic","paper","glass"];
+const MATERIAL_COLOR = {
+  metal: "#9eb6c8",
+  plastic: "#ff2bd6",
+  paper: "#c4a574",
+  glass: "#00f5ff"
 };
 
-const MATS = {
-  I: [
-    [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
-    [[0,0,1,0],[0,0,1,0],[0,0,1,0],[0,0,1,0]],
-    [[0,0,0,0],[0,0,0,0],[1,1,1,1],[0,0,0,0]],
-    [[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]]
-  ],
-  O: [
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]]
-  ],
-  T: [
-    [[0,1,0],[1,1,1],[0,0,0]],
-    [[0,1,0],[0,1,1],[0,1,0]],
-    [[0,0,0],[1,1,1],[0,1,0]],
-    [[0,1,0],[1,1,0],[0,1,0]]
-  ],
-  S: [
-    [[0,1,1],[1,1,0],[0,0,0]],
-    [[0,1,0],[0,1,1],[0,0,1]],
-    [[0,0,0],[0,1,1],[1,1,0]],
-    [[1,0,0],[1,1,0],[0,1,0]]
-  ],
-  Z: [
-    [[1,1,0],[0,1,1],[0,0,0]],
-    [[0,0,1],[0,1,1],[0,1,0]],
-    [[0,0,0],[1,1,0],[0,1,1]],
-    [[0,1,0],[1,1,0],[1,0,0]]
-  ],
-  J: [
-    [[1,0,0],[1,1,1],[0,0,0]],
-    [[0,1,1],[0,1,0],[0,1,0]],
-    [[0,0,0],[1,1,1],[0,0,1]],
-    [[0,1,0],[0,1,0],[1,1,0]]
-  ],
-  L: [
-    [[0,0,1],[1,1,1],[0,0,0]],
-    [[0,1,0],[0,1,0],[0,1,1]],
-    [[0,0,0],[1,1,1],[1,0,0]],
-    [[1,1,0],[0,1,0],[0,1,0]]
-  ]
-};
+// Junk catalog: tromino + pentomino heavy (avoid the classic 7 one-sided polyomino set as the core identity).
+// Each cell is drawn as a trash object, not a uniform brick.
+function rot90(m){
+  const R=m.length, C=m[0].length, out=[];
+  for(let c=0;c<C;c++){ const row=[]; for(let r=R-1;r>=0;r--) row.push(m[r][c]); out.push(row); }
+  return out;
+}
+function rots(seed){
+  const out=[seed];
+  for(let i=0;i<3;i++) out.push(rot90(out[i]));
+  return out;
+}
 
-// SRS kicks: (x, yUp). Applied as (x, -yUp) because y grows down.
-const KICKS_JLSTZ = {
-  "0|1": [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
-  "1|0": [[0,0],[1,0],[1,-1],[0,2],[1,2]],
-  "1|2": [[0,0],[1,0],[1,-1],[0,2],[1,2]],
-  "2|1": [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
-  "2|3": [[0,0],[1,0],[1,1],[0,-2],[1,-2]],
-  "3|2": [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
-  "3|0": [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
-  "0|3": [[0,0],[1,0],[1,1],[0,-2],[1,-2]]
+const JUNK = {
+  CAN: {
+    name:"Crushed Can", material:"metal", color:"#b8c8d4",
+    mats: rots([[1,1,1]])
+  },
+  BOX: {
+    name:"Pizza Box", material:"paper", color:"#d2a86a",
+    mats: rots([[1,0],[1,1]])
+  },
+  TUBE: {
+    name:"Neon Tube", material:"glass", color:"#5cffef",
+    mats: rots([[1,0],[1,1]]) // triomino L — 3 cells
+  },
+  BAG: {
+    name:"Trash Bag", material:"plastic", color:"#ff2bd6",
+    mats: rots([[1,1,1],[1,0,1]]) // U pentomino
+  },
+  PIPE: {
+    name:"Pipe Section", material:"metal", color:"#00c8b4",
+    mats: rots([[0,1,0],[1,1,1],[0,1,0]]) // + / X-ish pentomino
+  },
+  TIRE: {
+    name:"Tire Scrap", material:"plastic", color:"#3a3a48",
+    mats: rots([[0,1,1],[1,1,0],[1,0,0]]) // F/N-like pentomino
+  },
+  CRATE: {
+    name:"Crate Lid", material:"paper", color:"#c98a3c",
+    mats: rots([[1,1],[1,1],[1,0]]) // P pentomino
+  },
+  BOTTLE: {
+    name:"Bottle Nest", material:"glass", color:"#7dffd4",
+    mats: rots([[1,0,0],[1,1,1],[0,0,1]]) // asymmetric 5 — not a classic polyomino
+  }
 };
-const KICKS_I = {
-  "0|1": [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
-  "1|0": [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
-  "1|2": [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
-  "2|1": [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
-  "2|3": [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
-  "3|2": [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
-  "3|0": [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
-  "0|3": [[0,0],[-1,0],[2,0],[-1,2],[2,-1]]
+const PIECE_IDS = Object.keys(JUNK);
+const COLORS = Object.fromEntries(PIECE_IDS.map(id => [id, JUNK[id].color]));
+const MATS = Object.fromEntries(PIECE_IDS.map(id => [id, JUNK[id].mats]));
+
+// Generic wall-kick table (no SRS / no I-piece special casing)
+const KICKS_GENERIC = {
+  "0|1": [[0,0],[-1,0],[1,0],[0,-1],[-1,-1],[1,-1],[-2,0],[2,0],[0,1]],
+  "1|0": [[0,0],[1,0],[-1,0],[0,1],[1,1],[-1,1],[2,0],[-2,0],[0,-1]],
+  "1|2": [[0,0],[1,0],[-1,0],[0,-1],[1,-1],[-1,-1],[2,0],[-2,0],[0,1]],
+  "2|1": [[0,0],[-1,0],[1,0],[0,1],[-1,1],[1,1],[-2,0],[2,0],[0,-1]],
+  "2|3": [[0,0],[1,0],[-1,0],[0,-1],[1,-1],[-1,-1],[2,0],[-2,0],[0,1]],
+  "3|2": [[0,0],[-1,0],[1,0],[0,1],[-1,1],[1,1],[-2,0],[2,0],[0,-1]],
+  "3|0": [[0,0],[-1,0],[1,0],[0,-1],[-1,-1],[1,-1],[-2,0],[2,0],[0,1]],
+  "0|3": [[0,0],[1,0],[-1,0],[0,1],[1,1],[-1,1],[2,0],[-2,0],[0,-1]]
 };
 
 const SKINS = [
@@ -484,7 +555,7 @@ const SKINS = [
   {id:"glass", name:"Rain Glass", price:500, sw:"linear-gradient(135deg,#9ee7ff,#265a80)"},
   {id:"circuit", name:"Circuit Junk", price:800, sw:"linear-gradient(135deg,#0a2,#0f0 40%,#030)"},
   {id:"sticker", name:"Sticker Bomb", price:1000, sw:"linear-gradient(90deg,#ff4b6b,#ffd84a,#5dff6a,#4a7dff)"},
-  {id:"ghost", name:"Ghost Run", price:700, sw:"linear-gradient(135deg,#cfd8ff,#667)"}
+  {id:"haze", name:"Haze Run", price:700, sw:"linear-gradient(135deg,#cfd8ff,#667)"}
 ];
 const BGS = [
   {id:"docks", name:"Night Docks", price:0, sw:"linear-gradient(#0a0b16,#1a1030)"},
@@ -498,7 +569,7 @@ const CH_POOL = [
   {id:"lines20", name:"Clear 20 lines", goal:20, kind:"lines", reward:40},
   {id:"score5k", name:"Score 5,000 in one run", goal:5000, kind:"scoreRun", reward:50},
   {id:"combo3", name:"Hit a x3 combo", goal:1, kind:"combo3", reward:35},
-  {id:"quad1", name:"Land a 4-line sweep", goal:1, kind:"quad", reward:45},
+  {id:"quad1", name:"Crush a 3-row compact", goal:1, kind:"quad", reward:45},
   {id:"lines40", name:"Clear 40 lines today", goal:40, kind:"linesDay", reward:60},
   {id:"combo5", name:"Hit a x5 combo", goal:1, kind:"combo5", reward:70},
   {id:"games3", name:"Play 3 games today", goal:3, kind:"games", reward:30},
@@ -537,8 +608,8 @@ const ACHIEVEMENTS = [
   {id:"combo_3", name:"Triple Threat", desc:"Hit a x3 combo", goal:3, kind:"bestCombo", reward:30},
   {id:"combo_5", name:"On Fire", desc:"Hit a x5 combo", goal:5, kind:"bestCombo", reward:60},
   {id:"combo_8", name:"Inferno", desc:"Hit a x8 combo", goal:8, kind:"bestCombo", reward:120},
-  {id:"quad_1", name:"Full Sweep", desc:"Land a 4-line clear", goal:1, kind:"quads", reward:40},
-  {id:"quad_10", name:"Sweep Artist", desc:"Land 10 four-line clears", goal:10, kind:"quads", reward:100},
+  {id:"quad_1", name:"Full Crush", desc:"Land a 3-row compact", goal:1, kind:"quads", reward:40},
+  {id:"quad_10", name:"Press Operator", desc:"Land 10 three-row compacts", goal:10, kind:"quads", reward:100},
   {id:"games_5", name:"Shift Starter", desc:"Play 5 runs", goal:5, kind:"games", reward:25},
   {id:"games_25", name:"Night Shift", desc:"Play 25 runs", goal:25, kind:"games", reward:70},
   {id:"games_100", name:"Dock Lifer", desc:"Play 100 runs", goal:100, kind:"games", reward:200},
@@ -551,19 +622,22 @@ const ACHIEVEMENTS = [
   {id:"shinies_500", name:"Shiny Pockets", desc:"Hold 500 Shinies at once", goal:500, kind:"shiniesHeld", reward:40},
   {id:"shinies_earned", name:"Hoarder", desc:"Earn 1,000 Shinies lifetime", goal:1000, kind:"shiniesEarned", reward:80},
   {id:"skins_3", name:"Wardrobe", desc:"Own 3 skins", goal:3, kind:"skinsOwned", reward:35},
-  {id:"skins_all", name:"Full Closet", desc:"Own every skin", goal:7, kind:"skinsOwned", reward:150},
+  {id:"skins_all", name:"Full Closet", desc:"Own every skin", goal:SKINS.length, kind:"skinsOwned", reward:150},
   {id:"bgs_3", name:"Scenic", desc:"Own 3 backgrounds", goal:3, kind:"bgsOwned", reward:35},
   {id:"hard_50", name:"Drop Machine", desc:"Hard-drop 50 times", goal:50, kind:"hardDrops", reward:40},
   {id:"spin_1", name:"Lucky Night", desc:"Spin the daily wheel", goal:1, kind:"spins", reward:20},
   {id:"spin_7", name:"Wheel Regular", desc:"Spin 7 times", goal:7, kind:"spins", reward:70},
   {id:"continue_1", name:"Second Chance", desc:"Revive once via rewarded ad", goal:1, kind:"continues", reward:30},
   {id:"pb_chase", name:"Chaser", desc:"Beat your personal best", goal:1, kind:"pbBeats", reward:45},
-  {id:"week_clear", name:"Weekly Hero", desc:"Complete a weekly challenge", goal:1, kind:"weeklies", reward:60}
+  {id:"week_clear", name:"Weekly Hero", desc:"Complete a weekly challenge", goal:1, kind:"weeklies", reward:60},
+  {id:"recycle_1", name:"Sort It", desc:"Trigger a recycle pop", goal:1, kind:"recycles", reward:25},
+  {id:"recycle_25", name:"Sorting Pro", desc:"Trigger 25 recycle pops", goal:25, kind:"recycles", reward:80},
+  {id:"magnet_1", name:"Scrap Magnet", desc:"Use Magnet once", goal:1, kind:"magnets", reward:30}
 ];
 const WEEKLY_POOL = [
   {id:"w_lines100", name:"Clear 100 lines this week", goal:100, kind:"linesWeek", reward:120},
   {id:"w_score20k", name:"Best run score 20,000", goal:20000, kind:"scoreWeekBest", reward:140},
-  {id:"w_quads5", name:"Land 5 four-line clears", goal:5, kind:"quadWeek", reward:110},
+  {id:"w_quads5", name:"Land 5 three-row compacts", goal:5, kind:"quadWeek", reward:110},
   {id:"w_games10", name:"Play 10 runs this week", goal:10, kind:"gamesWeek", reward:90},
   {id:"w_combo6", name:"Hit a x6 combo", goal:6, kind:"comboWeek", reward:130}
 ];
@@ -595,13 +669,18 @@ const WHEEL_ODDS = WHEEL.map(w => ({ label:w.label, pct: Math.round(100/WHEEL.le
 /* META_JS_V2_END */
 
 
+if (!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+    r=Math.min(r||0,w/2,h/2); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath();
+  };
+}
 const LINE_SCORE = [0,100,300,500,800];
 const LINE_SHINY = [0,1,3,6,12];
 const ANNOUNCE = {
   1: ["NICE"],
   2: ["NICE","GREAT"],
   3: ["GREAT","SAVAGE"],
-  4: ["INSANE","FULL SWEEP","CITY SWEEP"]
+  4: ["INSANE","COMPACTOR","CITY CRUSH"]
 };
 
 function gravityMs(level){
@@ -635,7 +714,7 @@ function defaultSave(){
     weekly:{week:"", items:[]},
     achievements:{},
     gamesPlayed:0, totalLines:0, dayLines:0, dayGames:0, dayDate:"",
-    shiniesEarned:50, quads:0, hardDropTotal:0, bestCombo:0, spins:0, continues:0, pbBeats:0, weekliesDone:0,
+    shiniesEarned:50, quads:0, hardDropTotal:0, bestCombo:0, spins:0, continues:0, pbBeats:0, weekliesDone:0, recycles:0, magnets:0,
     runShinies:0, localScores:[],
     battlePass:{ season:1, xp:0, claimedFree:[], claimedPremium:[] },
     // IAP stubs — TODO: StoreKit / Play Billing product IDs
@@ -647,12 +726,20 @@ function TN(){ return window.TrashNative || null; }
 async function load(){
   try{
     let raw = null;
-    if (TN() && TN().loadProgress){
-      raw = await TN().loadProgress(KEY);
-    } else {
-      raw = localStorage.getItem(KEY);
+    async function readKey(k){
+      if (TN() && TN().loadProgress) return await TN().loadProgress(k);
+      return localStorage.getItem(k);
     }
-    if (raw) save = Object.assign(defaultSave(), JSON.parse(raw));
+    raw = await readKey(KEY);
+    if (!raw) raw = await readKey(SAVE_MIGRATE_FROM);
+    if (raw){
+      save = Object.assign(defaultSave(), JSON.parse(raw));
+      // Migrate renamed cosmetics
+      if (save.skin==="ghost") save.skin="haze";
+      if (Array.isArray(save.unlockedSkins)){
+        save.unlockedSkins = save.unlockedSkins.map(s=>s==="ghost"?"haze":s);
+      }
+    }
   }catch(e){}
   rollDaily();
 }
@@ -915,6 +1002,8 @@ function achievementProgress(def){
     case "continues": return save.continues||0;
     case "pbBeats": return save.pbBeats||0;
     case "weeklies": return save.weekliesDone||0;
+    case "recycles": return save.recycles||0;
+    case "magnets": return save.magnets||0;
     default: return 0;
   }
 }
@@ -1014,15 +1103,19 @@ function emptyBoard(){
   return b;
 }
 function refillBag(){
-  const p = ["I","O","T","S","Z","J","L"];
+  const p = PIECE_IDS.slice();
   for (let i=p.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [p[i],p[j]]=[p[j],p[i]]; }
   bag.push(...p);
 }
 function takeBag(){
-  if (bag.length<7) refillBag();
+  if (bag.length < PIECE_IDS.length) refillBag();
   return bag.shift();
 }
-function spawnX(type){ return type==="O"?4:3; }
+function spawnX(type){
+  const m = MATS[type][0];
+  const w = m[0].length;
+  return Math.max(0, Math.floor((COLS - w) / 2));
+}
 function cellsOf(type, rot, x, y){
   const m = MATS[type][rot];
   const out=[];
@@ -1069,6 +1162,8 @@ function resetRun(){
   keys={}; dasDir=0;
   continuedThisRun=false; pendingGameOver=false;
   save.runShinies=0; lastRunShinies=0;
+  recyclePending=null; magnetCharge=1; // start with one magnet
+  syncMagnetUI();
   nextPiece();
   syncGameUI();
   const bridge = TN();
@@ -1097,11 +1192,9 @@ function tryMove(dx,dy){
 
 function tryRot(dir){
   if (!cur || clearing || over || paused) return false;
-  if (cur.type==="O"){ SFX.rot(); lastRot=true; return true; }
   const from = cur.rot;
   const to = (cur.rot + dir + 4) % 4;
-  const table = cur.type==="I" ? KICKS_I : KICKS_JLSTZ;
-  const kicks = table[from+"|"+to] || [[0,0]];
+  const kicks = KICKS_GENERIC[from+"|"+to] || [[0,0]];
   for (let i=0;i<kicks.length;i++){
     const [kx, yup] = kicks[i];
     const nx = cur.x + kx;
@@ -1130,27 +1223,93 @@ function doHold(){
   drawPreviews();
 }
 
-function detectTSpin(){
-  if (!cur || cur.type!=="T" || !lastRot) return false;
-  const cx = cur.x+1, cy = cur.y+1;
-  const corners = [[0,0],[2,0],[0,2],[2,2]];
-  let filled=0;
-  for (const [dx,dy] of corners){
-    const xx=cur.x+dx, yy=cur.y+dy;
-    if (xx<0||xx>=COLS||yy>=ROWS|| (yy>=0 && board[yy][xx])) filled++;
+function cellMaterial(v){
+  if (!v) return null;
+  return (JUNK[v] && JUNK[v].material) || null;
+}
+
+function findRecycleGroups(){
+  const seen = Array.from({length:ROWS},()=>Array(COLS).fill(false));
+  const groups=[];
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    if (seen[y][x] || !board[y][x]) continue;
+    const mat = cellMaterial(board[y][x]);
+    if (!mat) continue;
+    const stack=[[x,y]], cells=[];
+    seen[y][x]=true;
+    while (stack.length){
+      const [cx,cy]=stack.pop();
+      cells.push({x:cx,y:cy});
+      for (const [dx,dy] of dirs){
+        const nx=cx+dx, ny=cy+dy;
+        if (nx<0||nx>=COLS||ny<0||ny>=ROWS||seen[ny][nx]) continue;
+        if (cellMaterial(board[ny][nx])!==mat) continue;
+        seen[ny][nx]=true; stack.push([nx,ny]);
+      }
+    }
+    if (cells.length>=3) groups.push({mat, cells});
   }
-  return filled>=3;
+  return groups;
+}
+
+function applyGravity(){
+  const next=[];
+  for (let y=0;y<ROWS;y++) next[y]=new Array(COLS).fill(0);
+  for (let x=0;x<COLS;x++){
+    let w=ROWS-1;
+    for (let y=ROWS-1;y>=0;y--){
+      if (board[y][x]){ next[w][x]=board[y][x]; w--; }
+    }
+  }
+  board=next;
+}
+
+let recyclePending=null;
+let magnetCharge=0;
+function syncMagnetUI(){
+  const el=document.getElementById("magnetChip");
+  if (el) el.textContent = "MAG "+magnetCharge;
+  const btn=document.querySelector('.pad.mag');
+  if (btn) btn.disabled = magnetCharge<=0;
+}
+
+function mascotReact(kind){
+  const m=document.getElementById("mascot");
+  if (!m) return;
+  m.classList.remove("cheer","sad");
+  void m.offsetWidth;
+  m.classList.add(kind==="sad"?"sad":"cheer");
+}
+
+function doMagnet(){
+  if (!cur || clearing || over || paused || magnetCharge<=0) return;
+  magnetCharge--;
+  syncMagnetUI();
+  // Steal falling junk into stash (Trash Panda magnet)
+  const t = cur.type;
+  if (hold){ const sw=hold; hold=t; spawn(sw); }
+  else { hold=t; nextPiece(); }
+  holdUsed=false; // magnet gift — stash still usable
+  save.magnets=(save.magnets||0)+1;
+  SFX.hold(); vibe([12,20,12]);
+  mascotReact("cheer");
+  announce("MAGNET!", "#00f5ff");
+  toast("Trash Panda yanked it!");
+  persist(); checkAchievements();
+  drawPreviews(); syncMagnetUI();
 }
 
 function lockPiece(){
   if (!cur) return;
-  tspin = detectTSpin();
+  tspin = false;
   const cells = cellsOf(cur.type, cur.rot, cur.x, cur.y);
   for (const c of cells){
     if (c.y<0){ gameOver(); return; }
     if (c.y<ROWS) board[c.y][c.x] = cur.type;
   }
   SFX.lock();
+  // 1) Compactor: full rows
   const full=[];
   for (let y=0;y<ROWS;y++){
     if (board[y].every(v=>v)) full.push(y);
@@ -1159,21 +1318,63 @@ function lockPiece(){
     clearing = full;
     clearT = CLEAR_MS;
     juiceClear(full.length);
-  } else {
-    combo = 0;
-    cur=null;
-    nextPiece();
-    updateComboUI();
+    // press animation
+    const press=document.getElementById("pressBar");
+    if (press){
+      press.classList.add("on");
+      press.style.top = "-8%";
+      requestAnimationFrame(()=>{ press.style.transition="top .45s cubic-bezier(.2,.8,.2,1)"; press.style.top="92%"; });
+      setTimeout(()=>{ press.classList.remove("on"); press.style.transition="none"; press.style.top="-8%"; }, CLEAR_MS);
+    }
+    return;
   }
+  // 2) Recycle match if no full rows
+  const groups = findRecycleGroups();
+  if (groups.length){
+    recyclePending = groups;
+    clearing = groups.flatMap(g=>g.cells.map(c=>c.y)); // for timing reuse
+    clearT = Math.floor(CLEAR_MS*0.75);
+    juiceRecycle(groups);
+    return;
+  }
+  combo = 0;
+  cur=null;
+  nextPiece();
+  updateComboUI();
+}
+
+function juiceRecycle(groups){
+  let popped=0;
+  for (const g of groups){
+    popped += g.cells.length;
+  }
+  // cells stay until finishClear so the recycle flash is visible
+  const gained = popped*40*level + groups.length*60;
+  score += gained;
+  combo++;
+  magnetCharge = Math.min(3, magnetCharge + (groups.length>=2?1:0) + (popped>=6?1:0));
+  if (magnetCharge===0 && popped>=5) magnetCharge=1;
+  addShinies(2+groups.length*2, "run");
+  addXP(popped*6);
+  save.recycles=(save.recycles||0)+groups.length;
+  bumpChallenge("combo", combo);
+  checkAchievements();
+  shake = 6+popped; flashA=0.35;
+  SFX.clear(Math.min(4, groups.length+1), combo);
+  vibe([18,24,18]);
+  mascotReact("cheer");
+  announce("RECYCLE x"+groups.length, MATERIAL_COLOR[groups[0].mat]||"#7dff6b");
+  const wrap = document.getElementById("boardWrap").getBoundingClientRect();
+  floatNum("+"+gained, wrap.width/2, wrap.height/2, "#7dff6b");
+  syncMagnetUI(); syncGameUI(); updateComboUI();
 }
 
 function juiceClear(n){
-  const difficult = n===4 || tspin;
+  const difficult = n>=3;
   if (combo>0) score += 50*combo*level;
   combo++;
-  const base = LINE_SCORE[n]*level;
-  const spinBonus = tspin ? (n===0?400:n===1?800:n===2?1200:1600)*level : 0;
-  let gained = base + spinBonus;
+  const base = (LINE_SCORE[Math.min(4,n)]|| (100*n*n))*level;
+  let gained = base + n*80*level;
   if (difficult && b2b) gained = Math.floor(gained*1.5);
   score += gained;
   lines += n;
@@ -1181,14 +1382,14 @@ function juiceClear(n){
   const leveled = newLv>level;
   level = newLv;
 
-  const sh = LINE_SHINY[n] + Math.max(0, combo-1) + (difficult && b2b ? 5 : 0) + (leveled?10:0);
+  const sh = (LINE_SHINY[Math.min(4,n)]||n) + Math.max(0, combo-1) + (difficult && b2b ? 5 : 0) + (leveled?10:0);
   addShinies(sh, "run");
-  addXP(n*12 + combo*4 + (n===4?20:0));
+  addXP(n*12 + combo*4 + (n>=3?20:0));
 
   bumpChallenge("lines", n);
   bumpChallenge("score", score);
   bumpChallenge("combo", combo);
-  if (n===4){ bumpChallenge("quad", 1); save.quads=(save.quads||0)+1; bumpWeekly("quad",1); }
+  if (n>=3){ bumpChallenge("quad", 1); save.quads=(save.quads||0)+1; bumpWeekly("quad",1); }
   bumpWeekly("lines", n);
   bumpWeekly("score", score);
   bumpWeekly("combo", combo);
@@ -1202,23 +1403,23 @@ function juiceClear(n){
   for (const ry of clearing){
     burst(wrap.width/2, rowToY(ry), "#fff", 10+n*3, 3.5, "spark");
   }
-  shake = 4 + n*5 + (combo>3?6:0) + (n===4?8:0);
+  shake = 4 + n*5 + (combo>3?6:0) + (n>=3?8:0);
   flashA = n>=3 ? 0.55 : n===2 ? 0.28 : 0.16;
   if (difficult && b2b) flashA += 0.15;
-  SFX.clear(n, combo);
-  vibe(n>=4 ? [20,30,40,30,20] : n>=2 ? [15,30,15] : 18);
+  SFX.clear(Math.min(4,n), combo);
+  vibe(n>=3 ? [20,30,40,30,20] : n>=2 ? [15,30,15] : 18);
+  mascotReact("cheer");
 
   let words = [];
-  if (tspin) words.push("TWIST");
-  if (difficult && b2b) words.push("BACK TO BACK");
-  if (n===4) words.push(ANNOUNCE[4][Math.floor(Math.random()*ANNOUNCE[4].length)]);
-  else if (n===3) words.push("GREAT");
-  else if (n===2) words.push("NICE");
+  if (difficult && b2b) words.push("DOUBLE PRESS");
+  if (n>=3) words.push("COMPACTOR!");
+  else if (n===2) words.push("CRUSH");
+  else words.push("SCRAP");
   if (combo>=6) words.push("INSANE x"+combo);
   else if (combo>=4) words.push("ON FIRE x"+combo);
   else if (combo>=2) words.push("COMBO x"+combo);
   if (leveled) words.push("SPEED UP");
-  const col = n>=4 || combo>=4 ? "#ff2bd6" : n>=3 ? "#ffd166" : "#00f5ff";
+  const col = n>=3 || combo>=4 ? "#ff2bd6" : n>=2 ? "#ffd166" : "#00f5ff";
   if (words.length) announce(words[0], col);
   if (words[1]) setTimeout(()=>announce(words[1], "#ffd166"), 380);
   floatNum("+"+gained, wrap.width/2, midY, "#fff");
@@ -1230,6 +1431,30 @@ function juiceClear(n){
 }
 
 function finishClear(){
+  if (recyclePending){
+    for (const g of recyclePending){
+      for (const c of g.cells) board[c.y][c.x]=0;
+    }
+    applyGravity();
+    recyclePending=null;
+    clearing=null; clearT=0;
+    // chain: more recycles or rows?
+    const full=[];
+    for (let y=0;y<ROWS;y++) if (board[y].every(v=>v)) full.push(y);
+    if (full.length){
+      clearing=full; clearT=CLEAR_MS; juiceClear(full.length);
+      return;
+    }
+    const groups=findRecycleGroups();
+    if (groups.length){
+      recyclePending=groups;
+      clearing=groups.flatMap(g=>g.cells.map(c=>c.y));
+      clearT=Math.floor(CLEAR_MS*0.7);
+      juiceRecycle(groups);
+      return;
+    }
+    cur=null; nextPiece(); return;
+  }
   const drop = new Set(clearing);
   const next = [];
   for (let y=0;y<ROWS;y++) next[y] = new Array(COLS).fill(0);
@@ -1239,6 +1464,17 @@ function finishClear(){
   }
   board = next;
   clearing=null; clearT=0;
+  // After compact, award magnet + check recycle chains
+  magnetCharge = Math.min(3, magnetCharge + 1);
+  syncMagnetUI();
+  const groups=findRecycleGroups();
+  if (groups.length){
+    recyclePending=groups;
+    clearing=groups.flatMap(g=>g.cells.map(c=>c.y));
+    clearT=Math.floor(CLEAR_MS*0.7);
+    juiceRecycle(groups);
+    return;
+  }
   cur=null;
   nextPiece();
 }
@@ -1259,7 +1495,7 @@ function hardDrop(){
   bumpChallenge("hard", 1);
   SFX.drop(); vibe(16);
   const wrap = document.getElementById("boardWrap").getBoundingClientRect();
-  burst(colToX(cur.x+1), rowToY(cur.y+1), COLORS[cur.type], 12, 3, "spark");
+  burst(colToX(cur.x+1), rowToY(cur.y+1), COLORS[cur.type]||"#00f5ff", 12, 3, "spark");
   lockPiece();
   syncGameUI();
 }
@@ -1310,6 +1546,7 @@ function skipContinue(){
 function finalizeGameOver(){
   if (over) return;
   over=true; started=false; cur=null; paused=false;
+  mascotReact("sad");
   SFX.over(); vibe([40,40,80]);
   save.gamesPlayed++; save.dayGames++; save.totalLines += lines;
   bumpChallenge("games", 1);
@@ -1471,7 +1708,7 @@ function blockSprite(color, skin, size){
   cv.width=size; cv.height=size;
   const g = cv.getContext("2d");
   const inset = Math.max(1, size*0.06);
-  if (skin==="ghost"){
+  if (skin==="haze"){
     g.globalAlpha=0.55;
     g.fillStyle=color; g.fillRect(inset,inset,size-inset*2,size-inset*2);
     g.globalAlpha=0.9; g.strokeStyle="#fff"; g.lineWidth=Math.max(1,size*0.06);
@@ -1520,18 +1757,75 @@ function drawBlock(g, x, y, size, color, skin, alpha){
   g.restore();
 }
 
-function drawMatrix(g, type, rot, ox, oy, cell, ghost){
+function drawTrashCell(g, px, py, cell, type, alpha){
+  const info = JUNK[type] || {color:"#888", material:"metal", name:"?"};
+  const mat = info.material;
+  g.save();
+  if (alpha!=null) g.globalAlpha = alpha;
+  const inset = Math.max(1, cell*0.08);
+  // object silhouette by material / type — never a flat uniform brick
+  if (type==="CAN"){
+    g.fillStyle = info.color;
+    g.beginPath(); g.roundRect(px+inset, py+inset*1.2, cell-inset*2, cell-inset*2.4, cell*0.2); g.fill();
+    g.fillStyle="rgba(255,255,255,.35)"; g.fillRect(px+cell*0.2, py+cell*0.25, cell*0.15, cell*0.45);
+    g.strokeStyle="#6a7a88"; g.lineWidth=Math.max(1,cell*0.06);
+    g.beginPath(); g.moveTo(px+cell*0.25,py+cell*0.35); g.lineTo(px+cell*0.75,py+cell*0.35); g.stroke();
+  } else if (type==="BOX"){
+    g.fillStyle=info.color; g.fillRect(px+inset,py+inset,cell-inset*2,cell-inset*2);
+    g.strokeStyle="#8a6230"; g.lineWidth=Math.max(1,cell*0.07); g.strokeRect(px+inset+0.5,py+inset+0.5,cell-inset*2-1,cell-inset*2-1);
+    g.strokeStyle="rgba(0,0,0,.25)"; g.beginPath(); g.moveTo(px+cell/2,py+inset); g.lineTo(px+cell/2,py+cell-inset); g.stroke();
+  } else if (type==="TUBE"){
+    const grd=g.createLinearGradient(px,py,px+cell,py+cell);
+    grd.addColorStop(0,"#eaffff"); grd.addColorStop(0.5,info.color); grd.addColorStop(1,"#0090a0");
+    g.fillStyle=grd; g.beginPath(); g.roundRect(px+inset, py+cell*0.28, cell-inset*2, cell*0.44, cell*0.2); g.fill();
+    g.globalAlpha=(alpha||1)*0.7; g.strokeStyle="#fff"; g.stroke();
+  } else if (type==="BAG"){
+    g.fillStyle=info.color; g.beginPath();
+    g.moveTo(px+cell*0.2,py+cell*0.2); g.quadraticCurveTo(px+cell*0.5,py+inset,px+cell*0.8,py+cell*0.2);
+    g.lineTo(px+cell*0.85,py+cell*0.85); g.quadraticCurveTo(px+cell*0.5,py+cell*0.95,px+cell*0.15,py+cell*0.85);
+    g.closePath(); g.fill();
+    g.fillStyle="rgba(0,0,0,.2)"; g.fillRect(px+cell*0.4,py+cell*0.15,cell*0.2,cell*0.2);
+  } else if (type==="PIPE"){
+    g.fillStyle=info.color; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.38,0,7); g.fill();
+    g.fillStyle="#071018"; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.16,0,7); g.fill();
+    g.strokeStyle="rgba(255,255,255,.35)"; g.lineWidth=Math.max(1,cell*0.05); g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.38,0,7); g.stroke();
+  } else if (type==="TIRE"){
+    g.fillStyle="#22222c"; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.4,0,7); g.fill();
+    g.strokeStyle=info.color; g.lineWidth=Math.max(2,cell*0.12); g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.28,0,7); g.stroke();
+    g.fillStyle="#111"; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.12,0,7); g.fill();
+  } else if (type==="CRATE"){
+    g.fillStyle=info.color; g.fillRect(px+inset,py+inset,cell-inset*2,cell-inset*2);
+    g.strokeStyle="#6a4a18"; g.lineWidth=Math.max(1,cell*0.08);
+    g.beginPath(); g.moveTo(px+inset,py+cell*0.35); g.lineTo(px+cell-inset,py+cell*0.35);
+    g.moveTo(px+inset,py+cell*0.65); g.lineTo(px+cell-inset,py+cell*0.65); g.stroke();
+  } else if (type==="BOTTLE"){
+    g.fillStyle=info.color+"cc";
+    g.beginPath(); g.roundRect(px+cell*0.28,py+inset,cell*0.44,cell-inset*2,cell*0.15); g.fill();
+    g.fillStyle="#eaffff"; g.globalAlpha=(alpha||1)*0.35; g.fillRect(px+cell*0.34,py+cell*0.2,cell*0.12,cell*0.4);
+  } else {
+    g.fillStyle=info.color; g.fillRect(px+inset,py+inset,cell-inset*2,cell-inset*2);
+  }
+  // tiny material pip
+  g.globalAlpha=(alpha||1)*0.9;
+  g.fillStyle = MATERIAL_COLOR[mat] || "#fff";
+  g.fillRect(px+cell*0.72, py+cell*0.72, cell*0.14, cell*0.14);
+  g.restore();
+}
+
+function drawMatrix(g, type, rot, ox, oy, cell, guide){
   const m = MATS[type][rot];
-  const skin = ghost ? "neon" : save.skin;
   for (let r=0;r<m.length;r++) for (let c=0;c<m[r].length;c++) if (m[r][c]){
-    if (ghost){
+    if (guide){
+      // Restyled drop guide — scrap dust marks, NOT a classic ghost outline
       g.save();
-      g.globalAlpha=0.28;
-      g.strokeStyle=COLORS[type];
-      g.lineWidth=Math.max(1, cell*0.08);
-      g.strokeRect(ox+c*cell+2, oy+r*cell+2, cell-4, cell-4);
+      g.globalAlpha=0.22;
+      g.fillStyle = COLORS[type] || "#fff";
+      const px=ox+c*cell+cell*0.35, py=oy+r*cell+cell*0.35;
+      g.beginPath(); g.arc(px,py,Math.max(1.5,cell*0.12),0,7); g.fill();
       g.restore();
-    } else drawBlock(g, ox+c*cell, oy+r*cell, cell, COLORS[type], skin);
+    } else {
+      drawTrashCell(g, ox+c*cell, oy+r*cell, cell, type);
+    }
   }
 }
 
@@ -1543,30 +1837,45 @@ function render(){
   ctx.clearRect(0,0,w,h);
   ctx.translate(shakeX * (w/canvas.clientWidth||1), shakeY*(w/canvas.clientWidth||1));
 
-  // well bg
-  ctx.fillStyle="#070910";
-  ctx.fillRect(0,0,w,h);
-  ctx.strokeStyle="rgba(0,245,255,0.07)";
+  // dumpster interior
+  const bg = ctx.createLinearGradient(0,0,0,h);
+  bg.addColorStop(0,"#120c16"); bg.addColorStop(1,"#070910");
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
+  // grate lines
+  ctx.strokeStyle="rgba(0,245,255,0.06)";
   ctx.lineWidth=1;
   for (let x=0;x<=COLS;x++){ ctx.beginPath(); ctx.moveTo(x*cell,0); ctx.lineTo(x*cell,h); ctx.stroke(); }
   for (let y=0;y<=VIS;y++){ ctx.beginPath(); ctx.moveTo(0,y*cell); ctx.lineTo(w,y*cell); ctx.stroke(); }
+  // pipe accents
+  ctx.fillStyle="rgba(255,43,214,.08)";
+  ctx.fillRect(0,0,cell*0.12,h); ctx.fillRect(w-cell*0.12,0,cell*0.12,h);
 
   if (board){
     for (let y=HID;y<ROWS;y++){
-      const clearingRow = clearing && clearing.includes(y);
+      const clearingRow = clearing && !recyclePending && clearing.includes(y);
       for (let x=0;x<COLS;x++){
         const v=board[y][x];
-        if (!v && !clearingRow) continue;
         const py=(y-HID)*cell, px=x*cell;
         if (clearingRow){
           const t = 1 - (clearT/CLEAR_MS);
           const pulse = 0.5 + 0.5*Math.sin(t*20);
-          ctx.fillStyle = `rgba(255,255,255,${0.55+pulse*0.4})`;
+          ctx.fillStyle = `rgba(200,220,255,${0.45+pulse*0.4})`;
           ctx.fillRect(px,py,cell,cell);
-          ctx.fillStyle = `rgba(255,209,102,${0.4+pulse*0.4})`;
-          ctx.fillRect(px+2,py+2,cell-4,cell-4);
+          ctx.fillStyle = `rgba(0,245,255,${0.35+pulse*0.4})`;
+          ctx.fillRect(px+2,py+2,cell-4,cell*Math.max(0.15,1-t));
+        } else if (recyclePending && board[y][x]===0 && clearing && clearing.includes(y)){
+          // recycled cell flash handled by absence
         } else if (v){
-          drawBlock(ctx, px, py, cell, COLORS[v], save.skin);
+          // during recycle, highlight popping cells
+          let popping=false;
+          if (recyclePending){
+            for (const g of recyclePending){ if (g.cells.some(c=>c.x===x&&c.y===y)) popping=true; }
+          }
+          if (popping){
+            ctx.save(); ctx.globalAlpha=0.5+0.5*Math.sin(clearT/30);
+            drawTrashCell(ctx, px, py, cell, v); ctx.restore();
+            ctx.fillStyle="rgba(125,255,107,.35)"; ctx.fillRect(px,py,cell,cell);
+          } else drawTrashCell(ctx, px, py, cell, v);
         }
       }
     }
@@ -1574,7 +1883,25 @@ function render(){
 
   if (cur && !over && !clearing){
     const gy = ghostY();
-    if (gy!==cur.y) drawMatrix(ctx, cur.type, cur.rot, cur.x*cell, (gy-HID)*cell, cell, true);
+    // Landing bin-guide: dashed neon line under landing row (not a ghost piece)
+    if (gy!==cur.y){
+      const ly = (gy - HID) * cell;
+      const m = MATS[cur.type][cur.rot];
+      let minC=99,maxC=0;
+      for (let r=0;r<m.length;r++) for (let c=0;c<m[r].length;c++) if (m[r][c]){ minC=Math.min(minC,c); maxC=Math.max(maxC,c); }
+      ctx.save();
+      ctx.strokeStyle="rgba(255,43,214,.45)";
+      ctx.setLineDash([Math.max(3,cell*0.2), Math.max(3,cell*0.15)]);
+      ctx.lineWidth=Math.max(1.5, cell*0.06);
+      const yLine = ly + m.length*cell + 1;
+      ctx.beginPath();
+      ctx.moveTo(cur.x*cell + minC*cell, Math.min(h-2, yLine));
+      ctx.lineTo(cur.x*cell + (maxC+1)*cell, Math.min(h-2, yLine));
+      ctx.stroke();
+      ctx.restore();
+      // scrap dust at landing cells
+      drawMatrix(ctx, cur.type, cur.rot, cur.x*cell, (gy-HID)*cell, cell, true);
+    }
     drawMatrix(ctx, cur.type, cur.rot, cur.x*cell, (cur.y-HID)*cell, cell, false);
     if (locking){
       ctx.fillStyle=`rgba(255,255,255,${0.08+0.08*Math.sin(lockT/40)})`;
@@ -1905,6 +2232,7 @@ document.querySelectorAll("#controls .pad").forEach(btn=>{
   else if (act==="right") bindPad(btn, ()=>{ dasDir=1; dasT=0; dasFirst=true; tryMove(1,0); }, ()=>{ if(dasDir===1) dasDir=0; });
   else if (act==="rot") bindPad(btn, ()=>tryRot(1));
   else if (act==="hold") bindPad(btn, ()=>doHold());
+  else if (act==="magnet") bindPad(btn, ()=>doMagnet());
   else if (act==="soft") bindPad(btn, ()=>{ softHeld=true; softDropOnce(); }, ()=>{ softHeld=false; });
   else if (act==="hard") bindPad(btn, ()=>hardDrop());
 });
@@ -2009,6 +2337,15 @@ document.getElementById("spinClose").addEventListener("click", ()=>{ if(!spinnin
 document.getElementById("spinGo").addEventListener("click", doSpin);
 document.getElementById("howBtn").addEventListener("click", ()=>document.getElementById("howOv").classList.remove("hidden"));
 document.getElementById("howClose").addEventListener("click", ()=>{ document.getElementById("howOv").classList.add("hidden"); save.sawHow=true; persist(); });
+document.getElementById("settingsBtn").addEventListener("click", ()=>{
+  document.getElementById("settingsMute").textContent = save.muted ? "Sound off" : "Sound on";
+  document.getElementById("settingsOv").classList.remove("hidden");
+});
+document.getElementById("settingsClose").addEventListener("click", ()=>document.getElementById("settingsOv").classList.add("hidden"));
+document.getElementById("settingsMute").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); document.getElementById("settingsMute").textContent = save.muted ? "Sound off" : "Sound on"; });
+document.getElementById("settingsHow").addEventListener("click", ()=>{ document.getElementById("settingsOv").classList.add("hidden"); document.getElementById("howOv").classList.remove("hidden"); });
+document.getElementById("settingsPrivacy").addEventListener("click", ()=>{ location.href = "privacy.html"; });
+document.getElementById("settingsSupport").addEventListener("click", ()=>{ location.href = "support.html"; });
 document.getElementById("muteTitle").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
 document.getElementById("muteGame").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
 document.getElementById("passBtn").addEventListener("click", (ev)=>{
@@ -2066,24 +2403,43 @@ window.__TS = {
     };
   },
   setupLineClear(n){
-    n = Math.max(1, Math.min(4, n||4));
+    n = Math.max(1, Math.min(4, n||3));
     if (screen!=="game") startGame();
-    paused=false; over=false; clearing=null;
+    paused=false; over=false; clearing=null; recyclePending=null;
     board = emptyBoard();
-    const gap=5;
+    const gap=3;
+    const fill=["CAN","BOX","PIPE","CRATE","TUBE"];
     for (let y=ROWS-n; y<ROWS; y++){
-      for (let x=0;x<COLS;x++) if (x!==gap) board[y][x] = (["J","L","S","Z","T"])[(y+x)%5];
+      for (let x=0;x<COLS;x++) if (x!==gap) board[y][x] = fill[(y+x)%fill.length];
     }
     hold=null;
-    cur = {type:"I", rot:1, x:gap-2, y:HID};
-    if (!valid(cur.type,cur.rot,cur.x,cur.y)) cur.y=0;
+    cur = {type:"CAN", rot:1, x:gap, y:HID};
+    // CAN rot1 is vertical 3 — place so it fills the gap column
+    if (!valid(cur.type,cur.rot,cur.x,cur.y)){ cur.x=gap; cur.y=Math.max(0,ROWS-n-3); }
     locking=false; lockT=0; gravityAcc=0; combo=0;
     drawPreviews(); render();
     return window.__TS.state();
   },
-  hardDrop, tryMove, tryRot, doHold,
-  save, SKINS, BGS, TRAILS, ACHIEVEMENTS,
+  setupRecycle(){
+    if (screen!=="game") startGame();
+    paused=false; over=false; clearing=null; recyclePending=null;
+    board = emptyBoard();
+    // three metal cans touching
+    board[ROWS-1][1]="CAN"; board[ROWS-1][2]="CAN"; board[ROWS-1][3]="PIPE";
+    board[ROWS-2][2]="PIPE"; board[ROWS-2][3]="PIPE";
+    cur = {type:"BOX", rot:0, x:0, y:HID};
+    drawPreviews(); render();
+  },
+  hardDrop, tryMove, tryRot, doHold, doMagnet,
+  save, SKINS, BGS, TRAILS, ACHIEVEMENTS, JUNK, COLS, VIS,
   renderAchievements, renderBattlePass, renderCalendar, renderLeaderboard,
+  openShop(){ document.getElementById("shopOv").classList.remove("hidden"); renderShop(); },
+  openAch(){ renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); },
+  openSettings(){ document.getElementById("settingsOv").classList.remove("hidden"); },
+  openChallenges(){ /* challenges live on title */ showScreen("title"); syncMetaUI(); },
+  triggerContinue(){ continuedThisRun=false; gameOver(); },
+  triggerLevelUp(){ const before=save.playerLevel; addXP(9999); },
+  setMagnet(n){ magnetCharge=n; syncMagnetUI(); },
   layout(){
     resizeBoard();
     const wrap=document.getElementById("boardWrap");
@@ -2108,6 +2464,88 @@ window.__TS = {
     return {x,y,right, mid:[p[0],p[1],p[2],p[3]], edge:[pr[0],pr[1],pr[2],pr[3]], canvasW:canvas.width, cell};
   }
 };
+
+
+async function runDemoSequence(){
+  // ~50s scripted showcase for CI video evidence
+  try{
+    showScreen("title"); syncMetaUI();
+    await sleep(1200);
+    startGame();
+    await sleep(800);
+    // Compactor clear
+    window.__TS.setupLineClear(3);
+    await sleep(600);
+    hardDrop();
+    await sleep(1400);
+    // Recycle
+    window.__TS.setupRecycle();
+    await sleep(500);
+    // lock a metal into the cluster via board mutate + juice
+    board[ROWS-1][0]="PIPE";
+    const groups=findRecycleGroups();
+    if (groups.length){ recyclePending=groups; clearing=groups.flatMap(g=>g.cells.map(c=>c.y)); clearT=Math.floor(CLEAR_MS*0.75); juiceRecycle(groups); }
+    await sleep(1200);
+    // Magnet
+    magnetCharge=2; syncMagnetUI();
+    if (!cur) nextPiece();
+    await sleep(400);
+    doMagnet();
+    await sleep(1000);
+    // Play a bit
+    for (let i=0;i<8;i++){ tryMove(i%2?1:-1,0); await sleep(180); tryRot(1); await sleep(200); softDropOnce(); await sleep(150); }
+    hardDrop();
+    await sleep(800);
+    // Level-up fanfare
+    addXP(xpNeeded(save.playerLevel)+10);
+    await sleep(1600);
+    document.getElementById("lvlOv").classList.add("hidden");
+    // Shop
+    document.getElementById("shopOv").classList.remove("hidden"); renderShop();
+    await sleep(1800);
+    document.getElementById("shopOv").classList.add("hidden");
+    // Achievements
+    renderAchievements(); document.getElementById("achOv").classList.remove("hidden");
+    await sleep(1600);
+    document.getElementById("achOv").classList.add("hidden");
+    // Game over + revive prompt (test ad path)
+    continuedThisRun=false; started=true; over=false; pendingGameOver=false;
+    gameOver();
+    await sleep(2500);
+    // Stay on continue overlay so video captures rewarded revive prompt
+    await sleep(2000);
+    skipContinue();
+    await sleep(1200);
+    showScreen("title"); syncMetaUI();
+    await sleep(1500);
+  }catch(e){ console.warn("demo", e); }
+}
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+async function applyShotMode(shot){
+  if (!shot) return;
+  if (shot==="game"){
+    setTimeout(()=>{ try{
+      startGame();
+      window.__TS.setupLineClear(2);
+      // paint a more interesting bin
+      for (let y=ROWS-6;y<ROWS-2;y++){
+        for (let x=0;x<COLS;x++) if ((x+y)%3!==0) board[y][x]=PIECE_IDS[(x+y)%PIECE_IDS.length];
+      }
+      magnetCharge=2; syncMagnetUI(); render();
+    }catch(e){} }, 400);
+  } else if (shot==="shop"){
+    setTimeout(()=>{ showScreen("title"); document.getElementById("shopOv").classList.remove("hidden"); renderShop(); }, 400);
+  } else if (shot==="achievements" || shot==="ach"){
+    setTimeout(()=>{ showScreen("title"); renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="settings"){
+    setTimeout(()=>{ showScreen("title"); document.getElementById("settingsOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="challenges"){
+    setTimeout(()=>{ showScreen("title"); syncMetaUI(); document.getElementById("challenges").scrollIntoView({block:"center"}); }, 400);
+  } else if (shot==="demo"){
+    setTimeout(()=>{ runDemoSequence(); }, 600);
+  }
+}
 
 // ---------- boot ----------
 async function waitForNativeBridge(timeoutMs){
@@ -2144,17 +2582,16 @@ async function boot(){
   if (bridge && bridge.hideSplash){
     try{ await bridge.hideSplash(); }catch(e){}
   }
-  // CI / marketing screenshots: Preferences key or #shot=game auto-starts a run.
+  // CI / marketing screenshots + demo video: Preferences key or #shot=
   try{
     let shot = null;
     if (bridge && bridge.consumeShotMode) shot = await bridge.consumeShotMode();
     if (!shot){
       const hash = (location.hash || "").replace(/^#/, "");
-      if (hash.includes("shot=game")) shot = "game";
+      const m = hash.match(/shot=([a-zA-Z0-9_-]+)/);
+      if (m) shot = m[1];
     }
-    if (shot === "game"){
-      setTimeout(()=>{ try{ startGame(); }catch(e){} }, 500);
-    }
+    await applyShotMode(shot);
   }catch(e){}
 }
 

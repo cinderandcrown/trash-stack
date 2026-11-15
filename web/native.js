@@ -1419,7 +1419,8 @@ async function consumeShotMode() {
   }
   try {
     const hash = typeof location !== "undefined" && location.hash || "";
-    if (hash.includes("shot=game")) return "game";
+    const m = String(hash).match(/shot=([a-zA-Z0-9_-]+)/);
+    if (m) return m[1];
   } catch (_) {
   }
   return null;

@@ -13,7 +13,7 @@ concurrency:
 
 env:
   BUNDLE_ID: com.cinderandcrown.trashstack
-  # App Store Connect app record — store name "Trash Stack: Neon Blocks"
+  # App Store Connect app record — listing name "Trash Stack: Neon Junk Puzzle"
   ASC_APP_APPLE_ID: '6834995780'
 
 jobs:
@@ -62,18 +62,38 @@ jobs:
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             build
 
-      - name: Capture App Store screenshots (6.9" + 6.5")
+      - name: Capture App Store screenshots + gameplay demo video
         run: |
           set -euo pipefail
           chmod +x scripts/ios-screenshots.sh
           scripts/ios-screenshots.sh "$RUNNER_TEMP/DerivedData-sim"
 
-      - name: Upload screenshot artifacts
+      - name: Upload App Store review evidence
         uses: actions/upload-artifact@v4
         with:
-          name: app-store-screenshots
-          path: artifacts/screenshots/
-          if-no-files-found: warn
+          name: app-store-review-evidence
+          path: |
+            artifacts/screenshots/
+            artifacts/video/
+          if-no-files-found: error
+
+      - name: Verify demo video duration band
+        run: |
+          set -euo pipefail
+          VID="artifacts/video/gameplay-demo.mp4"
+          test -f "$VID"
+          # ffprobe may be absent; fall back to file-size sanity
+          if command -v ffprobe >/dev/null 2>&1; then
+            DUR=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$VID" | cut -d. -f1)
+            echo "Demo duration ≈ ${DUR}s"
+            if [ "$DUR" -lt 40 ] || [ "$DUR" -gt 70 ]; then
+              echo "WARNING: demo duration $DUR outside 45–60s target band (still uploading)."
+            fi
+          else
+            BYTES=$(wc -c < "$VID")
+            echo "Demo bytes=$BYTES (ffprobe unavailable)"
+            test "$BYTES" -gt 100000
+          fi
 
       # Signed archive + TestFlight upload only on testflight/* tags (Fire Fox tags).
       # PR/branch runs stop after simulator validate + screenshots.

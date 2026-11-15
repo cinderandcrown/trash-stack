@@ -28,25 +28,36 @@ fs.mkdirSync(resDir, { recursive: true });
 const BG = { r: 7, g: 7, b: 15, alpha: 1 };
 
 async function opaqueIcon1024() {
-  const base = sharp({
-    create: {
-      width: 1024,
-      height: 1024,
-      channels: 3,
-      background: BG,
-    },
-  }).png();
-
   const mark = await sharp(srcIcon)
-    .resize(880, 880, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(720, 720, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toBuffer();
 
+  const dumpsterChrome = Buffer.from(`
+    <svg width="1024" height="1024" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bin" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#1a2438"/>
+          <stop offset="100%" stop-color="#07070f"/>
+        </linearGradient>
+        <linearGradient id="rim" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="#ff2bd6"/>
+          <stop offset="50%" stop-color="#00f5ff"/>
+          <stop offset="100%" stop-color="#ff2bd6"/>
+        </linearGradient>
+      </defs>
+      <rect width="1024" height="1024" fill="#07070f"/>
+      <rect x="120" y="180" width="784" height="720" rx="48" fill="url(#bin)" stroke="url(#rim)" stroke-width="18"/>
+      <rect x="200" y="150" width="624" height="48" rx="12" fill="#4a5568" stroke="#00f5ff" stroke-width="4"/>
+      <rect x="160" y="220" width="28" height="640" rx="8" fill="#00c8b4" opacity="0.55"/>
+      <rect x="836" y="220" width="28" height="640" rx="8" fill="#ff2bd6" opacity="0.45"/>
+      <text x="512" y="960" text-anchor="middle" font-family="Arial Black, Helvetica, sans-serif"
+        font-size="54" font-weight="800" letter-spacing="6" fill="#00f5ff">TRASH STACK</text>
+    </svg>`);
+
   const out = path.join(resDir, 'icon.png');
-  await sharp({
-    create: { width: 1024, height: 1024, channels: 4, background: { ...BG, alpha: 1 } },
-  })
-    .composite([{ input: mark, gravity: 'centre' }])
+  await sharp(dumpsterChrome)
+    .composite([{ input: mark, top: 210, left: 152 }])
     .flatten({ background: BG })
     .removeAlpha()
     .png()
@@ -92,7 +103,7 @@ async function splash2732() {
         font-size="96" font-weight="800" letter-spacing="14"
         fill="#00f5ff" opacity="0.95">TRASH STACK</text>
       <text x="50%" y="76.5%" text-anchor="middle" font-family="Helvetica, Arial, sans-serif"
-        font-size="36" letter-spacing="10" fill="#8b93b3">NEON DOCKS · NIGHT SHIFT</text>
+        font-size="36" letter-spacing="10"         fill="#8b93b3">NEON JUNK · COMPACTOR SHIFT</text>
     </svg>
   `);
 
@@ -124,7 +135,7 @@ async function splash2732() {
         font-size="72" font-weight="800" letter-spacing="10"
         fill="#00f5ff">TRASH STACK</text>
       <text x="50%" y="62%" text-anchor="middle" font-family="Helvetica, Arial, sans-serif"
-        font-size="28" letter-spacing="8" fill="#8b93b3">NEON DOCKS · NIGHT SHIFT</text>
+        font-size="28" letter-spacing="8" fill="#8b93b3">NEON JUNK · COMPACTOR SHIFT</text>
     </svg>
   `);
   await sharp(phoneGlow)
