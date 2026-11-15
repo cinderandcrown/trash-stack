@@ -1,0 +1,511 @@
+{
+  "version": 1,
+  "soft": {
+    "id": "scrap",
+    "label": "Scrap",
+    "symbol": "\u2699",
+    "startAmount": 80
+  },
+  "premium": {
+    "id": "gems",
+    "label": "Neon Gems",
+    "symbol": "\u25c6",
+    "startAmount": 20,
+    "rareEarnPerRunCap": 2
+  },
+  "gemPacks": [
+    {
+      "id": "gems_40",
+      "gems": 40,
+      "priceUsd": 0.99,
+      "productId": "com.cinderandcrown.trashstack.gems40",
+      "badge": null
+    },
+    {
+      "id": "gems_210",
+      "gems": 210,
+      "priceUsd": 4.99,
+      "productId": "com.cinderandcrown.trashstack.gems210",
+      "badge": "Popular"
+    },
+    {
+      "id": "gems_450",
+      "gems": 450,
+      "priceUsd": 9.99,
+      "productId": "com.cinderandcrown.trashstack.gems450",
+      "badge": null
+    },
+    {
+      "id": "gems_1200",
+      "gems": 1200,
+      "priceUsd": 19.99,
+      "productId": "com.cinderandcrown.trashstack.gems1200",
+      "badge": "Best value"
+    },
+    {
+      "id": "gems_2500",
+      "gems": 2500,
+      "priceUsd": 49.99,
+      "productId": "com.cinderandcrown.trashstack.gems2500",
+      "badge": null
+    }
+  ],
+  "starterPack": {
+    "id": "starter_pack",
+    "label": "Dock Starter Pack",
+    "gems": 120,
+    "scrap": 500,
+    "priceUsd": 2.99,
+    "productId": "com.cinderandcrown.trashstack.starter",
+    "oneTime": true
+  },
+  "buildings": {
+    "recycler": {
+      "name": "Recycler",
+      "maxLevel": 8,
+      "levels": [
+        {
+          "cost": 0,
+          "sec": 0,
+          "perk": {
+            "scrapRecycleBonus": 0
+          }
+        },
+        {
+          "cost": 120,
+          "sec": 60,
+          "perk": {
+            "scrapRecycleBonus": 0.05
+          }
+        },
+        {
+          "cost": 280,
+          "sec": 180,
+          "perk": {
+            "scrapRecycleBonus": 0.1
+          }
+        },
+        {
+          "cost": 520,
+          "sec": 600,
+          "perk": {
+            "scrapRecycleBonus": 0.15
+          }
+        },
+        {
+          "cost": 900,
+          "sec": 1800,
+          "perk": {
+            "scrapRecycleBonus": 0.2
+          }
+        },
+        {
+          "cost": 1500,
+          "sec": 3600,
+          "perk": {
+            "scrapRecycleBonus": 0.25
+          }
+        },
+        {
+          "cost": 2400,
+          "sec": 7200,
+          "perk": {
+            "scrapRecycleBonus": 0.3
+          }
+        },
+        {
+          "cost": 4000,
+          "sec": 14400,
+          "perk": {
+            "scrapRecycleBonus": 0.4
+          }
+        }
+      ]
+    },
+    "compactor": {
+      "name": "Compactor",
+      "maxLevel": 8,
+      "levels": [
+        {
+          "cost": 0,
+          "sec": 0,
+          "perk": {
+            "scrapClearBonus": 0
+          }
+        },
+        {
+          "cost": 150,
+          "sec": 90,
+          "perk": {
+            "scrapClearBonus": 0.05
+          }
+        },
+        {
+          "cost": 320,
+          "sec": 240,
+          "perk": {
+            "scrapClearBonus": 0.1
+          }
+        },
+        {
+          "cost": 600,
+          "sec": 900,
+          "perk": {
+            "scrapClearBonus": 0.15
+          }
+        },
+        {
+          "cost": 1000,
+          "sec": 2400,
+          "perk": {
+            "scrapClearBonus": 0.2
+          }
+        },
+        {
+          "cost": 1700,
+          "sec": 4800,
+          "perk": {
+            "scrapClearBonus": 0.25
+          }
+        },
+        {
+          "cost": 2800,
+          "sec": 9600,
+          "perk": {
+            "scrapClearBonus": 0.3
+          }
+        },
+        {
+          "cost": 4500,
+          "sec": 18000,
+          "perk": {
+            "scrapClearBonus": 0.4
+          }
+        }
+      ]
+    },
+    "neonSign": {
+      "name": "Neon Sign",
+      "maxLevel": 6,
+      "levels": [
+        {
+          "cost": 0,
+          "sec": 0,
+          "perk": {
+            "xpBonus": 0,
+            "glow": 0
+          }
+        },
+        {
+          "cost": 200,
+          "sec": 120,
+          "perk": {
+            "xpBonus": 0.05,
+            "glow": 1
+          }
+        },
+        {
+          "cost": 450,
+          "sec": 600,
+          "perk": {
+            "xpBonus": 0.08,
+            "glow": 2
+          }
+        },
+        {
+          "cost": 800,
+          "sec": 1800,
+          "perk": {
+            "xpBonus": 0.1,
+            "glow": 3
+          }
+        },
+        {
+          "cost": 1400,
+          "sec": 5400,
+          "perk": {
+            "xpBonus": 0.12,
+            "glow": 4
+          }
+        },
+        {
+          "cost": 2200,
+          "sec": 10800,
+          "perk": {
+            "xpBonus": 0.15,
+            "glow": 5
+          }
+        }
+      ]
+    },
+    "stashVault": {
+      "name": "Stash Vault",
+      "maxLevel": 5,
+      "levels": [
+        {
+          "cost": 0,
+          "sec": 0,
+          "perk": {
+            "chestSlots": 2,
+            "chestTimeMult": 1
+          }
+        },
+        {
+          "cost": 250,
+          "sec": 300,
+          "perk": {
+            "chestSlots": 3,
+            "chestTimeMult": 0.95
+          }
+        },
+        {
+          "cost": 700,
+          "sec": 1800,
+          "perk": {
+            "chestSlots": 3,
+            "chestTimeMult": 0.9
+          }
+        },
+        {
+          "cost": 1600,
+          "sec": 7200,
+          "perk": {
+            "chestSlots": 4,
+            "chestTimeMult": 0.85
+          }
+        },
+        {
+          "cost": 3200,
+          "sec": 14400,
+          "perk": {
+            "chestSlots": 4,
+            "chestTimeMult": 0.75
+          }
+        }
+      ]
+    }
+  },
+  "builders": {
+    "freeSlots": 2,
+    "gemUnlockSlotCost": 350,
+    "maxSlots": 4
+  },
+  "speedup": {
+    "secPerGem": 60,
+    "minGems": 1,
+    "maxGemsPerAction": 200
+  },
+  "chests": {
+    "dock_crate": {
+      "id": "dock_crate",
+      "name": "Dock Crate",
+      "unlockSec": 1800,
+      "earnWeight": 70,
+      "odds": [
+        {
+          "label": "40 Scrap",
+          "kind": "scrap",
+          "n": 40,
+          "pct": 35
+        },
+        {
+          "label": "80 Scrap",
+          "kind": "scrap",
+          "n": 80,
+          "pct": 25
+        },
+        {
+          "label": "120 Scrap",
+          "kind": "scrap",
+          "n": 120,
+          "pct": 15
+        },
+        {
+          "label": "2 Gems",
+          "kind": "gems",
+          "n": 2,
+          "pct": 10
+        },
+        {
+          "label": "5 Gems",
+          "kind": "gems",
+          "n": 5,
+          "pct": 5
+        },
+        {
+          "label": "Cosmetic LOOK",
+          "kind": "cosmetic",
+          "n": 0,
+          "pct": 10
+        }
+      ]
+    },
+    "neon_crate": {
+      "id": "neon_crate",
+      "name": "Neon Crate",
+      "unlockSec": 10800,
+      "earnWeight": 25,
+      "odds": [
+        {
+          "label": "100 Scrap",
+          "kind": "scrap",
+          "n": 100,
+          "pct": 30
+        },
+        {
+          "label": "200 Scrap",
+          "kind": "scrap",
+          "n": 200,
+          "pct": 25
+        },
+        {
+          "label": "5 Gems",
+          "kind": "gems",
+          "n": 5,
+          "pct": 20
+        },
+        {
+          "label": "12 Gems",
+          "kind": "gems",
+          "n": 12,
+          "pct": 10
+        },
+        {
+          "label": "Cosmetic LOOK",
+          "kind": "cosmetic",
+          "n": 0,
+          "pct": 15
+        }
+      ]
+    },
+    "legend_crate": {
+      "id": "legend_crate",
+      "name": "Legend Crate",
+      "unlockSec": 28800,
+      "earnWeight": 5,
+      "odds": [
+        {
+          "label": "250 Scrap",
+          "kind": "scrap",
+          "n": 250,
+          "pct": 25
+        },
+        {
+          "label": "400 Scrap",
+          "kind": "scrap",
+          "n": 400,
+          "pct": 20
+        },
+        {
+          "label": "15 Gems",
+          "kind": "gems",
+          "n": 15,
+          "pct": 25
+        },
+        {
+          "label": "30 Gems",
+          "kind": "gems",
+          "n": 30,
+          "pct": 15
+        },
+        {
+          "label": "Rare LOOK",
+          "kind": "cosmetic",
+          "n": 0,
+          "pct": 15
+        }
+      ]
+    }
+  },
+  "loginStreak": {
+    "capScrap": 120,
+    "freezeCostGems": 15,
+    "freezeMaxOwned": 2
+  },
+  "spin": {
+    "freePerDay": 1,
+    "rewardedExtraPerDay": 1
+  },
+  "notifications": {
+    "askAfterFirstWin": true,
+    "neverAtLaunch": true,
+    "maxPerDay": 2,
+    "quietHours": {
+      "start": 21,
+      "end": 8
+    },
+    "kinds": [
+      "upgrade_done",
+      "chest_ready",
+      "daily_reward",
+      "streak_risk",
+      "new_season"
+    ]
+  },
+  "ads": {
+    "interstitialEveryNOvers": 3,
+    "interstitialSkipFirstRuns": 2,
+    "bannersInPlay": false,
+    "rewarded": [
+      "revive",
+      "double",
+      "spin",
+      "chest_speed"
+    ]
+  },
+  "oneTimeOffer": {
+    "enabled": true,
+    "maxPerSession": 1,
+    "maxSurfacesPerDay": 1,
+    "neverReshowSameDay": true,
+    "cooldownHours": 48,
+    "quietHours": {
+      "start": 21,
+      "end": 8
+    },
+    "allowContexts": [
+      "after_win",
+      "after_level_up"
+    ],
+    "denyContexts": [
+      "launch",
+      "mid_run",
+      "after_loss"
+    ],
+    "placements": [
+      "shop",
+      "dismissible_badge"
+    ],
+    "dismissOneTap": true,
+    "fakeCountdownTimers": false,
+    "confirmshaming": false,
+    "bannedCopyPatterns": [
+      "no thanks, i like losing",
+      "don't miss out",
+      "last chance"
+    ],
+    "rewardedAdsOptInOnly": true,
+    "freeToPlayComplete": true
+  },
+  "compliance": {
+    "maxAgeRating": "12+",
+    "noRealMoneyGambling": true,
+    "noCashOut": true,
+    "showOddsForRandom": true,
+    "noPaidLootWithoutOdds": true,
+    "noDarkPatternsAimedAtKids": true,
+    "noPurchaseNagging": true,
+    "freeToPlayComplete": true,
+    "rewardedAdsOptInOnly": true
+  },
+  "board": {
+    "cols": 8,
+    "visibleRows": 15,
+    "hiddenRows": 2
+  },
+  "removeAds": {
+    "productId": "com.cinderandcrown.trashstack.removeads",
+    "priceUsd": 4.99,
+    "stub": true
+  }
+}

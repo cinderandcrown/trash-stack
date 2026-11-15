@@ -1,0 +1,49 @@
+# Xcode / generated project (always regenerate with xcodegen)
+TrashStack.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+DerivedData/
+*.ipa
+*.dSYM*
+*.xcarchive
+*.hmap
+
+# Secrets
+*.p8
+AuthKey_*.p8
+Config.xcconfig
+
+# SwiftPM
+.build/
+.swiftpm/
+Packages/*/.build/
+Package.resolved
+
+# Smoke artifacts (CI uploads these; do not commit)
+smoke-artifacts/
+simulator-screenshot*.png
+simulator-recording*.mp4
+artifacts/
+
+# Capacitor leftovers (native rewrite — do not reintroduce)
+android/
+ios/App/
+node_modules/
+package-lock.json
+capacitor.config.json
+
+# Logs / tests
+xcodebuild*.log
+TestResults.xcresult
+*.profraw
+*.profdata
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+__pycache__/
+.claude/
+web/
