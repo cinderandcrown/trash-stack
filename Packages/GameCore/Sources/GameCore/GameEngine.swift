@@ -274,36 +274,50 @@ public struct GameEngine: Sendable {
 
         switch shot {
         case "recycle":
-            // Tall metal stack on the left + glass tubes on the right — recycle-readable.
-            for y in (rows - 5)..<rows {
-                state.board[1, y] = Cell(piece: .can, material: .metal)
-                state.board[2, y] = Cell(piece: .pipe, material: .metal)
+            // Connected metal chain (left) + glass tubes (right) for a readable recycle beat.
+            for y in (rows - 7)..<rows {
+                state.board[0, y] = Cell(piece: .can, material: .metal)
+                state.board[1, y] = Cell(piece: .pipe, material: .metal)
+                state.board[2, y] = Cell(piece: .can, material: .metal)
             }
-            for y in (rows - 3)..<rows {
+            for y in (rows - 5)..<rows {
                 state.board[5, y] = Cell(piece: .tube, material: .glass)
                 state.board[6, y] = Cell(piece: .tube, material: .glass)
+                if y >= rows - 3 {
+                    state.board[7, y] = Cell(piece: .tube, material: .glass)
+                }
             }
-            state.score = 2400
-            state.combo = 3
-            state.magnetCharge = 2
-            state.level = 2
-            state.active = ActivePiece(id: .scrap, x: 3, y: hid + 2)
-        case "compactor":
-            // Nearly full bottom rows ready for a hydraulic crush (one gap to plug).
+            // Mixed scrap clutter so the well doesn't look empty.
             for y in (rows - 4)..<rows {
-                for x in 0..<cols where !(y == rows - 1 && x == 3) {
-                    let ids: [JunkID] = [.box, .bag, .tire, .crate]
-                    let id = ids[(x + y) % ids.count]
+                state.board[3, y] = Cell(piece: .scrap, material: .metal)
+                if y >= rows - 2 {
+                    state.board[4, y] = Cell(piece: .tire, material: .rubber)
+                }
+            }
+            state.score = 4200
+            state.combo = 4
+            state.magnetCharge = 2
+            state.level = 3
+            state.active = ActivePiece(id: .can, x: 1, y: hid + 3)
+        case "compactor":
+            // ~3 full rows + dense stack above — Big Crush target mid-animation.
+            for y in (rows - 8)..<rows {
+                for x in 0..<cols {
+                    // Leave a small notch at the very top of the stack for the falling piece.
+                    if y == rows - 8, x == 3 || x == 4 { continue }
+                    let ids: [JunkID] = [.box, .bag, .tire, .crate, .can, .scrap, .pipe, .tube]
+                    let id = ids[(x * 3 + y) % ids.count]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
-            state.score = 5100
-            state.level = 4
-            state.combo = 1
-            state.active = ActivePiece(id: .tube, x: 3, y: hid + 1)
+            state.score = 7600
+            state.level = 5
+            state.combo = 3
+            state.lines = 24
+            state.active = ActivePiece(id: .crate, x: 3, y: hid + 2)
         case "revive", "game-over":
             // Topped-out dumpster (checkerboard bags/boxes) + game over for revive sheet.
-            for y in hid..<(hid + 10) {
+            for y in hid..<(hid + 12) {
                 for x in 0..<cols {
                     let id: JunkID = (x + y) % 2 == 0 ? .bag : .box
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
@@ -314,17 +328,36 @@ public struct GameEngine: Sendable {
             state.over = true
             state.active = nil
             events.append(.gameOver)
-        case "game", "gameplay", "demo", "autoplay":
-            // Sparse mid-bin stack — visibly different from crush/recycle/revive.
-            for y in (rows - 3)..<rows {
-                for x in 0..<cols where (x + y) % 3 != 0 {
-                    let id: JunkID = [.can, .tire, .scrap, .pipe][(x + y) % 4]
+        case "game", "gameplay":
+            // Mid-game: ~40% of the visible well filled + active piece in play.
+            let fillFrom = rows - 6 // 6 of 15 visible rows ≈ 40%
+            for y in fillFrom..<rows {
+                for x in 0..<cols {
+                    // Jagged skyline so it reads as a real stack, not a flat fill.
+                    let peak = fillFrom + ((x * 5) % 4)
+                    if y < peak { continue }
+                    if (x + y) % 7 == 0 { continue }
+                    let id: JunkID = [.can, .tire, .scrap, .pipe, .crate, .box, .bag, .tube][(x + y * 3) % 8]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
-            state.score = 1200
-            state.level = 1
-            state.magnetCharge = 1
+            state.score = 3180
+            state.level = 3
+            state.combo = 1
+            state.magnetCharge = 2
+            state.lines = 11
+            state.active = ActivePiece(id: .can, rot: 0, x: 3, y: hid + 1)
+        case "demo", "autoplay":
+            // Denser seed so autoplay hits crush/recycle quickly on video.
+            for y in (rows - 5)..<rows {
+                for x in 0..<cols where (x + y) % 5 != 0 {
+                    let id: JunkID = [.can, .tire, .scrap, .pipe, .crate, .box][(x + y) % 6]
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            state.score = 900
+            state.level = 2
+            state.magnetCharge = 2
             spawn()
         default:
             spawn()

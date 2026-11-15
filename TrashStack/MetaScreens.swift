@@ -11,38 +11,38 @@ struct MetaChromeHeader: View {
     let onClose: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onClose) {
-                Text("Close")
-                    .font(.system(.subheadline, design: .rounded).weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(Color.white.opacity(0.1))
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .stroke(NeonTheme.teal.opacity(0.7), lineWidth: 1.2)
-                    )
-            }
-            .buttonStyle(.plain)
-            .frame(minWidth: 88)
+        // Title on its own row so long names (e.g. SEASON PASS) never truncate.
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Button(action: onClose) {
+                    Text("Close")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(NeonTheme.teal.opacity(0.7), lineWidth: 1.2)
+                        )
+                }
+                .buttonStyle(.plain)
 
-            Spacer()
-            Text(title)
-                .font(.system(.title3, design: .rounded).weight(.black))
-                .foregroundStyle(titleColor)
-                .lineLimit(1)
-            Spacer()
+                Spacer(minLength: 0)
 
-            Group {
                 if let trailing {
                     trailing
-                } else {
-                    Color.clear.frame(width: 88, height: 1)
                 }
             }
-            .frame(minWidth: 88, alignment: .trailing)
+
+            Text(title)
+                .font(.system(.title2, design: .rounded).weight(.black))
+                .foregroundStyle(titleColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
         }
         .padding(.horizontal, 16)
         .padding(.top, 4)

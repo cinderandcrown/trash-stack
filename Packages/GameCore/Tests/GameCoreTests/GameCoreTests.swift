@@ -110,5 +110,19 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(recycleFilled, 3)
         let reviveTop = (0..<revive.state.board.config.cols).compactMap { revive.state.board[$0, revive.state.board.config.hiddenRows] }.count
         XCTAssertEqual(reviveTop, revive.state.board.config.cols)
+        // Mid-game shot should fill ~40% of the visible well (not an empty dumpster).
+        let vis = play.state.board.config.visibleRows
+        let hid = play.state.board.config.hiddenRows
+        var filledCells = 0
+        for y in hid..<(hid + vis) {
+            for x in 0..<play.state.board.config.cols {
+                if play.state.board[x, y] != nil { filledCells += 1 }
+            }
+        }
+        let capacity = play.state.board.config.cols * vis
+        XCTAssertGreaterThan(filledCells, capacity / 5, "gameplay shot too empty")
+        XCTAssertLessThan(filledCells, capacity * 3 / 4, "gameplay shot too full")
+        XCTAssertNotNil(play.state.active)
+        XCTAssertGreaterThanOrEqual(crush.state.board.fullRows().count, 3)
     }
 }

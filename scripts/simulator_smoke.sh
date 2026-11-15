@@ -229,24 +229,25 @@ xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
 launch_shot "" "$OUT_DIR/01-title.png" 5
-launch_shot "game" "$OUT_DIR/02-gameplay.png" 6
+# Longer settle so mid-game / crush juice / recycle banner are on-screen.
+launch_shot "game" "$OUT_DIR/02-gameplay.png" 7
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
-launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 6
+launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 8
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 6
+launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 8
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 6
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 7
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
 launch_shot "base" "$OUT_DIR/06-base.png" 5
 launch_shot "pass" "$OUT_DIR/07-pass.png" 5
 launch_shot "shop" "$OUT_DIR/08-shop.png" 5
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 5
 
-launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 6
+launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 7
 assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
-launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 6
+launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 8
 assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
-launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 6
+launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 8
 assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
 launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 5
 launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 5
@@ -273,15 +274,16 @@ PY
 
 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
+VIDEO_RAW="$OUT_DIR/gameplay-demo-silent.mp4"
 VIDEO_OUT="$OUT_DIR/gameplay-demo.mp4"
-rm -f "$VIDEO_OUT"
+rm -f "$VIDEO_RAW" "$VIDEO_OUT"
 set +e
-xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$VIDEO_OUT" &
+xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$VIDEO_RAW" &
 REC_PID=$!
 sleep 2
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo --display=internal failed; retrying without --display" >&2
-  xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force "$VIDEO_OUT" &
+  xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force "$VIDEO_RAW" &
   REC_PID=$!
   sleep 2
 fi
@@ -292,10 +294,59 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
 fi
 set -e
 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
+# 55s covers stack → Big Crush (~10s) → recycle (~22s) → game over/revive (~36s).
 sleep 55
 kill -INT "$REC_PID" 2>/dev/null || true
 wait "$REC_PID" 2>/dev/null || true
 sleep 3
+
+# simctl recordVideo has no app audio — mux game loop + beat-synced SFX onto the track.
+AUDIO_DIR="$(cd "$(dirname "$0")/.." && pwd)/TrashStack/Resources/Audio"
+MUSIC="$AUDIO_DIR/game_loop.wav"
+CRUSH="$AUDIO_DIR/crush.wav"
+RECYCLE="$AUDIO_DIR/recycle.wav"
+COMBO="$AUDIO_DIR/combo.wav"
+LOCK="$AUDIO_DIR/lock.wav"
+LEVELUP="$AUDIO_DIR/levelup.wav"
+if [[ -f "$VIDEO_RAW" && -f "$MUSIC" ]] && command -v ffmpeg >/dev/null 2>&1; then
+  ffmpeg -y -i "$VIDEO_RAW" \
+    -i "$MUSIC" \
+    -i "$CRUSH" \
+    -i "$RECYCLE" \
+    -i "$COMBO" \
+    -i "$LOCK" \
+    -i "$LEVELUP" \
+    -filter_complex "\
+[1:a]volume=0.32,aloop=loop=-1:size=2e+09,atrim=0:55,apad=whole_dur=55[music];\
+[5:a]adelay=2000|2000,volume=0.7[lock1];\
+[5:a]adelay=5000|5000,volume=0.65[lock2];\
+[5:a]adelay=8000|8000,volume=0.65[lock3];\
+[2:a]adelay=10000|10000,volume=0.95[crush];\
+[6:a]adelay=10500|10500,volume=0.8[lvl];\
+[5:a]adelay=15000|15000,volume=0.6[lock4];\
+[5:a]adelay=18000|18000,volume=0.6[lock5];\
+[3:a]adelay=22000|22000,volume=0.9[rec];\
+[4:a]adelay=22300|22300,volume=0.85[combo];\
+[5:a]adelay=28000|28000,volume=0.55[lock6];\
+[6:a]adelay=36000|36000,volume=0.85[revive];\
+[music][lock1][lock2][lock3][crush][lvl][lock4][lock5][rec][combo][lock6][revive]amix=inputs=12:duration=first:dropout_transition=0[aout]" \
+    -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 192k -shortest "$VIDEO_OUT" \
+    >/tmp/ffmpeg-mux.log 2>&1 || {
+      echo "ffmpeg mux failed; keeping silent video as gameplay-demo.mp4" >&2
+      cat /tmp/ffmpeg-mux.log >&2 || true
+      mv -f "$VIDEO_RAW" "$VIDEO_OUT"
+    }
+  rm -f "$VIDEO_RAW"
+  # Confirm an audio stream exists.
+  if ! ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
+    echo "Gameplay video missing audio track after mux" >&2
+    exit 1
+  fi
+  echo "Muxed music+SFX onto gameplay-demo.mp4" >&2
+else
+  echo "ffmpeg/audio missing — using silent capture" >&2
+  mv -f "$VIDEO_RAW" "$VIDEO_OUT"
+fi
 
 fps="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.measuredFPS 2>/dev/null || echo 0)"
 echo "Measured FPS sample: $fps" >&2
