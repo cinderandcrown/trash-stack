@@ -1,0 +1,15 @@
+{
+  "name": "Trash Stack",
+  "short_name": "Trash Stack",
+  "description": "Neon night-city falling-block puzzle. Stack, clear, and chase Shinies.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#07070f",
+  "theme_color": "#07070f",
+  "icons": [
+    { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
