@@ -145,6 +145,66 @@ export function seasonTierUnlocked(xp, xpPerTier = SEASON_PASS.xpPerTier, max = 
   return Math.min(max, Math.max(0, Math.floor((xp || 0) / xpPerTier)));
 }
 
+export function sumTrackGems(track = SEASON_PASS.premium) {
+  return (track || []).reduce((a, row) => a + (row.gems || 0), 0);
+}
+
+/** Engaged premium players earn back more Gems than the pass costs. */
+export function premiumGemPayback(season = SEASON_PASS) {
+  const cost = season.premiumPurchase?.gemCost ?? season.premiumGemCost ?? 0;
+  const earned = sumTrackGems(season.premium);
+  return { cost, earned, surplus: earned - cost, paysBack: earned > cost };
+}
+
+export function assertSeasonPassShape(season = SEASON_PASS) {
+  const tiers = season.tiers | 0;
+  if (tiers < 50 || tiers > 100) throw new Error(`season tiers must be 50–100, got ${tiers}`);
+  if (!season.free || season.free.length !== tiers) throw new Error('free track length mismatch');
+  if (!season.premium || season.premium.length !== tiers) throw new Error('premium track length mismatch');
+  if (!season.name) throw new Error('season needs a themed name');
+  if (!season.legendary || season.legendary.at !== tiers) throw new Error('tier-max legendary required');
+  if (!Array.isArray(season.legendary.styles) || season.legendary.styles.length < 2) {
+    throw new Error('legendary needs progressive styles');
+  }
+  const pay = premiumGemPayback(season);
+  if (!pay.paysBack) throw new Error(`premium gems ${pay.earned} must exceed cost ${pay.cost}`);
+  if (!season.bundle || season.bundle.tierSkip !== 25) throw new Error('Pass + 25 tiers bundle stub required');
+  if (!season.tierBuy || season.tierBuy.neverPushed !== true) throw new Error('tierBuy must be optional/never pushed');
+  if (!Array.isArray(season.xpSources) || !season.xpSources.includes('runs')) {
+    throw new Error('xpSources must include runs + challenges');
+  }
+  return true;
+}
+
+export function gemsToBuyTiers(n, season = SEASON_PASS) {
+  const per = season.tierBuy?.gemsPerTier ?? 50;
+  const count = Math.max(0, n | 0);
+  return count * per;
+}
+
+export function applyBuyTiers(state, n, now = Date.now(), season = SEASON_PASS) {
+  if (!season.tierBuy?.enabled) return { ok: false, reason: 'disabled' };
+  const count = Math.max(0, n | 0);
+  if (!count) return { ok: false, reason: 'zero' };
+  const cost = gemsToBuyTiers(count, season);
+  if ((state.gems || 0) < cost) return { ok: false, reason: 'gems', cost };
+  const xpGain = count * (season.xpPerTier || 100);
+  return {
+    ok: true,
+    cost,
+    state: {
+      ...state,
+      gems: state.gems - cost,
+      battlePass: {
+        ...(state.battlePass || {}),
+        xp: (state.battlePass?.xp || 0) + xpGain,
+        tiersBought: (state.battlePass?.tiersBought || 0) + count,
+        lastTierBuyAt: now,
+      },
+    },
+  };
+}
+
 export function loginStreakScrap(day, cfg = LOGIN_STREAK) {
   const d = Math.max(1, day | 0);
   return Math.min(cfg.capScrap, 5 * d + 20 * Math.floor(d / 7));

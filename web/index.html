@@ -252,6 +252,34 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 .album-item{background:#0e1220;border-radius:8px;padding:8px 4px;font-size:10px;border:1px solid rgba(255,255,255,.08);text-align:center}
 .album-item.on{border-color:var(--lime);color:var(--lime)}
 #notifPrompt .card{border-color:rgba(0,245,255,.45)}
+#bpOv .card{max-width:min(520px,96vw);max-height:min(92vh,820px);display:flex;flex-direction:column}
+#bpOv .card h2{flex:0 0 auto}
+.bp-head{font-size:12px;color:var(--dim);margin:0 0 8px}
+.bp-preview-wrap{perspective:900px;margin:8px 0 12px;min-height:120px}
+.bp-preview{
+  transform:rotateY(-12deg) rotateX(6deg);transform-style:preserve-3d;
+  background:linear-gradient(145deg,#1a1230,#0e1220 55%,#12182c);
+  border:1px solid rgba(0,245,255,.35);border-radius:16px;padding:16px;
+  box-shadow:12px 16px 0 rgba(0,0,0,.35),0 0 28px rgba(255,43,214,.18);
+  text-align:left;min-height:100px;
+}
+.bp-preview .sw{width:48px;height:48px;border-radius:12px;display:inline-block;vertical-align:middle;margin-right:10px;
+  box-shadow:0 8px 0 rgba(0,0,0,.35),0 0 16px rgba(0,245,255,.25);transform:translateZ(20px)}
+.bp-preview b{display:block;color:var(--cyan);letter-spacing:.06em;margin-bottom:4px}
+.bp-preview .sub{font-size:11px;color:var(--dim)}
+.bp-scroll{overflow:auto;max-height:42vh;margin:8px 0;padding-bottom:6px;-webkit-overflow-scrolling:touch}
+.bp-rail{display:flex;gap:8px;min-width:max-content;padding:4px 2px 10px}
+.bp-tier{
+  width:88px;flex:0 0 auto;background:#0e1220;border:1px solid rgba(255,255,255,.1);
+  border-radius:12px;padding:8px 6px;font-size:10px;text-align:center;cursor:pointer;
+}
+.bp-tier.on{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(0,245,255,.35)}
+.bp-tier .t{font-weight:800;color:var(--gold);margin-bottom:4px}
+.bp-tier .free,.bp-tier .prem{display:block;line-height:1.25;margin-top:3px}
+.bp-tier .prem{color:#d6b6ff}
+.bp-tier.locked{opacity:.55}
+.bp-actions{display:grid;gap:8px;margin-top:8px}
+
 
 /* META_V2_END */
 
@@ -460,11 +488,16 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 </div></div>
 
 <div id="bpOv" class="overlay hidden"><div class="card">
-  <h2>SEASON PASS</h2>
-  <p>30-tier monthly track. Free lane active. Premium lane is an IAP stub. Cosmetics &amp; Scrap — not P2W score.</p>
+  <h2 id="bpTitle">SEASON PASS</h2>
+  <p class="bp-head" id="bpSub">Themed free + premium tracks. Scroll rewards · preview each tier.</p>
   <div class="bp-track"><div class="bp-fill" id="bpFill"></div></div>
-  <div id="bpList" class="bp-list"></div>
-  <button class="btn gold wide" id="bpPremiumBtn" type="button" disabled style="opacity:.55">Premium Pass (coming soon)</button>
+  <div class="bp-preview-wrap"><div class="bp-preview" id="bpPreview"><b>Select a tier</b><div class="sub">3D-ish reward preview</div></div></div>
+  <div class="bp-scroll"><div class="bp-rail" id="bpList"></div></div>
+  <div class="bp-actions">
+    <button class="btn gold wide" id="bpPremiumBtn" type="button" disabled style="opacity:.55">Premium Pass ~$9.99 (stub)</button>
+    <button class="btn mag wide" id="bpBundleBtn" type="button" disabled style="opacity:.55">Pass + 25 tiers (stub)</button>
+    <button class="btn ghost wide" id="bpBuyTierBtn" type="button">Buy 1 tier with Gems (optional)</button>
+  </div>
   <button class="btn ghost wide" id="bpClose" type="button" style="margin-top:10px">Close</button>
 </div></div>
 
@@ -715,17 +748,24 @@ const WEEKLY_POOL = [
   {id:"w_combo6", name:"Hit a x6 combo", goal:6, kind:"comboWeek", reward:130}
 ];
 function seasonRows(lane){
-  const sp = (EC().SEASON_PASS) || { free:[], premium:[], tiers:30 };
+  const sp = (EC().SEASON_PASS) || { free:[], premium:[], tiers:100 };
   const rows = lane==="premium" ? (sp.premium||[]) : (sp.free||[]);
   return rows.map(r=>{
     const reward = {};
     if (r.scrap) reward.shinies = r.scrap;
     if (r.gems) reward.gems = r.gems;
     if (r.skin) reward.skin = r.skin;
+    if (r.skinSet) reward.skinSet = r.skinSet;
     if (r.bg) reward.bg = r.bg;
     if (r.trail) reward.trail = r.trail;
     if (r.outfit) reward.outfit = r.outfit;
-    return { at:r.at, reward };
+    if (r.emote) reward.emote = r.emote;
+    if (r.banner) reward.banner = r.banner;
+    if (r.crushFx) reward.crushFx = r.crushFx;
+    if (r.legendary) reward.legendary = true;
+    if (r.legendaryStyle) reward.legendaryStyle = r.legendaryStyle;
+    if (r.animated) reward.animated = true;
+    return { at:r.at, reward, preview:r.preview, scrap:r.scrap, gems:r.gems, outfit:r.outfit, skin:r.skin, skinSet:r.skinSet, bg:r.bg, trail:r.trail, emote:r.emote, banner:r.banner, crushFx:r.crushFx, legendary:r.legendary };
   });
 }
 function BP_FREE(){ return seasonRows("free"); }
@@ -1198,9 +1238,11 @@ function bpTierUnlocked(){
   return Math.min(sp.tiers||30, Math.floor((save.battlePass.xp||0)/(sp.xpPerTier||100)));
 }
 function grantBPReward(reward){
+  if (!reward) return;
   if (reward.shinies) addShinies(reward.shinies);
   if (reward.gems) addGems(reward.gems);
   if (reward.skin && !save.unlockedSkins.includes(reward.skin)){ save.unlockedSkins.push(reward.skin); albumUnlock("skins", reward.skin); }
+  if (reward.skinSet) albumUnlock("skins", reward.skinSet);
   if (reward.bg && !save.unlockedBgs.includes(reward.bg)){ save.unlockedBgs.push(reward.bg); albumUnlock("bgs", reward.bg); }
   if (reward.trail && !save.unlockedTrails.includes(reward.trail)){ save.unlockedTrails.push(reward.trail); albumUnlock("trails", reward.trail); }
   if (reward.outfit && !(save.unlockedOutfits||[]).includes(reward.outfit)){
@@ -1208,6 +1250,10 @@ function grantBPReward(reward){
     save.unlockedOutfits.push(reward.outfit);
     albumUnlock("outfits", reward.outfit);
   }
+  if (reward.emote){ save.unlockedEmotes = save.unlockedEmotes||[]; if (!save.unlockedEmotes.includes(reward.emote)) save.unlockedEmotes.push(reward.emote); }
+  if (reward.banner){ save.unlockedBanners = save.unlockedBanners||[]; if (!save.unlockedBanners.includes(reward.banner)) save.unlockedBanners.push(reward.banner); }
+  if (reward.crushFx){ save.unlockedCrushFx = save.unlockedCrushFx||[]; if (!save.unlockedCrushFx.includes(reward.crushFx)) save.unlockedCrushFx.push(reward.crushFx); }
+  if (reward.legendaryStyle){ save.legendaryStyles = save.legendaryStyles||[]; if (!save.legendaryStyles.includes(reward.legendaryStyle)) save.legendaryStyles.push(reward.legendaryStyle); }
 }
 function claimBattlePassReady(){
   const tier = bpTierUnlocked();
@@ -2569,23 +2615,88 @@ function renderLeaderboard(){
   if (!rows.length){ host.innerHTML = `<div class="lb-row">No runs yet — set a personal best tonight.</div>`; return; }
   host.innerHTML = rows.map((r,i)=>`<div class="lb-row"><b>#${i+1}</b><div style="flex:1">${r.score.toLocaleString()} · ${r.lines} lines</div><span style="color:var(--dim);font-size:11px">${new Date(r.at).toLocaleDateString()}</span></div>`).join("");
 }
+let bpSelectedTier = 1;
+function rewardLabel(row){
+  if (!row) return "—";
+  if (row.preview && row.preview.label) return row.preview.label;
+  if (row.legendary) return "Legendary";
+  if (row.outfit) return "Outfit";
+  if (row.skin || row.skinSet) return "Blocks";
+  if (row.bg) return "Board";
+  if (row.trail) return "Trail";
+  if (row.crushFx) return "Crush FX";
+  if (row.emote) return "Emote";
+  if (row.banner) return "Banner";
+  if (row.gems) return row.gems+" ◆";
+  if (row.shinies || row.scrap) return (row.scrap||row.shinies)+" ⚙";
+  if (row.reward){
+    const r=row.reward;
+    if (r.gems) return r.gems+" ◆";
+    if (r.shinies) return r.shinies+" ⚙";
+    if (r.skin||r.trail||r.bg||r.outfit) return "LOOK";
+  }
+  return "Reward";
+}
+function previewForTier(at){
+  const free = BP_FREE().find(r=>r.at===at);
+  const prem = BP_PREMIUM().find(r=>r.at===at);
+  const raw = (EC().SEASON_PASS && EC().SEASON_PASS.premium || []).find(r=>r.at===at)
+    || (EC().SEASON_PASS && EC().SEASON_PASS.free || []).find(r=>r.at===at);
+  const prev = (raw && raw.preview) || (prem && prem.reward && {label:rewardLabel(prem)}) || {label:rewardLabel(free)};
+  const sw = (raw && raw.preview && raw.preview.swatch) || "#00f5ff";
+  const host = document.getElementById("bpPreview");
+  if (!host) return;
+  host.innerHTML = `<span class="sw" style="background:${sw}"></span><div style="display:inline-block;vertical-align:middle;max-width:70%">
+    <b>Tier ${at} — ${prev.label||"Reward"}</b>
+    <div class="sub">${prev.kind==="legendary"?"Legendary animated skin · styles unlock as you climb":(prev.animated?"Animated cosmetic":"Free + premium rewards · not P2W score")}</div>
+  </div>`;
+}
 function renderBattlePass(){
   const tier = bpTierUnlocked();
-  const sp = EC().SEASON_PASS || { tiers:30, xpPerTier:100, label:"Neon Season" };
+  const sp = EC().SEASON_PASS || { tiers:100, xpPerTier:100, label:"Season Pass", name:"Season" };
   const xpPer = sp.xpPerTier || 100;
+  const title = document.getElementById("bpTitle");
+  if (title) title.textContent = (sp.label || ("SEASON — "+(sp.name||""))).toUpperCase();
+  const sub = document.getElementById("bpSub");
+  if (sub){
+    const pay = EM().premiumGemPayback ? EM().premiumGemPayback(sp) : null;
+    sub.textContent = (sp.theme && sp.theme.tagline ? sp.theme.tagline+" " : "")
+      + (sp.tiers||100)+" tiers · Free + Premium · "
+      + (pay ? ("Premium returns "+pay.earned+" ◆ vs "+pay.cost+" ◆ cost. ") : "")
+      + "XP from runs & hustles.";
+  }
   document.getElementById("bpFill").style.width = Math.min(100, ((save.battlePass.xp||0)%xpPer)/xpPer*100)+"%";
+  const premBtn = document.getElementById("bpPremiumBtn");
+  if (premBtn){
+    const price = (sp.premiumPurchase && sp.premiumPurchase.priceUsd) || sp.premiumPriceUsd || 9.99;
+    premBtn.textContent = "Premium Pass ~$"+Number(price).toFixed(2)+" / "+((sp.premiumPurchase&&sp.premiumPurchase.gemCost)||450)+" ◆ (stub)";
+  }
+  const bundleBtn = document.getElementById("bpBundleBtn");
+  if (bundleBtn && sp.bundle) bundleBtn.textContent = (sp.bundle.label||"Pass + 25 tiers")+" (stub)";
   const host=document.getElementById("bpList");
   const free = BP_FREE();
   const prem = BP_PREMIUM();
+  if (!bpSelectedTier) bpSelectedTier = Math.max(1, tier||1);
   host.innerHTML = free.map((row,i)=>{
     const p = prem[i];
-    const freeClaimed = (save.battlePass.claimedFree||[]).includes(row.at);
-    const premClaimed = (save.battlePass.claimedPremium||[]).includes(row.at);
     const unlocked = row.at <= tier;
-    const freeLab = freeClaimed?"claimed":unlocked?"ready":"locked";
-    const premLab = (save.premiumPass||save.battlePass.premium)?(premClaimed?"claimed":unlocked?"ready":"locked"):"stub";
-    return `<div class="bp-row"><b>T${row.at}</b><div style="flex:1">Free: ${freeLab} · Premium: ${premLab}</div></div>`;
+    const freeLab = rewardLabel(row);
+    const premLab = rewardLabel(p);
+    return `<div class="bp-tier ${unlocked?"":"locked"} ${row.at===bpSelectedTier?"on":""}" data-tier="${row.at}">
+      <div class="t">T${row.at}</div>
+      <span class="free">Free: ${freeLab}</span>
+      <span class="prem">Prem: ${premLab}</span>
+    </div>`;
   }).join("");
+  host.querySelectorAll(".bp-tier").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      bpSelectedTier = parseInt(el.getAttribute("data-tier"),10)||1;
+      renderBattlePass();
+      const on = host.querySelector('.bp-tier.on');
+      if (on) on.scrollIntoView({inline:"center", block:"nearest", behavior:"smooth"});
+    });
+  });
+  previewForTier(bpSelectedTier);
 }
 function renderCalendar(){
   const host=document.getElementById("calGrid");
@@ -2761,7 +2872,22 @@ document.getElementById("lbBtn").addEventListener("click", ()=>{ renderLeaderboa
 document.getElementById("lbClose").addEventListener("click", ()=>document.getElementById("lbOv").classList.add("hidden"));
 document.getElementById("bpBtn").addEventListener("click", ()=>{ renderBattlePass(); document.getElementById("bpOv").classList.remove("hidden"); });
 document.getElementById("bpClose").addEventListener("click", ()=>document.getElementById("bpOv").classList.add("hidden"));
-document.getElementById("bpPremiumBtn").addEventListener("click", (ev)=>{ ev.preventDefault(); toast("Premium Night Pass lane is stubbed — coming soon."); });
+document.getElementById("bpPremiumBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  toast("Premium Pass stub (~$9.99 / Gems) — StoreKit/Play TODO. Never required.");
+});
+document.getElementById("bpBundleBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  toast("Pass + 25 tiers bundle stub — optional, never pushed.");
+});
+document.getElementById("bpBuyTierBtn").addEventListener("click", ()=>{
+  if (!EM().applyBuyTiers){ toast("Tier buy unavailable"); return; }
+  const res = EM().applyBuyTiers(save, 1);
+  if (!res.ok){ toast(res.reason==="gems"?"Need more Gems":"Can't buy tier"); return; }
+  save = res.state; save.shinies = save.scrap; persist();
+  claimBattlePassReady(); renderBattlePass(); syncMetaUI();
+  toast("Tier skipped for "+res.cost+" Gems (optional).");
+});
 document.getElementById("calBtn").addEventListener("click", ()=>{ renderCalendar(); document.getElementById("calOv").classList.remove("hidden"); });
 document.getElementById("calClose").addEventListener("click", ()=>document.getElementById("calOv").classList.add("hidden"));
 document.getElementById("baseBtn").addEventListener("click", ()=>{ renderBase(); document.getElementById("baseOv").classList.remove("hidden"); });

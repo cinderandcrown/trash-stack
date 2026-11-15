@@ -4,6 +4,8 @@
  * No real-money gambling: random rewards show odds; crates never sold for cash without odds.
  */
 
+import { getSeason, listSeasons, ACTIVE_SEASON_ID } from './seasons/index.js';
+
 export const ECONOMY_VERSION = 3;
 
 /** Soft currency earned in play (migrated from legacy "shinies"). */
@@ -152,79 +154,13 @@ export const SPEEDUP = {
   maxGemsPerAction: 200,
 };
 
-export const SEASON_PASS = {
-  seasonId: 1,
-  label: 'Neon Season',
-  tiers: 30,
-  xpPerTier: 100,
-  premiumProductId: '', // stub
-  premiumPriceUsd: 4.99,
-  // Free/premium rewards by tier (1..30). Cosmetics & soft currency only on free; gems sparse on premium.
-  free: [
-    { at: 1, scrap: 40 },
-    { at: 2, scrap: 50 },
-    { at: 3, trail: 'cyan' },
-    { at: 4, scrap: 60 },
-    { at: 5, scrap: 80 },
-    { at: 6, bg: 'rooftop' },
-    { at: 7, scrap: 90 },
-    { at: 8, scrap: 100 },
-    { at: 9, skin: 'glass' },
-    { at: 10, scrap: 140 },
-    { at: 11, scrap: 80 },
-    { at: 12, scrap: 90 },
-    { at: 13, trail: 'mag' },
-    { at: 14, scrap: 100 },
-    { at: 15, scrap: 120 },
-    { at: 16, bg: 'alley' },
-    { at: 17, scrap: 120 },
-    { at: 18, scrap: 140 },
-    { at: 19, skin: 'gold' },
-    { at: 20, scrap: 180 },
-    { at: 21, scrap: 100 },
-    { at: 22, scrap: 110 },
-    { at: 23, trail: 'gold' },
-    { at: 24, scrap: 130 },
-    { at: 25, scrap: 150 },
-    { at: 26, bg: 'subway' },
-    { at: 27, scrap: 160 },
-    { at: 28, scrap: 180 },
-    { at: 29, skin: 'circuit' },
-    { at: 30, scrap: 250 },
-  ],
-  premium: [
-    { at: 1, scrap: 80, gems: 5 },
-    { at: 2, scrap: 100 },
-    { at: 3, trail: 'lime' },
-    { at: 4, scrap: 120 },
-    { at: 5, gems: 10 },
-    { at: 6, scrap: 140 },
-    { at: 7, scrap: 150 },
-    { at: 8, gems: 10 },
-    { at: 9, skin: 'mask' },
-    { at: 10, scrap: 220, gems: 15 },
-    { at: 11, scrap: 120 },
-    { at: 12, gems: 10 },
-    { at: 13, scrap: 140 },
-    { at: 14, scrap: 150 },
-    { at: 15, gems: 20 },
-    { at: 16, scrap: 180 },
-    { at: 17, scrap: 180 },
-    { at: 18, gems: 15 },
-    { at: 19, skin: 'sticker' },
-    { at: 20, scrap: 300, gems: 25 },
-    { at: 21, scrap: 160 },
-    { at: 22, gems: 15 },
-    { at: 23, scrap: 180 },
-    { at: 24, scrap: 200 },
-    { at: 25, gems: 30 },
-    { at: 26, scrap: 220 },
-    { at: 27, scrap: 240 },
-    { at: 28, gems: 20 },
-    { at: 29, skin: 'haze' },
-    { at: 30, scrap: 400, gems: 50 },
-  ],
-};
+/**
+ * Active Season Pass — Fortnite-style, data-driven.
+ * Source files live in `src/seasons/` (e.g. season-1-neon-dumpster.js).
+ * Swap ACTIVE_SEASON_ID or add a file + registry entry for a new season.
+ */
+export const SEASON_PASS = getSeason(ACTIVE_SEASON_ID);
+export { getSeason, listSeasons, ACTIVE_SEASON_ID };
 
 /**
  * Chest tables — odds MUST sum to 100 (percent). Never sell these for real money without odds UI.
@@ -337,6 +273,7 @@ export function attachEconomyGlobal(target = globalThis) {
     BUILDERS,
     SPEEDUP,
     SEASON_PASS,
+    ACTIVE_SEASON_ID,
     CHESTS,
     LOGIN_STREAK,
     SPIN,

@@ -72,11 +72,30 @@ Speedup: `ceil(remainingSec / 60)` Gems (min 1, max 200).
 
 Perks are **run juice / economy**, never pay-to-win personal-best score.
 
-## Season Pass
+## Season Pass (Fortnite model)
 
-- **30 tiers**, 100 XP / tier, monthly season id in config  
-- Free + premium tracks (cosmetics + Scrap; sparse Gems on premium only)  
-- Premium lane stub until StoreKit/Play product exists  
+Data-driven seasons live in **`src/seasons/`** (active: `season-1-neon-dumpster.js`).  
+Register new seasons in `src/seasons/index.js` and flip `ACTIVE_SEASON_ID` — no game-logic edits required.
+
+| Knob | Value |
+|------|--------|
+| Tiers | **50–100** per season (Season 1 = **100**) |
+| XP / tier | 100 (runs + daily + weekly challenges) |
+| Theme | Named season, e.g. **Season 1 — Neon Dumpster** |
+| Tracks | Free + Premium |
+| Premium unlock | ~**$9.99** / **450 Gems** stub (`premiumPurchase`) |
+| Bundle stub | **Pass + 25 tiers** (`bundle.tierSkip: 25`) |
+| Gem payback | Premium track awards **more Gems than it costs** (Season 1: 570 > 450) so engaged players can earn the next pass |
+| Buy tiers | Optional Gems (`tierBuy`, **never pushed**) |
+| Finale | Tier **100** legendary animated raccoon skin + progressive styles (25 / 50 / 75 / 100) |
+
+### Reward kinds (visible / cool)
+
+Animated raccoon outfits · block-skin sets · board themes · compactor crush effects · trails · emotes · banners · Scrap / Gems filler · legendary styles
+
+### Pass UI
+
+Scrollable dual reward track + 3D-ish preview pane for the selected tier (CSS perspective card). Premium / bundle buttons are stubs and sit quietly on the pass screen — never launch or post-loss nags.
 
 ## Chests
 
@@ -115,9 +134,10 @@ Cap **~2/day** + quiet hours 21:00–08:00. No remote push server.
 
 ## Tuning without code changes
 
-1. Edit `src/economy-config.js`  
-2. `npm test` (economy math)  
-3. `npm run build` (bundles into `web/economy.js` + native bridge)  
+1. Edit `src/economy-config.js` for currencies / base / chests / ads  
+2. Add or edit a season file under `src/seasons/` and register it in `src/seasons/index.js`  
+3. `npm test` (economy math + season shape + offer caps)  
+4. `npm run build` (bundles into `web/economy.js` + native bridge)  
 
 ## Tests
 

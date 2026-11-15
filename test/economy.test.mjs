@@ -28,6 +28,11 @@ import {
   assertOfferFrequencyCaps,
   isConfirmshamingCopy,
   calendarDayKey,
+  assertSeasonPassShape,
+  premiumGemPayback,
+  sumTrackGems,
+  gemsToBuyTiers,
+  applyBuyTiers,
 } from '../src/economy-math.js';
 import {
   CHESTS,
@@ -38,6 +43,7 @@ import {
   STARTER_PACK,
   ONE_TIME_OFFER,
   COMPLIANCE,
+  listSeasons,
 } from '../src/economy-config.js';
 
 describe('compliance / odds', () => {
@@ -152,15 +158,31 @@ describe('upgrade queue', () => {
 });
 
 describe('season + login', () => {
-  it('season has 30 tiers', () => {
-    assert.equal(SEASON_PASS.tiers, 30);
-    assert.equal(SEASON_PASS.free.length, 30);
-    assert.equal(SEASON_PASS.premium.length, 30);
+  it('Fortnite-style season shape (50–100 tiers, payback, bundle)', () => {
+    assert.equal(assertSeasonPassShape(), true);
+    assert.equal(SEASON_PASS.tiers, 100);
+    assert.equal(SEASON_PASS.name, 'Neon Dumpster');
+    assert.equal(SEASON_PASS.premiumPurchase.priceUsd, 9.99);
+    assert.equal(SEASON_PASS.bundle.label, 'Pass + 25 tiers');
+    assert.ok(listSeasons().length >= 1);
   });
-  it('seasonTierUnlocked clamps', () => {
+  it('premium track pays back more gems than cost', () => {
+    const pay = premiumGemPayback();
+    assert.ok(pay.earned > pay.cost);
+    assert.equal(sumTrackGems(), pay.earned);
+  });
+  it('seasonTierUnlocked clamps to 100', () => {
     assert.equal(seasonTierUnlocked(0), 0);
     assert.equal(seasonTierUnlocked(100), 1);
-    assert.equal(seasonTierUnlocked(99999), 30);
+    assert.equal(seasonTierUnlocked(99999), 100);
+  });
+  it('optional gem tier buy (never pushed)', () => {
+    assert.equal(SEASON_PASS.tierBuy.neverPushed, true);
+    assert.equal(gemsToBuyTiers(2), 100);
+    const res = applyBuyTiers({ gems: 200, battlePass: { xp: 0 } }, 2);
+    assert.equal(res.ok, true);
+    assert.equal(res.state.gems, 100);
+    assert.equal(res.state.battlePass.xp, 200);
   });
   it('login streak escalates and caps', () => {
     assert.equal(loginStreakScrap(1), 5);

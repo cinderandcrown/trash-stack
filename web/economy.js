@@ -5,6 +5,178 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
+  // src/seasons/season-1-neon-dumpster.js
+  var TIERS = 100;
+  var XP_PER_TIER = 100;
+  var PREMIUM_GEM_COST = 450;
+  var FREE_LANDMARKS = {
+    1: { scrap: 50, preview: { kind: "scrap", label: "50 Scrap" } },
+    5: { trail: "cyan", preview: { kind: "trail", label: "Cyan Sparks", swatch: "#00f5ff" } },
+    10: { bg: "rooftop", preview: { kind: "board", label: "Rooftop Board", swatch: "#1a2040" } },
+    15: { banner: "dock_flag", preview: { kind: "banner", label: "Dock Flag" } },
+    20: { skin: "glass", preview: { kind: "skin", label: "Glass Blocks", swatch: "#9ef6ff" } },
+    25: { emote: "wave", preview: { kind: "emote", label: "Wave Emote" } },
+    30: { crushFx: "spark_pop", preview: { kind: "crush", label: "Spark Crush" } },
+    35: { scrap: 200, preview: { kind: "scrap", label: "200 Scrap" } },
+    40: { trail: "mag", preview: { kind: "trail", label: "Magenta Dust", swatch: "#ff2bd6" } },
+    45: { outfit: "hoodie", preview: { kind: "outfit", label: "Neon Hoodie" } },
+    50: { bg: "alley", preview: { kind: "board", label: "Alley Board", swatch: "#241018" } },
+    55: { banner: "neon_strip", preview: { kind: "banner", label: "Neon Strip Banner" } },
+    60: { skinSet: "pipe_kit", preview: { kind: "skinSet", label: "Pipe Kit Blocks" } },
+    65: { emote: "flex", preview: { kind: "emote", label: "Flex Emote" } },
+    70: { crushFx: "hydraulic", preview: { kind: "crush", label: "Hydraulic Slam" } },
+    75: { trail: "gold", preview: { kind: "trail", label: "Gold Embers", swatch: "#ffd166" } },
+    80: { bg: "subway", preview: { kind: "board", label: "Subway Board", swatch: "#101820" } },
+    85: { outfit: "visor", preview: { kind: "outfit", label: "Night Visor" } },
+    90: { scrap: 400, preview: { kind: "scrap", label: "400 Scrap" } },
+    95: { emote: "dumpster_dive", preview: { kind: "emote", label: "Dumpster Dive" } },
+    100: { scrap: 500, preview: { kind: "scrap", label: "Finale Scrap Stash" } }
+  };
+  var PREMIUM_LANDMARKS = {
+    1: { gems: 25, scrap: 80, preview: { kind: "gems", label: "25 Gems" } },
+    5: { trail: "lime", preview: { kind: "trail", label: "Lime Static", swatch: "#7dff6b" } },
+    8: { gems: 30, preview: { kind: "gems", label: "30 Gems" } },
+    10: { outfit: "hardhat", animated: true, preview: { kind: "outfit", label: "Dock Hardhat", animated: true } },
+    12: { gems: 25, preview: { kind: "gems", label: "25 Gems" } },
+    15: { crushFx: "neon_pulse", preview: { kind: "crush", label: "Neon Pulse Crush" } },
+    18: { gems: 30, preview: { kind: "gems", label: "30 Gems" } },
+    20: { skin: "gold", preview: { kind: "skin", label: "Gold Blocks", swatch: "#ffd166" } },
+    25: {
+      legendaryStyle: "neon_legend_base",
+      preview: { kind: "style", label: "Legend Style: Base Glow", parent: "neon_legend_raccoon" }
+    },
+    28: { gems: 35, preview: { kind: "gems", label: "35 Gems" } },
+    30: { banner: "premium_ribbon", preview: { kind: "banner", label: "Premium Ribbon" } },
+    35: { gems: 40, preview: { kind: "gems", label: "40 Gems" } },
+    40: { emote: "raccoon_spin", preview: { kind: "emote", label: "Raccoon Spin" } },
+    45: { gems: 40, preview: { kind: "gems", label: "40 Gems" } },
+    50: {
+      legendaryStyle: "neon_legend_stripes",
+      skinSet: "neon_alloy",
+      preview: { kind: "style", label: "Legend Style: Stripes", parent: "neon_legend_raccoon" }
+    },
+    55: { gems: 45, preview: { kind: "gems", label: "45 Gems" } },
+    60: { crushFx: "rainbow_press", preview: { kind: "crush", label: "Rainbow Press" } },
+    65: { gems: 50, preview: { kind: "gems", label: "50 Gems" } },
+    70: { bg: "neon_yard", preview: { kind: "board", label: "Neon Yard Board", swatch: "#120828" } },
+    75: {
+      legendaryStyle: "neon_legend_chrome",
+      preview: { kind: "style", label: "Legend Style: Chrome", parent: "neon_legend_raccoon" }
+    },
+    80: { gems: 55, preview: { kind: "gems", label: "55 Gems" } },
+    85: { trail: "aurora", preview: { kind: "trail", label: "Aurora Trail", swatch: "#a78bfa" } },
+    90: { gems: 60, preview: { kind: "gems", label: "60 Gems" } },
+    95: { emote: "legendary_pose", preview: { kind: "emote", label: "Legendary Pose" } },
+    100: {
+      gems: 80,
+      outfit: "neon_legend_raccoon",
+      animated: true,
+      legendary: true,
+      styles: ["neon_legend_base", "neon_legend_stripes", "neon_legend_chrome", "neon_legend_finale"],
+      preview: {
+        kind: "legendary",
+        label: "Neon Legend Raccoon",
+        animated: true,
+        styles: 4
+      }
+    }
+  };
+  function fillerFree(at) {
+    if (at % 7 === 0) {
+      const n2 = 40 + Math.floor(at / 2);
+      return { scrap: n2, preview: { kind: "scrap", label: `${n2} Scrap` } };
+    }
+    if (at % 11 === 0) return { scrap: 60, preview: { kind: "scrap", label: "60 Scrap" } };
+    const n = 25 + at % 5 * 5;
+    return { scrap: n, preview: { kind: "scrap", label: `${n} Scrap` } };
+  }
+  function fillerPremium(at) {
+    if (at % 6 === 0) return { gems: 5, scrap: 40, preview: { kind: "gems", label: "5 Gems" } };
+    if (at % 9 === 0) return { scrap: 90, preview: { kind: "scrap", label: "90 Scrap" } };
+    const n = 50 + at % 4 * 10;
+    return { scrap: n, preview: { kind: "scrap", label: `${n} Scrap` } };
+  }
+  function buildTrack(landmarks, filler) {
+    const rows = [];
+    for (let at = 1; at <= TIERS; at++) {
+      rows.push(landmarks[at] ? { at, ...landmarks[at] } : { at, ...filler(at) });
+    }
+    return rows;
+  }
+  var free = buildTrack(FREE_LANDMARKS, fillerFree);
+  var premium = buildTrack(PREMIUM_LANDMARKS, fillerPremium);
+  var SEASON_1_NEON_DUMPSTER = {
+    id: 1,
+    slug: "neon-dumpster",
+    name: "Neon Dumpster",
+    label: "Season 1 \u2014 Neon Dumpster",
+    seasonId: 1,
+    tiers: TIERS,
+    minTiers: 50,
+    maxTiers: 100,
+    xpPerTier: XP_PER_TIER,
+    theme: {
+      tagline: "Night shift on the glowing docks.",
+      primary: "#00f5ff",
+      accent: "#ff2bd6"
+    },
+    xpSources: ["runs", "daily_challenges", "weekly_challenges"],
+    /** IAP / gem unlock for premium track (~$9.99). */
+    premiumPurchase: {
+      priceUsd: 9.99,
+      gemCost: PREMIUM_GEM_COST,
+      productId: "",
+      stub: true,
+      label: "Premium Pass"
+    },
+    /** Stubbed bundle: unlock premium + skip ahead 25 tiers. */
+    bundle: {
+      id: "pass_plus_25",
+      label: "Pass + 25 tiers",
+      priceUsd: 14.99,
+      gemCost: 700,
+      tierSkip: 25,
+      productId: "",
+      stub: true
+    },
+    /** Optional gem tier skips — in pass UI only, never auto-pushed. */
+    tierBuy: {
+      enabled: true,
+      gemsPerTier: 50,
+      neverPushed: true,
+      maxBuyPerSession: 10
+    },
+    free,
+    premium,
+    legendary: {
+      at: 100,
+      track: "premium",
+      id: "neon_legend_raccoon",
+      kind: "outfit",
+      animated: true,
+      label: "Neon Legend Raccoon",
+      styles: [
+        { id: "neon_legend_base", unlockAt: 25, label: "Base Glow" },
+        { id: "neon_legend_stripes", unlockAt: 50, label: "Stripes" },
+        { id: "neon_legend_chrome", unlockAt: 75, label: "Chrome" },
+        { id: "neon_legend_finale", unlockAt: 100, label: "Finale Pulse" }
+      ]
+    },
+    // Back-compat aliases for older SEASON_PASS readers
+    premiumProductId: "",
+    premiumPriceUsd: 9.99
+  };
+
+  // src/seasons/index.js
+  var SEASONS = {
+    [SEASON_1_NEON_DUMPSTER.id]: SEASON_1_NEON_DUMPSTER,
+    [SEASON_1_NEON_DUMPSTER.slug]: SEASON_1_NEON_DUMPSTER
+  };
+  var ACTIVE_SEASON_ID = 1;
+  function getSeason(id = ACTIVE_SEASON_ID) {
+    return SEASONS[id] || SEASON_1_NEON_DUMPSTER;
+  }
+
   // src/economy-config.js
   var ECONOMY_VERSION = 3;
   var SOFT = {
@@ -136,80 +308,7 @@
     minGems: 1,
     maxGemsPerAction: 200
   };
-  var SEASON_PASS = {
-    seasonId: 1,
-    label: "Neon Season",
-    tiers: 30,
-    xpPerTier: 100,
-    premiumProductId: "",
-    // stub
-    premiumPriceUsd: 4.99,
-    // Free/premium rewards by tier (1..30). Cosmetics & soft currency only on free; gems sparse on premium.
-    free: [
-      { at: 1, scrap: 40 },
-      { at: 2, scrap: 50 },
-      { at: 3, trail: "cyan" },
-      { at: 4, scrap: 60 },
-      { at: 5, scrap: 80 },
-      { at: 6, bg: "rooftop" },
-      { at: 7, scrap: 90 },
-      { at: 8, scrap: 100 },
-      { at: 9, skin: "glass" },
-      { at: 10, scrap: 140 },
-      { at: 11, scrap: 80 },
-      { at: 12, scrap: 90 },
-      { at: 13, trail: "mag" },
-      { at: 14, scrap: 100 },
-      { at: 15, scrap: 120 },
-      { at: 16, bg: "alley" },
-      { at: 17, scrap: 120 },
-      { at: 18, scrap: 140 },
-      { at: 19, skin: "gold" },
-      { at: 20, scrap: 180 },
-      { at: 21, scrap: 100 },
-      { at: 22, scrap: 110 },
-      { at: 23, trail: "gold" },
-      { at: 24, scrap: 130 },
-      { at: 25, scrap: 150 },
-      { at: 26, bg: "subway" },
-      { at: 27, scrap: 160 },
-      { at: 28, scrap: 180 },
-      { at: 29, skin: "circuit" },
-      { at: 30, scrap: 250 }
-    ],
-    premium: [
-      { at: 1, scrap: 80, gems: 5 },
-      { at: 2, scrap: 100 },
-      { at: 3, trail: "lime" },
-      { at: 4, scrap: 120 },
-      { at: 5, gems: 10 },
-      { at: 6, scrap: 140 },
-      { at: 7, scrap: 150 },
-      { at: 8, gems: 10 },
-      { at: 9, skin: "mask" },
-      { at: 10, scrap: 220, gems: 15 },
-      { at: 11, scrap: 120 },
-      { at: 12, gems: 10 },
-      { at: 13, scrap: 140 },
-      { at: 14, scrap: 150 },
-      { at: 15, gems: 20 },
-      { at: 16, scrap: 180 },
-      { at: 17, scrap: 180 },
-      { at: 18, gems: 15 },
-      { at: 19, skin: "sticker" },
-      { at: 20, scrap: 300, gems: 25 },
-      { at: 21, scrap: 160 },
-      { at: 22, gems: 15 },
-      { at: 23, scrap: 180 },
-      { at: 24, scrap: 200 },
-      { at: 25, gems: 30 },
-      { at: 26, scrap: 220 },
-      { at: 27, scrap: 240 },
-      { at: 28, gems: 20 },
-      { at: 29, skin: "haze" },
-      { at: 30, scrap: 400, gems: 50 }
-    ]
-  };
+  var SEASON_PASS = getSeason(ACTIVE_SEASON_ID);
   var CHESTS = {
     dock_crate: {
       id: "dock_crate",
@@ -310,6 +409,7 @@
       BUILDERS,
       SPEEDUP,
       SEASON_PASS,
+      ACTIVE_SEASON_ID,
       CHESTS,
       LOGIN_STREAK,
       SPIN,
@@ -325,11 +425,13 @@
   var economy_math_exports = {};
   __export(economy_math_exports, {
     aggregatePerks: () => aggregatePerks,
+    applyBuyTiers: () => applyBuyTiers,
     applyScrapGain: () => applyScrapGain,
     applyStartUpgrade: () => applyStartUpgrade,
     applyXpGain: () => applyXpGain,
     assertOddsSum100: () => assertOddsSum100,
     assertOfferFrequencyCaps: () => assertOfferFrequencyCaps,
+    assertSeasonPassShape: () => assertSeasonPassShape,
     buildingPerk: () => buildingPerk,
     calendarDayKey: () => calendarDayKey,
     canEnqueueChest: () => canEnqueueChest,
@@ -341,17 +443,20 @@
     formatOddsLine: () => formatOddsLine,
     gemsForReadyAt: () => gemsForReadyAt,
     gemsForSpeedup: () => gemsForSpeedup,
+    gemsToBuyTiers: () => gemsToBuyTiers,
     isConfirmshamingCopy: () => isConfirmshamingCopy,
     loginStreakScrap: () => loginStreakScrap,
     migrateLegacySave: () => migrateLegacySave,
     openChestIfReady: () => openChestIfReady,
     pickWeightedChest: () => pickWeightedChest,
+    premiumGemPayback: () => premiumGemPayback,
     recordSpecialOfferDismiss: () => recordSpecialOfferDismiss,
     recordSpecialOfferSurface: () => recordSpecialOfferSurface,
     rollChestReward: () => rollChestReward,
     seasonTierUnlocked: () => seasonTierUnlocked,
     speedupChest: () => speedupChest,
     speedupQueueItem: () => speedupQueueItem,
+    sumTrackGems: () => sumTrackGems,
     upgradeCost: () => upgradeCost,
     validateChestTables: () => validateChestTables
   });
@@ -474,6 +579,60 @@
   }
   function seasonTierUnlocked(xp, xpPerTier = SEASON_PASS.xpPerTier, max = SEASON_PASS.tiers) {
     return Math.min(max, Math.max(0, Math.floor((xp || 0) / xpPerTier)));
+  }
+  function sumTrackGems(track = SEASON_PASS.premium) {
+    return (track || []).reduce((a, row) => a + (row.gems || 0), 0);
+  }
+  function premiumGemPayback(season = SEASON_PASS) {
+    const cost = season.premiumPurchase?.gemCost ?? season.premiumGemCost ?? 0;
+    const earned = sumTrackGems(season.premium);
+    return { cost, earned, surplus: earned - cost, paysBack: earned > cost };
+  }
+  function assertSeasonPassShape(season = SEASON_PASS) {
+    const tiers = season.tiers | 0;
+    if (tiers < 50 || tiers > 100) throw new Error(`season tiers must be 50\u2013100, got ${tiers}`);
+    if (!season.free || season.free.length !== tiers) throw new Error("free track length mismatch");
+    if (!season.premium || season.premium.length !== tiers) throw new Error("premium track length mismatch");
+    if (!season.name) throw new Error("season needs a themed name");
+    if (!season.legendary || season.legendary.at !== tiers) throw new Error("tier-max legendary required");
+    if (!Array.isArray(season.legendary.styles) || season.legendary.styles.length < 2) {
+      throw new Error("legendary needs progressive styles");
+    }
+    const pay = premiumGemPayback(season);
+    if (!pay.paysBack) throw new Error(`premium gems ${pay.earned} must exceed cost ${pay.cost}`);
+    if (!season.bundle || season.bundle.tierSkip !== 25) throw new Error("Pass + 25 tiers bundle stub required");
+    if (!season.tierBuy || season.tierBuy.neverPushed !== true) throw new Error("tierBuy must be optional/never pushed");
+    if (!Array.isArray(season.xpSources) || !season.xpSources.includes("runs")) {
+      throw new Error("xpSources must include runs + challenges");
+    }
+    return true;
+  }
+  function gemsToBuyTiers(n, season = SEASON_PASS) {
+    const per = season.tierBuy?.gemsPerTier ?? 50;
+    const count = Math.max(0, n | 0);
+    return count * per;
+  }
+  function applyBuyTiers(state, n, now = Date.now(), season = SEASON_PASS) {
+    if (!season.tierBuy?.enabled) return { ok: false, reason: "disabled" };
+    const count = Math.max(0, n | 0);
+    if (!count) return { ok: false, reason: "zero" };
+    const cost = gemsToBuyTiers(count, season);
+    if ((state.gems || 0) < cost) return { ok: false, reason: "gems", cost };
+    const xpGain = count * (season.xpPerTier || 100);
+    return {
+      ok: true,
+      cost,
+      state: {
+        ...state,
+        gems: state.gems - cost,
+        battlePass: {
+          ...state.battlePass || {},
+          xp: (state.battlePass?.xp || 0) + xpGain,
+          tiersBought: (state.battlePass?.tiersBought || 0) + count,
+          lastTierBuyAt: now
+        }
+      }
+    };
   }
   function loginStreakScrap(day, cfg = LOGIN_STREAK) {
     const d = Math.max(1, day | 0);
