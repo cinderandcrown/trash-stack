@@ -154,7 +154,27 @@ record_demo_video() {
   xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
 }
 
+ensure_device() {
+  # Create a named simulator if missing (needed for 6.5" on some runners).
+  local name="$1"
+  local type_id="$2"
+  if xcrun simctl list devices available | grep -F "$name (" >/dev/null; then
+    return 0
+  fi
+  local runtime
+  runtime="$(xcrun simctl list runtimes available | grep -E 'iOS [0-9]+' | tail -1 | grep -oE 'com\.apple\.CoreSimulator\.SimRuntime\.[^ ]+' || true)"
+  if [[ -z "$runtime" ]]; then
+    echo "No iOS runtime to create $name" >&2
+    return 1
+  fi
+  echo "Creating simulator $name ($type_id / $runtime)" >&2
+  xcrun simctl create "$name" "$type_id" "$runtime" >/dev/null || true
+}
+
 boot_and_shot "iPhone 16 Pro Max" "iphone-6.9"
+
+ensure_device "iPhone 15 Plus" "com.apple.CoreSimulator.SimDeviceType.iPhone-15-Plus" || true
+ensure_device "iPhone 11 Pro Max" "com.apple.CoreSimulator.SimDeviceType.iPhone-11-Pro-Max" || true
 
 if xcrun simctl list devices available | grep -q "iPhone 15 Plus"; then
   boot_and_shot "iPhone 15 Plus" "iphone-6.5"
@@ -162,8 +182,11 @@ elif xcrun simctl list devices available | grep -q "iPhone 11 Pro Max"; then
   boot_and_shot "iPhone 11 Pro Max" "iphone-6.5"
 elif xcrun simctl list devices available | grep -q "iPhone 14 Plus"; then
   boot_and_shot "iPhone 14 Plus" "iphone-6.5"
+elif xcrun simctl list devices available | grep -q "iPhone 16 Plus"; then
+  # Closest available Plus form-factor if classic 6.5" types are unavailable
+  boot_and_shot "iPhone 16 Plus" "iphone-6.5"
 else
-  echo "No 6.5-inch simulator runtime available on this runner" >&2
+  echo "No 6.5-inch-class simulator available on this runner" >&2
 fi
 
 record_demo_video
