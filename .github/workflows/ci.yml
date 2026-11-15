@@ -124,6 +124,8 @@ jobs:
           | xcbeautify --renderer github-actions || (tail -n 80 xcodebuild-test.log; exit 1)
 
       - name: Simulator smoke (screenshots + 45–60s video)
+        # GitHub step timeout (macOS runners lack GNU `timeout`).
+        # scripts/simulator_smoke.sh also has an internal ~18m watchdog.
         timeout-minutes: 25
         env:
           DEVICE: ${{ steps.tests.outputs.device }}
@@ -131,8 +133,7 @@ jobs:
           set -euo pipefail
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
-          # Hard wall so a stuck simctl launch/record cannot hold the job for 90m.
-          timeout 20m ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
+          ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
 
       - name: Upload smoke artifacts
         if: always()
