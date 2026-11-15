@@ -20,7 +20,10 @@ final class JunkTextureTests: XCTestCase {
     }
 
     func testSKTextureFromUIImageIsNotPlaceholder() {
-        for name in CompactorScene.requiredJunkTextureNames {
+        // Use JunkID directly — CompactorScene is MainActor-isolated (SKScene).
+        let names = JunkID.allCases.map(\.rawValue)
+        XCTAssertEqual(names, CompactorScene.requiredJunkTextureNames)
+        for name in names {
             guard let image = UIImage(named: name) else {
                 XCTFail("No UIImage named \(name)")
                 continue

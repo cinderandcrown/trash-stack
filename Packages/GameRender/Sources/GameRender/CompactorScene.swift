@@ -89,7 +89,10 @@ public final class CompactorScene: SKScene {
     }
 
     /// Names every board piece must resolve from the app asset catalog (no red-X).
-    public static let requiredJunkTextureNames: [String] = JunkID.allCases.map(\.rawValue)
+    /// `nonisolated` so unit tests can read this without MainActor (SKScene is isolated).
+    nonisolated public static var requiredJunkTextureNames: [String] {
+        JunkID.allCases.map(\.rawValue)
+    }
 
     private func rebuild() {
         removeAllChildren()
