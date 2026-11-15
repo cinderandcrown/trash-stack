@@ -229,7 +229,7 @@ public struct GameEngine: Sendable {
             for x in 0..<state.board.config.cols {
                 guard let c = state.board[x, y], c.hazard == .leakingBattery else { continue }
                 for (nx, ny) in [(x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)] {
-                    guard var n = state.board[nx, ny], n.material != .metal else { continue }
+                    guard let neighbor = state.board[nx, ny], neighbor.material != .metal else { continue }
                     conversions.append((nx, ny))
                 }
             }
@@ -626,8 +626,64 @@ public struct GameEngine: Sendable {
             state.level = 2
             state.pressMeter = 4
             spawn()
+        case "daily":
+            // Seeded daily board — identical for all players on the same UTC day.
+            bag = RNGBag(seed: DailyDumpster.seed())
+            fillQueue()
+            for y in (rows - 5)..<rows {
+                for x in 0..<cols where (x * 3 + y) % 4 != 0 {
+                    let id = bag.next()
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            // Guaranteed near-cluster for fair first recycle.
+            for x in 0..<3 {
+                state.board[x, rows - 1] = Cell(piece: .can, material: .glass)
+                state.board[x, rows - 2] = Cell(piece: .bottle, material: .glass)
+            }
+            state.score = 0
+            state.level = 1
+            state.pressMeter = 2
+            seedOrders(level: 1)
+            state.orders = [
+                OrderTicket(id: "daily-glass", label: "Recycle 10 glass", kind: .recycleMaterial, target: 10, material: .glass),
+                OrderTicket(id: "daily-press", label: "Slam the press", kind: .pressSlam, target: 1),
+                OrderTicket(id: "daily-chain", label: "Make a 2× chain", kind: .recycleChain, target: 2),
+            ]
+            spawn()
+        case "streak":
+            // Presentation-only: empty board + high streak context via score field.
+            state.score = 0
+            state.level = 1
+            spawn()
         default:
             spawn()
         }
+    }
+
+    /// Bottom-up material grid for Daily Dumpster share cards (visible rows).
+    public func materialShareGrid() -> [[Material?]] {
+        let hid = state.board.config.hiddenRows
+        let vis = state.board.config.visibleRows
+        var grid: [[Material?]] = []
+        for y in hid..<(hid + vis) {
+            var row: [Material?] = []
+            for x in 0..<state.board.config.cols {
+                row.append(state.board[x, y]?.material)
+            }
+            grid.append(row)
+        }
+        return grid
+    }
+
+    /// True when junk occupies the top visible lip rows (near-miss tension).
+    public func isNearOverflow(threshold: Int = 3) -> Bool {
+        let hid = state.board.config.hiddenRows
+        for y in hid..<(hid + threshold) {
+            for x in 0..<state.board.config.cols {
+                if state.board[x, y] != nil { return true }
+            }
+        }
+        return false
     }
 }

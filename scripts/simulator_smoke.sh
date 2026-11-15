@@ -242,6 +242,11 @@ launch_shot "base" "$OUT_DIR/06-base.png" 5
 launch_shot "pass" "$OUT_DIR/07-pass.png" 5
 launch_shot "shop" "$OUT_DIR/08-shop.png" 5
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 5
+# Retention evidence: Daily Dumpster, share card, streak reward.
+launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 7
+assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png"
+launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 5
+launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 5
 
 launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 7
 assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
@@ -252,13 +257,16 @@ assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
 launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 5
 launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 5
 launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 5
+launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 7
+assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
 
 python3 - "$OUT_DIR" <<'PY'
 import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 files = [
   "01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
-  "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png"
+  "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png",
+  "10-daily-dumpster.png","11-daily-share-card.png","12-streak-reward.png",
 ]
 hashes = {}
 for f in files:

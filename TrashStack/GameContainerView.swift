@@ -9,6 +9,9 @@ import Services
 struct GameContainerView: View {
     @Binding var screen: AppScreen
     @Binding var showNotifPrompt: Bool
+    @Binding var playMode: PlayMode
+    var onDailyFinished: ((Int, String) -> Void)? = nil
+    var onStreakReward: ((Int, Int, Int) -> Void)? = nil
     @EnvironmentObject var profile: PlayerProfile
     @State private var scene = CompactorScene(size: CGSize(width: 390, height: 780))
     @State private var showContinue = false
@@ -24,15 +27,31 @@ struct GameContainerView: View {
     @State private var pressMax = 8
     @State private var snatchReady = true
     @State private var orders: [OrderTicket] = []
+    @State private var preview: [JunkID] = []
+    @State private var holdItem: JunkID? = nil
+    @State private var nearMiss = false
 
     var body: some View {
         VStack(spacing: 0) {
             hudBar
             orderStrip
+            previewHoldBar
 
             SpriteView(scene: scene)
                 .ignoresSafeArea(edges: .horizontal)
                 .layoutPriority(1)
+                .overlay(alignment: .top) {
+                    if nearMiss {
+                        Text("BIN ALMOST FULL")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(NeonTheme.magenta)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color.black.opacity(0.55))
+                            .clipShape(Capsule())
+                            .padding(.top, 8)
+                    }
+                }
 
             if profile.classicButtons {
                 classicPad
@@ -88,10 +107,16 @@ struct GameContainerView: View {
                     .padding(.horizontal, 16)
                     .padding(.vertical, 14)
                     .background(
-                        LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
-                            .opacity(snatchReady ? 1 : 0.35)
+                        LinearGradient(
+                            colors: snatchReady
+                                ? [NeonTheme.teal, NeonTheme.magenta]
+                                : [NeonTheme.panel, NeonTheme.panel],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
                     )
                     .clipShape(Capsule())
+                    .opacity(snatchReady ? 1 : 0.55)
                 }
                 .buttonStyle(.plain)
                 .disabled(!snatchReady)
@@ -247,6 +272,47 @@ struct GameContainerView: View {
         .frame(height: orders.isEmpty ? 0 : 44)
     }
 
+    private var previewHoldBar: some View {
+        HStack(spacing: 12) {
+            VStack(spacing: 4) {
+                Text("NEXT").font(.system(size: 9, weight: .black)).foregroundStyle(NeonTheme.muted)
+                HStack(spacing: 6) {
+                    ForEach(Array(preview.prefix(2).enumerated()), id: \.offset) { _, id in
+                        BundleImage(name: JunkCatalog.textureName(for: id))
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
+                    }
+                }
+            }
+            Spacer()
+            Text(playMode == .daily ? "DAILY" : (playMode == .shift ? "SHIFT" : "ENDLESS"))
+                .font(.caption2.weight(.black))
+                .foregroundStyle(NeonTheme.teal)
+            Spacer()
+            Button {
+                scene.stash()
+                AudioService.shared.playSFX("ui")
+                syncHUD()
+            } label: {
+                VStack(spacing: 4) {
+                    Text("HOLD").font(.system(size: 9, weight: .black)).foregroundStyle(NeonTheme.muted)
+                    if let holdItem {
+                        BundleImage(name: JunkCatalog.textureName(for: holdItem))
+                            .scaledToFit()
+                            .frame(width: 28, height: 28)
+                    } else {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(NeonTheme.teal.opacity(0.4), lineWidth: 1)
+                            .frame(width: 28, height: 28)
+                    }
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 4)
+    }
+
     private var raccoonAsset: String {
         switch raccoonMood {
         case .cheer: return "RaccoonCheer"
@@ -301,6 +367,19 @@ struct GameContainerView: View {
         snatchReady = scene.engine.state.snatchAvailable
         orders = scene.engine.state.orders
         raccoonMood = scene.raccoonMood
+        preview = Array(scene.engine.state.queue.prefix(2))
+        holdItem = scene.engine.state.hold
+        let wasNear = nearMiss
+        nearMiss = scene.engine.isNearOverflow()
+        if nearMiss, !wasNear {
+            // Near-miss tension bed: low, uneasy loop cue (no separate asset yet).
+            AudioService.shared.playMusic("game_loop")
+            AudioService.shared.playSFX("ui", pitch: 0.55)
+            AudioService.shared.playSFX("lock", pitch: 0.45)
+            HapticsService.shared.tap()
+        } else if !nearMiss, wasNear {
+            AudioService.shared.playMusic("game_loop")
+        }
     }
 
     private func animateScore(to target: Int) {
@@ -345,17 +424,23 @@ struct GameContainerView: View {
                         AudioService.shared.playSFX("lock")
                         HapticsService.shared.lock()
                     case .recycled:
-                        let pitch = 1.0 + Double(scene.engine.state.combo) * 0.08
+                        let pitch = 1.0 + Double(scene.engine.state.combo) * 0.1
                         AudioService.shared.playSFX("recycle", pitch: pitch)
-                        AudioService.shared.playSFX("combo", pitch: pitch)
+                        AudioService.shared.playSFX("combo", pitch: min(1.8, pitch + 0.05))
                         HapticsService.shared.recycle()
+                        Task { await GameKitService.shared.reportAchievement(AchievementID.firstRecycle) }
+                        if scene.engine.state.combo >= 5 {
+                            Task { await GameKitService.shared.reportAchievement(AchievementID.chainFive) }
+                        }
                     case .pressed:
                         AudioService.shared.playSFX("crush")
                         HapticsService.shared.clear()
+                        Task { await GameKitService.shared.reportAchievement(AchievementID.pressSlam) }
                     case .orderCompleted:
                         AudioService.shared.playSFX("levelup")
                     case .snatchUsed:
                         AudioService.shared.playSFX("magnet")
+                        Task { await GameKitService.shared.reportAchievement(AchievementID.snatchUsed) }
                     case .leveledUp:
                         AudioService.shared.playSFX("levelup")
                     default: break
@@ -365,9 +450,14 @@ struct GameContainerView: View {
             }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            if let shot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay"].contains(shot) {
-                scene.applyShot(shot)
-                if shot == "demo" || shot == "autoplay" {
+            let modeShot: String? = {
+                if let shot { return shot }
+                if playMode == .daily { return "daily" }
+                return nil
+            }()
+            if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
+                scene.applyShot(modeShot)
+                if modeShot == "demo" || modeShot == "autoplay" {
                     scene.autoplay = true
                     let playScene = scene
                     playScene.startDemoChoreography {
@@ -382,11 +472,13 @@ struct GameContainerView: View {
                         }
                     }
                 }
-                if shot == "revive" {
+                if modeShot == "revive" {
                     scene.autoplay = false
                     showContinue = true
                     raccoonMood = .panic
                 }
+            } else if playMode == .daily {
+                scene.applyShot("daily")
             }
             syncHUD()
             displayScore = scene.engine.state.score
@@ -411,13 +503,41 @@ struct GameContainerView: View {
         guard let state = lastState ?? Optional(scene.engine.state) else { return }
         profile.addScrap(state.runScrap)
         profile.battlePassXP += state.lines * 2 + 5
-        // Order rewards
         for order in state.orders where order.done {
             profile.addGems(2)
             profile.battlePassXP += 15
         }
         if state.score > profile.highScore {
             profile.highScore = state.score
+        }
+        if playMode == .endless {
+            if state.score > profile.endlessHighScore {
+                profile.endlessHighScore = state.score
+            }
+            await GameKitService.shared.submitScore(state.score, leaderboardID: "trashstack_endless")
+        }
+        if playMode == .daily {
+            let stars = state.orders.filter(\.done).count
+            let card = DailyDumpster.shareCard(
+                dayKey: DailyDumpster.dayKey(),
+                score: state.score,
+                stars: min(3, max(1, stars)),
+                materialGrid: scene.engine.materialShareGrid()
+            )
+            profile.markDailyComplete(score: state.score)
+            await GameKitService.shared.submitScore(state.score, leaderboardID: "trashstack_daily")
+            await GameKitService.shared.reportAchievement(AchievementID.dailyClear)
+            if profile.dailyStreak >= 7 {
+                await GameKitService.shared.reportAchievement(AchievementID.streakSeven)
+            }
+            profile.persist()
+            continued = false
+            AudioService.shared.playMusic("menu_loop")
+            onDailyFinished?(state.score, card)
+            return
+        }
+        if playMode == .shift, state.orders.allSatisfy(\.done) {
+            profile.shiftProgress = max(profile.shiftProgress, profile.shiftProgress + 1)
         }
         if state.score > 0 && !profile.firstWin {
             profile.firstWin = true
@@ -426,10 +546,16 @@ struct GameContainerView: View {
                 showNotifPrompt = true
             }
         }
+        // Streak check-in once per day from any completed shift.
+        let streak = profile.registerDailyActivity()
         profile.persist()
         await AdsService.shared.maybeShowInterstitial()
         continued = false
         AudioService.shared.playMusic("menu_loop")
-        screen = .title
+        if streak.isNew, streak.scrap > 0 {
+            onStreakReward?(streak.streak, streak.scrap, streak.gems)
+        } else {
+            screen = .title
+        }
     }
 }

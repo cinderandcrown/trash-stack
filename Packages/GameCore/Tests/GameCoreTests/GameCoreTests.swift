@@ -121,4 +121,53 @@ final class GameCoreTests: XCTestCase {
             XCTAssertFalse(name.contains("tetris"))
         }
     }
+
+    func testDailyDumpsterSeedIsUTCDayStable() {
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = TimeZone(secondsFromGMT: 0)!
+        var comps = DateComponents()
+        comps.year = 2026; comps.month = 11; comps.day = 15
+        let day = cal.date(from: comps)!
+        let a = DailyDumpster.seed(for: day)
+        let b = DailyDumpster.seed(for: day.addingTimeInterval(3600 * 5))
+        XCTAssertEqual(a, b)
+        XCTAssertEqual(a, 2026_11_15)
+        var eng = GameEngine(seed: 1)
+        eng.applyShotScenario("daily")
+        XCTAssertFalse(eng.state.over)
+        XCTAssertEqual(eng.state.orders.count, 3)
+        XCTAssertFalse(eng.materialShareGrid().isEmpty)
+    }
+
+    func testDailyShareCardEmojiGrid() {
+        let grid: [[Material?]] = [
+            [.metal, .glass, nil, .plastic, .paper, .metal, .glass, .plastic],
+            [.paper, nil, .metal, .glass, .plastic, nil, .paper, .metal],
+        ]
+        let card = DailyDumpster.shareCard(dayKey: "20261115", score: 2400, stars: 3, materialGrid: grid)
+        XCTAssertTrue(card.contains("Trash Stack Daily Dumpster"))
+        XCTAssertTrue(card.contains("Score 2400"))
+        XCTAssertTrue(card.contains("★★★"))
+        XCTAssertTrue(card.contains("🪙") || card.contains("🫙"))
+        XCTAssertTrue(card.contains("#TrashStack"))
+    }
+
+    func testStreakRewardsEscalate() {
+        XCTAssertEqual(StreakRewards.scrap(forDay: 1), 18)
+        XCTAssertGreaterThan(StreakRewards.scrap(forDay: 7), StreakRewards.scrap(forDay: 1))
+        XCTAssertEqual(StreakRewards.gems(forDay: 7), 5)
+        XCTAssertEqual(ShiftCatalog.levels.count, 6)
+        XCTAssertEqual(PlayMode.allCases.count, 3)
+    }
+
+    func testHoldSlotAndNearMiss() {
+        var eng = GameEngine(seed: 11)
+        eng.applyShotScenario("game")
+        XCTAssertNil(eng.state.hold)
+        eng.stash()
+        XCTAssertNotNil(eng.state.hold)
+        XCTAssertFalse(eng.isNearOverflow())
+        eng.applyShotScenario("revive")
+        XCTAssertTrue(eng.isNearOverflow())
+    }
 }

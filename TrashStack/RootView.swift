@@ -2,9 +2,10 @@
 
 import SwiftUI
 import Services
+import GameCore
 
 enum AppScreen: String {
-    case title, game, base, pass, shop, quests, settings, tutorial, notif, marketing
+    case title, modes, shiftMap, game, base, pass, shop, quests, settings, tutorial, notif, marketing, streak, dailyShare
 }
 
 struct RootView: View {
@@ -12,23 +13,50 @@ struct RootView: View {
     @State private var screen: AppScreen = .title
     @State private var showNotifPrompt = false
     @State private var marketingCaption = ""
+    @State private var playMode: PlayMode = .endless
+    @State private var streakSnapshot: (streak: Int, scrap: Int, gems: Int) = (0, 0, 0)
+    @State private var shareCardText = ""
+    @State private var shareScore = 0
 
     var body: some View {
         ZStack {
-            // Always-on backdrop so a late SwiftUI paint never flashes system white.
             NeonTheme.alleyGradient.ignoresSafeArea()
 
             switch screen {
             case .title: TitleView(screen: $screen, showNotifPrompt: $showNotifPrompt)
-            case .game: GameContainerView(screen: $screen, showNotifPrompt: $showNotifPrompt)
+            case .modes: ModeSelectView(screen: $screen, playMode: $playMode)
+            case .shiftMap: ShiftMapView(screen: $screen, playMode: $playMode)
+            case .game:
+                GameContainerView(
+                    screen: $screen,
+                    showNotifPrompt: $showNotifPrompt,
+                    playMode: $playMode,
+                    onDailyFinished: { score, card in
+                        shareScore = score
+                        shareCardText = card
+                        screen = .dailyShare
+                    },
+                    onStreakReward: { streak, scrap, gems in
+                        streakSnapshot = (streak, scrap, gems)
+                        screen = .streak
+                    }
+                )
             case .base: JunkyardView(screen: $screen)
             case .pass: SeasonPassView(screen: $screen)
             case .shop: ShopView(screen: $screen)
             case .quests: QuestsView(screen: $screen)
             case .settings: SettingsView(screen: $screen)
             case .tutorial: TutorialView(screen: $screen)
-            case .marketing:
-                MarketingShotView(caption: marketingCaption)
+            case .marketing: MarketingShotView(caption: marketingCaption)
+            case .streak:
+                StreakRewardView(
+                    screen: $screen,
+                    streak: streakSnapshot.streak,
+                    scrap: streakSnapshot.scrap,
+                    gems: streakSnapshot.gems
+                )
+            case .dailyShare:
+                DailyShareCardView(screen: $screen, cardText: shareCardText, score: shareScore)
             case .notif: EmptyView()
             }
 
@@ -55,12 +83,15 @@ struct RootView: View {
                 .allowsHitTesting(false)
             }
         }
-        .onAppear { applyShotMode() }
+        .onAppear {
+            if let pref = PlayMode(rawValue: profile.preferredMode.rawValue) {
+                playMode = pref
+            }
+            applyShotMode()
+        }
     }
 
     private func applyShotMode() {
-        // Re-read defaults each appear; consumeShotMode alone can miss simctl writes
-        // if the process was warm or the singleton init raced the defaults write.
         let shot = profile.consumeShotMode()
             ?? PlayerProfile.shotArgument()
             ?? UserDefaults.standard.string(forKey: "trashStack.shot")
@@ -68,8 +99,31 @@ struct RootView: View {
         UserDefaults.standard.removeObject(forKey: "trashStack.shot")
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
         switch shot {
-        case "game", "gameplay", "compactor", "recycle", "revive":
+        case "game", "gameplay", "compactor", "recycle", "revive", "press":
+            playMode = .endless
             screen = .game
+        case "daily":
+            playMode = .daily
+            screen = .game
+        case "streak":
+            let r = profile.registerDailyActivity()
+            streakSnapshot = (max(1, r.streak), max(r.scrap, 48), max(r.gems, 1))
+            if !r.isNew {
+                // Force a visible reward for evidence even if already claimed today.
+                streakSnapshot = (max(profile.dailyStreak, 3), 48, 1)
+            }
+            screen = .streak
+        case "share", "daily-share":
+            shareScore = max(profile.lastDailyScore, 2400)
+            shareCardText = DailyDumpster.shareCard(
+                dayKey: DailyDumpster.dayKey(),
+                score: shareScore,
+                stars: 3,
+                materialGrid: sampleShareGrid()
+            )
+            screen = .dailyShare
+        case "modes":
+            screen = .modes
         case "base", "junkyard":
             screen = .base
         case "pass", "season":
@@ -86,6 +140,7 @@ struct RootView: View {
             showNotifPrompt = true
             screen = .title
         case "demo", "autoplay":
+            playMode = .endless
             screen = .game
         case "mkt-play":
             marketingCaption = "Night shift in a neon dumpster"
@@ -108,9 +163,19 @@ struct RootView: View {
         case "mkt-shop":
             marketingCaption = "Gems for looks — never nagged"
             screen = .shop
+        case "mkt-daily":
+            marketingCaption = "Daily Dumpster — same seed worldwide"
+            playMode = .daily
+            UserDefaults.standard.set("daily", forKey: "trashStack.shotActive")
+            screen = .game
         default:
             screen = .title
         }
+    }
+
+    private func sampleShareGrid() -> [[Material?]] {
+        let row: [Material?] = [.metal, .glass, .plastic, .paper, nil, .metal, .glass, .plastic]
+        return Array(repeating: row, count: 6)
     }
 }
 
@@ -123,19 +188,12 @@ struct MarketingShotView: View {
                 Spacer()
                 BundleImage(name: "RaccoonCheer")
                     .scaledToFit()
-                    .frame(height: 180)
-                Text("TRASH STACK")
-                    .font(.system(size: 42, weight: .black, design: .rounded))
-                    .foregroundStyle(LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
+                    .frame(height: 160)
                 Text(caption)
-                    .font(.system(.title3, design: .rounded).weight(.bold))
+                    .font(.title3.weight(.black))
                     .foregroundStyle(.white)
                     .multilineTextAlignment(.center)
                     .padding()
-                    .background(NeonTheme.panel.opacity(0.85))
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .padding(.horizontal, 24)
-                Spacer(minLength: 80)
             }
         }
     }

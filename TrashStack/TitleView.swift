@@ -38,13 +38,20 @@ struct TitleView: View {
                 NeonButton(title: "PLAY") {
                     AdsService.shared.noteRunStarted()
                     AudioService.shared.playMusic("game_loop")
-                    if !profile.tutorialDone {
-                        screen = .tutorial
-                    } else {
-                        screen = .game
-                    }
+                    screen = .modes
                 }
                 .padding(.horizontal, 36)
+
+                HStack(spacing: 10) {
+                    Text("Streak \(profile.dailyStreak)d")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.magenta)
+                    if profile.cratesReady > 0 {
+                        Text("Crate ×\(profile.cratesReady)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.teal)
+                    }
+                }
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                     NeonButton(title: "Junkyard", style: .ghost) { screen = .base }
@@ -52,7 +59,15 @@ struct TitleView: View {
                     NeonButton(title: "Shop", style: .ghost) { screen = .shop }
                     NeonButton(title: "Quests", style: .ghost) { screen = .quests }
                     NeonButton(title: "Settings", style: .ghost) { screen = .settings }
-                    NeonButton(title: "Spin", style: .secondary) { AudioService.shared.playSFX("combo", pitch: 1.2) }
+                    NeonButton(title: "Open Crate", style: .secondary) {
+                        profile.refreshCrateClock()
+                        if let loot = profile.openCrate() {
+                            AudioService.shared.playSFX("combo", pitch: 1.2)
+                            _ = loot
+                        } else {
+                            AudioService.shared.playSFX("ui")
+                        }
+                    }
                 }
                 .padding(.horizontal, 22)
 

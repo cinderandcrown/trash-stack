@@ -44,5 +44,7 @@ public final class GameKitService: ObservableObject {
         a.percentComplete = percent
         try? await GKAchievement.report([a])
 #endif
+        // Always record locally so CI / stub builds still exercise the path.
+        UserDefaults.standard.set(percent, forKey: "gk.achievement.\(id)")
     }
 }

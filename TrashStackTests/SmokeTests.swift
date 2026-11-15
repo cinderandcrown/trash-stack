@@ -19,4 +19,20 @@ final class SmokeTests: XCTestCase {
         let season = try ConfigLoader.activeSeason()
         try EconomyMath.assertSeasonShape(season)
     }
+
+    func testDailyDumpsterShareAndModes() {
+        let seed = DailyDumpster.seed()
+        XCTAssertGreaterThan(seed, 0)
+        let card = DailyDumpster.shareCard(
+            dayKey: DailyDumpster.dayKey(),
+            score: 1200,
+            stars: 2,
+            materialGrid: [[.metal, .glass, nil, .plastic, .paper, .metal, .glass, .plastic]]
+        )
+        XCTAssertTrue(card.contains("Daily Dumpster"))
+        XCTAssertTrue(card.contains("★★☆") || card.contains("★"))
+        XCTAssertEqual(PlayMode.allCases, [.shift, .endless, .daily])
+        XCTAssertFalse(ShiftCatalog.levels.isEmpty)
+        XCTAssertEqual(StreakRewards.scrap(forDay: 3), 34)
+    }
 }

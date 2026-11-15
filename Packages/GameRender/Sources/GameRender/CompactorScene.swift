@@ -543,7 +543,45 @@ public final class CompactorScene: SKScene {
     }
 
     private func recycleJuice(cellCount: Int) {
+        // Chute suction: particles stream toward a side chute.
+        let chute = CGPoint(x: size.width * 0.92, y: size.height * 0.55)
         spawnParticle(named: "SparkTeal", at: CGPoint(x: size.width / 2, y: size.height * 0.42), count: min(16, 4 + cellCount))
+        for _ in 0..<min(10, 3 + cellCount / 2) {
+            let mote: SKSpriteNode
+            if let t = tex("SparkTeal") {
+                mote = SKSpriteNode(texture: t, size: CGSize(width: 14, height: 14))
+                mote.blendMode = .alpha
+            } else {
+                mote = SKSpriteNode(color: SKColor(red: 0.2, green: 1, blue: 0.8, alpha: 0.9), size: CGSize(width: 5, height: 5))
+            }
+            mote.position = CGPoint(
+                x: size.width / 2 + CGFloat.random(in: -60...60),
+                y: size.height * 0.4 + CGFloat.random(in: -40...40)
+            )
+            mote.zPosition = 57
+            addChild(mote)
+            mote.run(SKAction.sequence([
+                SKAction.group([
+                    SKAction.move(to: chute, duration: 0.28),
+                    SKAction.scale(to: 0.2, duration: 0.28),
+                    SKAction.fadeOut(withDuration: 0.28),
+                ]),
+                SKAction.removeFromParent(),
+            ]))
+        }
+        if engine.state.combo >= 3 {
+            // Screen pulse on big chains.
+            let pulse = SKSpriteNode(color: SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 0.2), size: size)
+            pulse.position = CGPoint(x: size.width / 2, y: size.height / 2)
+            pulse.zPosition = 54
+            pulse.blendMode = .alpha
+            addChild(pulse)
+            pulse.run(SKAction.sequence([
+                SKAction.group([SKAction.fadeOut(withDuration: 0.22), SKAction.scale(to: 1.08, duration: 0.22)]),
+                SKAction.removeFromParent(),
+            ]))
+            screenShake(strength: 6)
+        }
     }
 
     private func pressJuice(cells: Int) {
@@ -576,6 +614,9 @@ public final class CompactorScene: SKScene {
         addChild(flash)
         flash.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.2), SKAction.removeFromParent()]))
         spawnParticle(named: "SparkMagenta", at: CGPoint(x: size.width / 2, y: gridOrigin().y + cellSize().height), count: min(20, 6 + cells))
+        // Scrap shower
+        spawnParticle(named: "DebrisMetal", at: CGPoint(x: size.width / 2, y: gridOrigin().y + cellSize().height * 2), count: min(14, 4 + cells / 2))
+        spawnParticle(named: "SparkGold", at: CGPoint(x: size.width * 0.5, y: gridOrigin().y + cellSize().height * 1.5), count: 8)
     }
 
     public func render(immediate: Bool = true) {

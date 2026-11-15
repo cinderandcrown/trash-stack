@@ -146,7 +146,7 @@ struct SeasonPassView: View {
                     Text(season.label)
                         .font(.headline)
                         .foregroundStyle(.white)
-                    Text(season.theme?.tagline ?? "Free + Premium · gem payback")
+                    Text(season.theme?.tagline ?? "Free + Premium cosmetics · bin skins · chute FX · raccoon outfits")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.white.opacity(0.78))
                     rewardCard(season)
@@ -350,6 +350,28 @@ struct ShopView: View {
                 Text("Looks live here — desire from play, never nag popups.")
                     .font(.caption)
                     .foregroundStyle(Color.white.opacity(0.75))
+                if !profile.sessionOfferShown {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Night Shift starter pack")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("Optional · dismiss anytime · never mid-run")
+                                .font(.caption2)
+                                .foregroundStyle(Color.white.opacity(0.7))
+                        }
+                        Spacer()
+                        Button("Not now") {
+                            profile.sessionOfferShown = true
+                        }
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.teal)
+                    }
+                    .padding(12)
+                    .background(NeonTheme.panel.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                }
                 ScrollView {
                     VStack(spacing: 12) {
                         ForEach(packs, id: \.title) { pack in
@@ -390,22 +412,49 @@ struct ShopView: View {
 
 struct QuestsView: View {
     @Binding var screen: AppScreen
+    @EnvironmentObject private var profile: PlayerProfile
     var body: some View {
         ZStack {
             AlleyBackdrop()
             VStack(spacing: 12) {
                 MetaChromeHeader(title: "QUESTS") { screen = .title }
                 NeonPanel(title: "Tonight's board") {
-                    questRow("Crush 20 rows", "⚙ 120")
-                    questRow("Recycle 20 metal cells", "◆ 3")
-                    questRow("Slam the press twice", "⚙ 80")
-                    questRow("Complete a 3× recycle chain", "◆ 5")
+                    questRow("Recycle 20 metal cells", "⚙ 120")
+                    questRow("Slam the press twice", "◆ 3")
+                    questRow("Complete a 3× recycle chain", "⚙ 80")
+                    questRow("Fill an order ticket", "◆ 5")
+                }
+                .padding(.horizontal, 16)
+                NeonPanel(title: "This week") {
+                    questRow("Win 5 Shift levels", "⚙ 400")
+                    questRow("Score 8,000 in Endless", "◆ 10")
+                    questRow("Clear Daily Dumpster 3×", "⚙ 250")
+                }
+                .padding(.horizontal, 16)
+                NeonPanel(title: "Free crate") {
+                    Text(profile.cratesReady > 0
+                         ? "Ready · \(profile.cratesReady)/2 waiting"
+                         : "Next crate in \(crateCountdown)")
+                        .foregroundStyle(.white.opacity(0.9))
+                        .font(.subheadline)
+                    NeonButton(title: profile.cratesReady > 0 ? "Open Crate" : "Waiting…", style: profile.cratesReady > 0 ? .primary : .ghost) {
+                        profile.refreshCrateClock()
+                        if profile.openCrate() != nil {
+                            AudioService.shared.playSFX("combo", pitch: 1.15)
+                        }
+                    }
                 }
                 .padding(.horizontal, 16)
                 Spacer()
             }
         }
         .safeAreaPadding(.top, 8)
+        .onAppear { profile.refreshCrateClock() }
+    }
+
+    private var crateCountdown: String {
+        let rem = max(0, Int(profile.secondsUntilNextCrate))
+        return String(format: "%d:%02d", rem / 60, rem % 60)
     }
 
     private func questRow(_ title: String, _ reward: String) -> some View {

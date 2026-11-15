@@ -48,7 +48,7 @@ public final class NotificationService: ObservableObject {
 #endif
     }
 
-    public func schedule(kind: String, title: String, body: String, afterSeconds: TimeInterval = 2, maxPerDay: Int = 2) async {
+    public func schedule(kind: String, title: String, body: String, afterSeconds: TimeInterval = 2, maxPerDay: Int = 1) async {
         guard enabled[kind] != false else { return }
         if quietHours, inQuietHours() { return }
         let day = Self.dayKey(Date())
