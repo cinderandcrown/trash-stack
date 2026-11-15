@@ -11,8 +11,68 @@ import {
   showRewarded,
   getAdDebugInfo,
 } from './ads.js';
+import { LocalNotifications } from '@capacitor/local-notifications';
 
 const native = Capacitor.isNativePlatform();
+
+async function requestNotificationPermission() {
+  if (!native) {
+    if (typeof Notification !== 'undefined' && Notification.requestPermission) {
+      return await Notification.requestPermission();
+    }
+    return 'denied';
+  }
+  try {
+    const perms = await LocalNotifications.requestPermissions();
+    return perms.display || 'denied';
+  } catch (_) {
+    return 'denied';
+  }
+}
+
+async function checkNotificationPermission() {
+  if (!native) {
+    if (typeof Notification !== 'undefined') return Notification.permission;
+    return 'denied';
+  }
+  try {
+    const perms = await LocalNotifications.checkPermissions();
+    return perms.display || 'denied';
+  } catch (_) {
+    return 'denied';
+  }
+}
+
+let _notifId = 1000;
+async function scheduleLocalNotification({ title, body, atMs, id }) {
+  if (!native) return false;
+  try {
+    const when = new Date(Math.max(Date.now() + 1500, atMs || Date.now() + 1500));
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: id || ++_notifId,
+          title: title || 'Trash Stack',
+          body: body || '',
+          schedule: { at: when, allowWhileIdle: true },
+        },
+      ],
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function cancelAllLocalNotifications() {
+  if (!native) return;
+  try {
+    const pending = await LocalNotifications.getPending();
+    if (pending?.notifications?.length) {
+      await LocalNotifications.cancel({ notifications: pending.notifications });
+    }
+  } catch (_) {}
+}
 
 async function prepareChrome() {
   if (!native) return;
@@ -132,6 +192,10 @@ window.TrashNative = {
   maybeShowInterstitial,
   showRewarded,
   getAdDebugInfo,
+  requestNotificationPermission,
+  checkNotificationPermission,
+  scheduleLocalNotification,
+  cancelAllLocalNotifications,
   App,
 };
 

@@ -913,6 +913,183 @@ var init_web5 = __esm({
   }
 });
 
+// node_modules/@capacitor/local-notifications/dist/esm/web.js
+var web_exports6 = {};
+__export(web_exports6, {
+  LocalNotificationsWeb: () => LocalNotificationsWeb
+});
+var LocalNotificationsWeb;
+var init_web6 = __esm({
+  "node_modules/@capacitor/local-notifications/dist/esm/web.js"() {
+    init_dist();
+    LocalNotificationsWeb = class extends WebPlugin {
+      constructor() {
+        super(...arguments);
+        this.pending = [];
+        this.deliveredNotifications = [];
+        this.hasNotificationSupport = () => {
+          if (!("Notification" in window) || !Notification.requestPermission) {
+            return false;
+          }
+          if (Notification.permission !== "granted") {
+            try {
+              new Notification("");
+            } catch (e) {
+              if (e instanceof Error && e.name === "TypeError") {
+                return false;
+              }
+            }
+          }
+          return true;
+        };
+      }
+      async getDeliveredNotifications() {
+        const deliveredSchemas = [];
+        for (const notification of this.deliveredNotifications) {
+          const deliveredSchema = {
+            title: notification.title,
+            id: parseInt(notification.tag),
+            body: notification.body
+          };
+          deliveredSchemas.push(deliveredSchema);
+        }
+        return {
+          notifications: deliveredSchemas
+        };
+      }
+      async removeDeliveredNotifications(delivered) {
+        for (const toRemove of delivered.notifications) {
+          const found = this.deliveredNotifications.find((n) => n.tag === String(toRemove.id));
+          found === null || found === void 0 ? void 0 : found.close();
+          this.deliveredNotifications = this.deliveredNotifications.filter(() => !found);
+        }
+      }
+      async removeAllDeliveredNotifications() {
+        for (const notification of this.deliveredNotifications) {
+          notification.close();
+        }
+        this.deliveredNotifications = [];
+      }
+      async createChannel() {
+        throw this.unimplemented("Not implemented on web.");
+      }
+      async deleteChannel() {
+        throw this.unimplemented("Not implemented on web.");
+      }
+      async listChannels() {
+        throw this.unimplemented("Not implemented on web.");
+      }
+      async schedule(options) {
+        if (!this.hasNotificationSupport()) {
+          throw this.unavailable("Notifications not supported in this browser.");
+        }
+        for (const notification of options.notifications) {
+          this.sendNotification(notification);
+        }
+        return {
+          notifications: options.notifications.map((notification) => ({
+            id: notification.id
+          }))
+        };
+      }
+      async getPending() {
+        return {
+          notifications: this.pending
+        };
+      }
+      async registerActionTypes() {
+        throw this.unimplemented("Not implemented on web.");
+      }
+      async cancel(pending) {
+        this.pending = this.pending.filter((notification) => !pending.notifications.find((n) => n.id === notification.id));
+      }
+      async areEnabled() {
+        const { display } = await this.checkPermissions();
+        return {
+          value: display === "granted"
+        };
+      }
+      async changeExactNotificationSetting() {
+        throw this.unimplemented("Not implemented on web.");
+      }
+      async checkExactNotificationSetting() {
+        throw this.unimplemented("Not implemented on web.");
+      }
+      async requestPermissions() {
+        if (!this.hasNotificationSupport()) {
+          throw this.unavailable("Notifications not supported in this browser.");
+        }
+        const display = this.transformNotificationPermission(await Notification.requestPermission());
+        return { display };
+      }
+      async checkPermissions() {
+        if (!this.hasNotificationSupport()) {
+          throw this.unavailable("Notifications not supported in this browser.");
+        }
+        const display = this.transformNotificationPermission(Notification.permission);
+        return { display };
+      }
+      transformNotificationPermission(permission) {
+        switch (permission) {
+          case "granted":
+            return "granted";
+          case "denied":
+            return "denied";
+          default:
+            return "prompt";
+        }
+      }
+      sendPending() {
+        var _a;
+        const toRemove = [];
+        const now = (/* @__PURE__ */ new Date()).getTime();
+        for (const notification of this.pending) {
+          if (((_a = notification.schedule) === null || _a === void 0 ? void 0 : _a.at) && notification.schedule.at.getTime() <= now) {
+            this.buildNotification(notification);
+            toRemove.push(notification);
+          }
+        }
+        this.pending = this.pending.filter((notification) => !toRemove.find((n) => n === notification));
+      }
+      sendNotification(notification) {
+        var _a;
+        if ((_a = notification.schedule) === null || _a === void 0 ? void 0 : _a.at) {
+          const diff = notification.schedule.at.getTime() - (/* @__PURE__ */ new Date()).getTime();
+          this.pending.push(notification);
+          setTimeout(() => {
+            this.sendPending();
+          }, diff);
+          return;
+        }
+        this.buildNotification(notification);
+      }
+      buildNotification(notification) {
+        const localNotification = new Notification(notification.title, {
+          body: notification.body,
+          tag: String(notification.id)
+        });
+        localNotification.addEventListener("click", this.onClick.bind(this, notification), false);
+        localNotification.addEventListener("show", this.onShow.bind(this, notification), false);
+        localNotification.addEventListener("close", () => {
+          this.deliveredNotifications = this.deliveredNotifications.filter(() => !this);
+        }, false);
+        this.deliveredNotifications.push(localNotification);
+        return localNotification;
+      }
+      onClick(notification) {
+        const data = {
+          actionId: "tap",
+          notification
+        };
+        this.notifyListeners("localNotificationActionPerformed", data);
+      }
+      onShow(notification) {
+        this.notifyListeners("localNotificationReceived", notification);
+      }
+    };
+  }
+});
+
 // src/native-bridge.js
 init_dist();
 
@@ -1316,8 +1493,84 @@ function getAdDebugInfo() {
   };
 }
 
+// node_modules/@capacitor/local-notifications/dist/esm/index.js
+init_dist();
+
+// node_modules/@capacitor/local-notifications/dist/esm/definitions.js
+var Weekday;
+(function(Weekday2) {
+  Weekday2[Weekday2["Sunday"] = 1] = "Sunday";
+  Weekday2[Weekday2["Monday"] = 2] = "Monday";
+  Weekday2[Weekday2["Tuesday"] = 3] = "Tuesday";
+  Weekday2[Weekday2["Wednesday"] = 4] = "Wednesday";
+  Weekday2[Weekday2["Thursday"] = 5] = "Thursday";
+  Weekday2[Weekday2["Friday"] = 6] = "Friday";
+  Weekday2[Weekday2["Saturday"] = 7] = "Saturday";
+})(Weekday || (Weekday = {}));
+
+// node_modules/@capacitor/local-notifications/dist/esm/index.js
+var LocalNotifications = registerPlugin("LocalNotifications", {
+  web: () => Promise.resolve().then(() => (init_web6(), web_exports6)).then((m) => new m.LocalNotificationsWeb())
+});
+
 // src/native-bridge.js
 var native = Capacitor.isNativePlatform();
+async function requestNotificationPermission() {
+  if (!native) {
+    if (typeof Notification !== "undefined" && Notification.requestPermission) {
+      return await Notification.requestPermission();
+    }
+    return "denied";
+  }
+  try {
+    const perms = await LocalNotifications.requestPermissions();
+    return perms.display || "denied";
+  } catch (_) {
+    return "denied";
+  }
+}
+async function checkNotificationPermission() {
+  if (!native) {
+    if (typeof Notification !== "undefined") return Notification.permission;
+    return "denied";
+  }
+  try {
+    const perms = await LocalNotifications.checkPermissions();
+    return perms.display || "denied";
+  } catch (_) {
+    return "denied";
+  }
+}
+var _notifId = 1e3;
+async function scheduleLocalNotification({ title, body, atMs, id }) {
+  if (!native) return false;
+  try {
+    const when = new Date(Math.max(Date.now() + 1500, atMs || Date.now() + 1500));
+    await LocalNotifications.schedule({
+      notifications: [
+        {
+          id: id || ++_notifId,
+          title: title || "Trash Stack",
+          body: body || "",
+          schedule: { at: when, allowWhileIdle: true }
+        }
+      ]
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+async function cancelAllLocalNotifications() {
+  if (!native) return;
+  try {
+    const pending = await LocalNotifications.getPending();
+    if (pending?.notifications?.length) {
+      await LocalNotifications.cancel({ notifications: pending.notifications });
+    }
+  } catch (_) {
+  }
+}
 async function prepareChrome() {
   if (!native) return;
   try {
@@ -1439,6 +1692,10 @@ window.TrashNative = {
   maybeShowInterstitial,
   showRewarded,
   getAdDebugInfo,
+  requestNotificationPermission,
+  checkNotificationPermission,
+  scheduleLocalNotification,
+  cancelAllLocalNotifications,
   App
 };
 document.documentElement.classList.toggle("native-app", native);

@@ -8,12 +8,13 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trash Stack">
 <meta name="theme-color" content="#07070f">
-<meta name="description" content="Trash Stack — neon junk puzzle. Crush rows in the compactor, recycle materials, chase Shinies.">
+<meta name="description" content="Trash Stack — neon junk puzzle. Crush rows in the compactor, recycle materials, earn Scrap &amp; Gems.">
 <title>Trash Stack</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
 <script src="ad-config.js"></script>
+<script src="economy.js"></script>
 <script type="module" src="native.js"></script>
 <style>
 /* Capacitor / native WebView: kill bounce + overscroll chrome */
@@ -235,6 +236,23 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 .mini.stash label{color:var(--mag)}
 .mini.next label{color:var(--cyan)}
 
+
+/* F2P meta: junkyard, chests, gems */
+.chip.gem{border-color:rgba(160,120,255,.45);color:#d6b6ff}
+#baseMap{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.bldg{background:#0e1220;border:1px solid rgba(0,245,255,.22);border-radius:12px;padding:10px;text-align:left;font-size:12px}
+.bldg b{display:block;color:var(--cyan);letter-spacing:.06em;margin-bottom:4px}
+.bldg .perk{color:var(--dim);font-size:11px;margin:4px 0 8px}
+.bldg .timers{font-size:11px;color:var(--gold)}
+.chest-row{display:flex;gap:8px;align-items:center;padding:8px;background:#0e1220;border-radius:10px;border:1px solid rgba(255,255,255,.08);margin:6px 0;font-size:12px}
+.gem-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.gem-pack{background:#12102a;border:1px solid rgba(160,120,255,.35);border-radius:12px;padding:10px;text-align:center;font-size:12px}
+.gem-pack .price{color:var(--gold);font-weight:800;margin-top:4px}
+.album-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.album-item{background:#0e1220;border-radius:8px;padding:8px 4px;font-size:10px;border:1px solid rgba(255,255,255,.08);text-align:center}
+.album-item.on{border-color:var(--lime);color:var(--lime)}
+#notifPrompt .card{border-color:rgba(0,245,255,.45)}
+
 /* META_V2_END */
 
 </style>
@@ -257,7 +275,8 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     <div class="tag">Neon junk · compactor shift</div>
     <div class="meta-row">
       <div class="chip"><span class="k">BEST</span> <span id="hiChip">0</span></div>
-      <div class="chip gold"><span class="k">SHINIES</span> <span id="shChip">0</span></div>
+      <div class="chip gold"><span class="k">SCRAP</span> <span id="shChip">0</span></div>
+      <div class="chip gem"><span class="k">GEMS</span> <span id="gemChip">0</span></div>
       <div class="chip"><span class="k">LVL</span> <span id="lvChip">1</span></div>
       <div class="chip streak" id="streakChip">🔥 DAY 1</div>
     </div>
@@ -283,15 +302,19 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     </div>
     
     <div class="panel-grid">
+      <button class="btn ghost small" id="baseBtn" type="button">Junkyard</button>
+      <button class="btn ghost small" id="chestBtn" type="button">Crates</button>
       <button class="btn ghost small" id="achBtn" type="button">Achievements</button>
       <button class="btn ghost small" id="lbBtn" type="button">Records</button>
-      <button class="btn ghost small" id="bpBtn" type="button">Night Pass</button>
+      <button class="btn ghost small" id="bpBtn" type="button">Season Pass</button>
       <button class="btn ghost small" id="calBtn" type="button">Streak</button>
+      <button class="btn ghost small" id="albumBtn" type="button">Collection</button>
+      <button class="btn ghost small" id="gemShopBtn" type="button">Gem Shop</button>
     </div>
 
     <button class="btn mag wide" id="removeAdsBtn" type="button" disabled aria-disabled="true" style="margin-top:10px;opacity:.55;font-size:13px;padding:12px">Remove Ads (coming soon)</button>
     <button class="btn gold wide" id="passBtn" type="button" disabled aria-disabled="true" style="margin-top:12px;opacity:.55;font-size:13px;padding:12px">Premium Pass (coming soon)</button>
-    <p id="premiumNote">Free to play with optional rewarded ads. Remove Ads &amp; Premium Pass are coming — no real-money gambling.</p>
+    <p id="premiumNote">Free to play with ads + optional IAP (Gems, Season Pass, Remove Ads). Odds shown for spins &amp; crates. No real-money gambling.</p>
   </section>
 
   <section id="gameScreen" class="screen hidden">
@@ -300,7 +323,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
         <svg viewBox="0 0 64 40"><path d="M4 22c2-14 16-20 28-20s26 6 28 20c-6-4-12-6-28-6S10 18 4 22z" fill="#1a1020" stroke="#00f5ff" stroke-width="2"/><ellipse cx="22" cy="22" rx="9" ry="8" fill="#111" stroke="#ff2bd6" stroke-width="1.5"/><ellipse cx="42" cy="22" rx="9" ry="8" fill="#111" stroke="#ff2bd6" stroke-width="1.5"/><circle cx="24" cy="22" r="3" fill="#00f5ff"/><circle cx="40" cy="22" r="3" fill="#00f5ff"/></svg>
         TRASH STACK
       </div>
-      <div class="chip gold" style="padding:4px 8px;font-size:12px">✦ <span id="shInGame">0</span></div>
+      <div class="chip gold" style="padding:4px 8px;font-size:12px">⚙ <span id="shInGame">0</span></div><div class="chip gem" style="padding:4px 8px;font-size:12px">◆ <span id="gemInGame">0</span></div>
       <button class="icon-btn" id="muteGame" type="button" aria-label="Mute">🔊</button>
       <button class="icon-btn" id="pauseBtn" type="button" aria-label="Pause">❚❚</button>
     </div>
@@ -372,7 +395,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 
 <div id="shopOv" class="overlay hidden"><div class="card">
   <h2>SHOP</h2>
-  <p>Spend Shinies on looks. Nothing for sale with real money.</p>
+  <p>Spend Scrap on looks. Neon Gems are premium (IAP stubs). No paid random boxes.</p>
   <div class="tabby"><button type="button" class="on" data-tab="skins">Skins</button><button type="button" data-tab="bgs">Backgrounds</button><button type="button" data-tab="trails">Trails</button></div>
   <div id="shopGrid" class="shop-grid"></div>
   <button class="btn ghost wide" id="shopClose" type="button">Close</button>
@@ -380,7 +403,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 
 <div id="spinOv" class="overlay hidden"><div class="card">
   <h2>DAILY SPIN</h2>
-  <p id="spinHint">Free once a day. Cosmetics and Shinies only.</p>
+  <p id="spinHint">Free once a day. Cosmetics and Scrap only. Odds shown.</p>
   <div class="odds" id="spinOdds"></div>
   <button class="btn mag small smag" id="spinAdBtn" type="button" style="width:100%;margin:6px 0;display:none">Extra spin (rewarded ad)</button>
   <div id="wheelWrap"><div id="wheelNub"></div><canvas id="wheel" width="260" height="260"></canvas></div>
@@ -396,7 +419,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     <li>Tap the bin to rotate. Swipe to move. Soft / hard drop as usual. DAS + lock delay kept snappy.</li>
     <li>Stash one piece in the stash bin. Spend a <b>Magnet</b> charge (Trash Panda’s trick) to yank the falling junk into stash.</li>
     <li>Junk looks like cans, boxes, tires, bags, pipes, and tubes — not plain bricks.</li>
-    <li>Earn Shinies, level up, unlock looks. Rewarded ads are optional (revive / double / spin). Odds shown for random rewards.</li>
+    <li>Earn Scrap, build your Junkyard, level up, unlock looks. Rewarded ads optional (revive / double / spin / crate speed). Odds shown for spins &amp; crates.</li>
   </ol>
   <button class="btn wide" id="howClose" type="button" style="margin-top:8px">Got it</button>
 </div></div>
@@ -416,8 +439,8 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 </div></div>
 
 <div id="doubleOv" class="overlay hidden"><div class="card">
-  <h2>DOUBLE SHINIES?</h2>
-  <p id="doubleHint">Watch a rewarded ad to double Shinies earned this run.</p>
+  <h2>DOUBLE SCRAP?</h2>
+  <p id="doubleHint">Watch a rewarded ad to double Scrap earned this run.</p>
   <button class="btn wide gold" id="doubleAdBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.25) inset,0 8px 0 #9a7010">Double (ad)</button>
   <button class="btn ghost wide" id="doubleSkipBtn" type="button" style="margin-top:10px">Keep as-is</button>
 </div></div>
@@ -437,8 +460,8 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 </div></div>
 
 <div id="bpOv" class="overlay hidden"><div class="card">
-  <h2>NIGHT PASS</h2>
-  <p>Season track. Free lane active. Premium lane is a stub.</p>
+  <h2>SEASON PASS</h2>
+  <p>30-tier monthly track. Free lane active. Premium lane is an IAP stub. Cosmetics &amp; Scrap — not P2W score.</p>
   <div class="bp-track"><div class="bp-fill" id="bpFill"></div></div>
   <div id="bpList" class="bp-list"></div>
   <button class="btn gold wide" id="bpPremiumBtn" type="button" disabled style="opacity:.55">Premium Pass (coming soon)</button>
@@ -453,6 +476,45 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   <button class="btn ghost wide" id="calClose" type="button">Close</button>
 </div></div>
 
+
+<div id="baseOv" class="overlay hidden"><div class="card">
+  <h2>JUNKYARD</h2>
+  <p>Build your raccoon hideout with Scrap. Timers are real-time — Gems speed up. Perks help runs, never buy leaderboard score.</p>
+  <p id="builderHint" class="gold" style="font-size:12px"></p>
+  <div id="baseMap"></div>
+  <button class="btn ghost wide" id="baseClose" type="button">Close</button>
+</div></div>
+
+<div id="chestOv" class="overlay hidden"><div class="card">
+  <h2>CRATES</h2>
+  <p>Earned from runs. Unlock timers. Odds always shown. Speed up with Gems or a rewarded ad.</p>
+  <div id="chestOdds" class="odds"></div>
+  <div id="chestList"></div>
+  <button class="btn ghost wide" id="chestClose" type="button">Close</button>
+</div></div>
+
+<div id="gemShopOv" class="overlay hidden"><div class="card">
+  <h2>GEM SHOP</h2>
+  <p>Neon Gems — IAP stubs (no product IDs yet). Starter pack is one-time.</p>
+  <div id="gemPacks" class="gem-grid"></div>
+  <button class="btn gold wide" id="starterPackBtn" type="button" disabled style="opacity:.55;margin-top:8px">Starter Pack $2.99 (coming soon)</button>
+  <button class="btn ghost wide" id="gemShopClose" type="button" style="margin-top:10px">Close</button>
+</div></div>
+
+<div id="albumOv" class="overlay hidden"><div class="card">
+  <h2>COLLECTION</h2>
+  <p>Trash cosmetics, skins, trails, boards, raccoon looks.</p>
+  <div id="albumGrid" class="album-grid"></div>
+  <button class="btn ghost wide" id="albumClose" type="button">Close</button>
+</div></div>
+
+<div id="notifPrompt" class="overlay hidden"><div class="card">
+  <h2>STAY IN THE LOOP?</h2>
+  <p>Local reminders when upgrades finish, crates unlock, daily rewards wait, or your streak is at risk. Never more than ~2/day. Quiet hours 9pm–8am. You can change this in Settings.</p>
+  <button class="btn wide pulse" id="notifAllowBtn" type="button">Enable reminders</button>
+  <button class="btn ghost wide" id="notifSkipBtn" type="button" style="margin-top:10px">Not now</button>
+</div></div>
+
 <div id="settingsOv" class="overlay hidden"><div class="card">
   <h2>SETTINGS</h2>
   <p>Trash Stack by Cinder and Crown — neon junk puzzle. Cross-promotes Trash Panda.</p>
@@ -460,6 +522,14 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   <button class="btn ghost wide" id="settingsHow" type="button" style="margin-top:10px">How to play</button>
   <button class="btn ghost wide" id="settingsPrivacy" type="button" style="margin-top:10px">Privacy</button>
   <button class="btn ghost wide" id="settingsSupport" type="button" style="margin-top:10px">Support</button>
+  <div id="notifToggles" style="text-align:left;font-size:12px;margin:10px 0">
+    <label><input type="checkbox" id="ntUpgrade" checked> Upgrade done</label><br>
+    <label><input type="checkbox" id="ntChest" checked> Crate ready</label><br>
+    <label><input type="checkbox" id="ntDaily" checked> Daily reward</label><br>
+    <label><input type="checkbox" id="ntStreak" checked> Streak at risk</label><br>
+    <label><input type="checkbox" id="ntSeason" checked> New season</label><br>
+    <label><input type="checkbox" id="ntQuiet" checked> Quiet hours 9pm–8am</label>
+  </div>
   <p style="margin-top:12px;font-size:11px">Ads use Google AdMob (test IDs in builds). ATT + UMP consent on iOS. Remove Ads / Premium Pass coming soon — stubs only.</p>
   <button class="btn ghost wide" id="settingsClose" type="button" style="margin-top:10px">Close</button>
 </div></div>
@@ -473,8 +543,11 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 const COLS = 8, VIS = 15, HID = 2, ROWS = VIS + HID; // 8×15 compactor bin (not a 10×20 well)
 const LOCK_MS = 520, LOCK_RESETS = 15, CLEAR_MS = 560;
 const DAS = 160, ARR = 36, SOFT_MS = 42;
-const KEY = "trashStack.v2"; // bump: new board + junk set
-const SAVE_MIGRATE_FROM = "trashStack.v1";
+const KEY = "trashStack.v3"; // bump: scrap/gems + junkyard F2P
+const SAVE_MIGRATE_FROM = "trashStack.v2";
+const SAVE_MIGRATE_FROM_V1 = "trashStack.v1";
+const EC = () => window.TrashEconomyConfig || {};
+const EM = () => window.TrashEconomy || {};
 
 // Materials for recycle matching (3+ adjacent same material)
 const MATERIALS = ["metal","plastic","paper","glass"];
@@ -577,14 +650,14 @@ const CH_POOL = [
 ];
 
 const WHEEL = [
-  {label:"25 ✦", kind:"shinies", n:25, color:"#1a3a4a"},
-  {label:"40 ✦", kind:"shinies", n:40, color:"#2a1a4a"},
-  {label:"15 ✦", kind:"shinies", n:15, color:"#1a3a4a"},
-  {label:"75 ✦", kind:"shinies", n:75, color:"#3a3010"},
-  {label:"25 ✦", kind:"shinies", n:25, color:"#1a3a4a"},
+  {label:"25 ⚙", kind:"shinies", n:25, color:"#1a3a4a"},
+  {label:"40 ⚙", kind:"shinies", n:40, color:"#2a1a4a"},
+  {label:"15 ⚙", kind:"shinies", n:15, color:"#1a3a4a"},
+  {label:"75 ⚙", kind:"shinies", n:75, color:"#3a3010"},
+  {label:"25 ⚙", kind:"shinies", n:25, color:"#1a3a4a"},
   {label:"LOOK", kind:"cosmetic", n:0, color:"#4a1a3a"},
-  {label:"50 ✦", kind:"shinies", n:50, color:"#1a3a30"},
-  {label:"100 ✦", kind:"shinies", n:100, color:"#4a3a10"}
+  {label:"50 ⚙", kind:"shinies", n:50, color:"#1a3a30"},
+  {label:"100 ⚙", kind:"shinies", n:100, color:"#4a3a10"}
 ];
 
 
@@ -641,29 +714,27 @@ const WEEKLY_POOL = [
   {id:"w_games10", name:"Play 10 runs this week", goal:10, kind:"gamesWeek", reward:90},
   {id:"w_combo6", name:"Hit a x6 combo", goal:6, kind:"comboWeek", reward:130}
 ];
-const BP_FREE = [
-  {at:1, reward:{shinies:20}},
-  {at:2, reward:{shinies:30}},
-  {at:3, reward:{trail:"cyan"}},
-  {at:4, reward:{shinies:40}},
-  {at:5, reward:{shinies:50}},
-  {at:6, reward:{bg:"rooftop"}},
-  {at:7, reward:{shinies:60}},
-  {at:8, reward:{shinies:80}},
-  {at:9, reward:{skin:"glass"}},
-  {at:10, reward:{shinies:120}}
-];
-const BP_PREMIUM = [
-  {at:1, reward:{shinies:40}},
-  {at:2, reward:{shinies:60}},
-  {at:3, reward:{trail:"mag"}},
-  {at:4, reward:{shinies:80}},
-  {at:5, reward:{skin:"gold"}},
-  {at:6, reward:{shinies:100}},
-  {at:7, reward:{trail:"gold"}},
-  {at:8, reward:{shinies:120}},
-  {at:9, reward:{skin:"circuit"}},
-  {at:10, reward:{shinies:200}}
+function seasonRows(lane){
+  const sp = (EC().SEASON_PASS) || { free:[], premium:[], tiers:30 };
+  const rows = lane==="premium" ? (sp.premium||[]) : (sp.free||[]);
+  return rows.map(r=>{
+    const reward = {};
+    if (r.scrap) reward.shinies = r.scrap;
+    if (r.gems) reward.gems = r.gems;
+    if (r.skin) reward.skin = r.skin;
+    if (r.bg) reward.bg = r.bg;
+    if (r.trail) reward.trail = r.trail;
+    if (r.outfit) reward.outfit = r.outfit;
+    return { at:r.at, reward };
+  });
+}
+function BP_FREE(){ return seasonRows("free"); }
+function BP_PREMIUM(){ return seasonRows("premium"); }
+const OUTFITS = [
+  {id:"default", name:"Classic Mask"},
+  {id:"hoodie", name:"Neon Hoodie"},
+  {id:"hardhat", name:"Dock Hardhat"},
+  {id:"visor", name:"Night Visor"}
 ];
 const WHEEL_ODDS = WHEEL.map(w => ({ label:w.label, pct: Math.round(100/WHEEL.length) }));
 /* META_JS_V2_END */
@@ -704,21 +775,27 @@ function hashStr(s){
 }
 
 function defaultSave(){
+  const softStart = (EC().SOFT && EC().SOFT.startAmount) || 80;
+  const gemStart = (EC().PREMIUM && EC().PREMIUM.startAmount) || 20;
   return {
-    highScore:0, shinies:50, xp:0, playerLevel:1,
-    unlockedSkins:["neon"], unlockedBgs:["docks"], unlockedTrails:["none"],
-    skin:"neon", bg:"docks", trail:"none", muted:false,
-    dailyStreak:0, lastPlayDate:"", lastSpinDate:"", lastLoginClaim:"",
+    highScore:0, scrap:softStart, shinies:softStart, gems:gemStart, xp:0, playerLevel:1,
+    unlockedSkins:["neon"], unlockedBgs:["docks"], unlockedTrails:["none"], unlockedOutfits:["default"],
+    skin:"neon", bg:"docks", trail:"none", outfit:"default", muted:false,
+    dailyStreak:0, lastPlayDate:"", lastSpinDate:"", lastLoginClaim:"", streakFreeze:0,
     loginHistory:[], welcomed:false, sawHow:false, adsRemoved:false, premiumPass:false,
     challenges:{date:"", items:[]},
     weekly:{week:"", items:[]},
     achievements:{},
     gamesPlayed:0, totalLines:0, dayLines:0, dayGames:0, dayDate:"",
-    shiniesEarned:50, quads:0, hardDropTotal:0, bestCombo:0, spins:0, continues:0, pbBeats:0, weekliesDone:0, recycles:0, magnets:0,
-    runShinies:0, localScores:[],
-    battlePass:{ season:1, xp:0, claimedFree:[], claimedPremium:[] },
+    shiniesEarned:softStart, scrapEarned:softStart, quads:0, hardDropTotal:0, bestCombo:0, spins:0, continues:0, pbBeats:0, weekliesDone:0, recycles:0, magnets:0,
+    runShinies:0, runScrap:0, localScores:[], firstWin:false,
+    battlePass:{ season:1, xp:0, claimedFree:[], claimedPremium:[], premium:false },
+    base:{ levels:{recycler:1,compactor:1,neonSign:1,stashVault:1}, queue:[], builderSlots:2 },
+    chests:[],
+    collection:{ skins:["neon"], trails:["none"], bgs:["docks"], outfits:["default"] },
+    notif:{ permission:"default", asked:false, enabled:{upgrade_done:true,chest_ready:true,daily_reward:true,streak_risk:true,new_season:true}, quietHours:true, sentToday:0, sentDate:"" },
     // IAP stubs — TODO: StoreKit / Play Billing product IDs
-    iap:{ removeAdsProductId:"", premiumPassProductId:"" }
+    iap:{ removeAdsProductId:"", premiumPassProductId:"", starterBought:false, gemPackProductIds:{} }
   };
 }
 let save = defaultSave();
@@ -732,16 +809,21 @@ async function load(){
     }
     raw = await readKey(KEY);
     if (!raw) raw = await readKey(SAVE_MIGRATE_FROM);
+    if (!raw) raw = await readKey(SAVE_MIGRATE_FROM_V1);
     if (raw){
       save = Object.assign(defaultSave(), JSON.parse(raw));
-      // Migrate renamed cosmetics
       if (save.skin==="ghost") save.skin="haze";
       if (Array.isArray(save.unlockedSkins)){
         save.unlockedSkins = save.unlockedSkins.map(s=>s==="ghost"?"haze":s);
       }
+      if (EM().migrateLegacySave) save = Object.assign(defaultSave(), EM().migrateLegacySave(save));
+      // Keep scrap/shinies mirrored for transitional UI
+      if (save.scrap == null) save.scrap = save.shinies || 0;
+      save.shinies = save.scrap;
     }
   }catch(e){}
   rollDaily();
+  tickMetaTimers();
 }
 function persist(){
   const payload = JSON.stringify(save);
@@ -910,11 +992,74 @@ function toast(msg){
 }
 
 // ---------- progression ----------
+
+function livePerks(){
+  if (EM().aggregatePerks) return EM().aggregatePerks(save.base && save.base.levels);
+  return {};
+}
+function addGems(n){
+  save.gems = (save.gems||0) + Math.max(0,n|0);
+  persist(); syncMetaUI();
+}
+function tickMetaTimers(){
+  if (!EM().completeReadyUpgrades) return;
+  const now = Date.now();
+  const res = EM().completeReadyUpgrades(save, now);
+  if (res.completed && res.completed.length){
+    save = res.state;
+    for (const q of res.completed){
+      toast((EC().BUILDINGS[q.buildingId]?.name||q.buildingId)+" upgraded!");
+      scheduleNotifKind("upgrade_done", "Upgrade complete", (EC().BUILDINGS[q.buildingId]?.name||"Building")+" is ready in the Junkyard.");
+    }
+    persist(); syncMetaUI();
+  }
+  // Chest ready toasts
+  for (const c of (save.chests||[])){
+    if (!c.opened && c.readyAt <= now && !c._toasted){
+      c._toasted = true;
+      toast("Crate ready to open!");
+      scheduleNotifKind("chest_ready", "Crate ready", "A junk crate finished unlocking.");
+    }
+  }
+}
+function inQuietHours(){
+  const q = EC().NOTIFICATIONS?.quietHours || {start:21,end:8};
+  const h = new Date().getHours();
+  if (q.start > q.end) return h >= q.start || h < q.end;
+  return h >= q.start && h < q.end;
+}
+async function scheduleNotifKind(kind, title, body, atMs){
+  if (!save.notif || !save.notif.enabled || !save.notif.enabled[kind]) return;
+  if (save.notif.quietHours && inQuietHours()) return;
+  const day = todayKey();
+  if (save.notif.sentDate !== day){ save.notif.sentToday=0; save.notif.sentDate=day; }
+  const max = EC().NOTIFICATIONS?.maxPerDay || 2;
+  if ((save.notif.sentToday||0) >= max) return;
+  const bridge = TN();
+  if (bridge && bridge.scheduleLocalNotification){
+    const ok = await bridge.scheduleLocalNotification({ title, body, atMs: atMs||Date.now()+2000 });
+    if (ok){ save.notif.sentToday++; persist(); }
+  }
+}
+async function maybeAskNotifications(){
+  if (!save.firstWin || save.notif?.asked) return;
+  document.getElementById("notifPrompt").classList.remove("hidden");
+}
+
 function addShinies(n, why){
   if (!n) return;
-  save.shinies += n;
-  save.shiniesEarned = (save.shiniesEarned||0) + Math.max(0,n);
-  if (why==="run") save.runShinies = (save.runShinies||0) + n;
+  const perks = livePerks();
+  let gain = n;
+  const src = (why==="run" || !why) ? null : why;
+  if (EM().applyScrapGain) gain = EM().applyScrapGain(n, perks, src) || n;
+  save.scrap = (save.scrap||0) + gain;
+  save.shinies = save.scrap;
+  save.shiniesEarned = (save.shiniesEarned||0) + Math.max(0,gain);
+  save.scrapEarned = (save.scrapEarned||0) + Math.max(0,gain);
+  if (why==="run" || why==="clear" || why==="recycle" || !why){
+    save.runScrap = (save.runScrap||0) + Math.max(0,gain);
+    save.runShinies = save.runScrap;
+  }
   persist();
   syncMetaUI();
   SFX.coin();
@@ -922,6 +1067,8 @@ function addShinies(n, why){
 }
 function addXP(n){
   if (n<=0) return;
+  const perks = livePerks();
+  if (EM().applyXpGain) n = EM().applyXpGain(n, perks) || n;
   save.xp += n;
   let ups = 0;
   while (save.xp >= xpNeeded(save.playerLevel)){
@@ -936,7 +1083,7 @@ function addXP(n){
     SFX.level();
     vibe([30,40,30]);
     const ov = document.getElementById("lvlOv");
-    document.getElementById("lvlFanfare").textContent = "Player level "+save.playerLevel+"  ·  +"+ (25*ups) +" Shinies";
+    document.getElementById("lvlFanfare").textContent = "Player level "+save.playerLevel+"  ·  +"+ (25*ups) +" Scrap";
     ov.classList.remove("hidden");
     if (screen==="game" && !over) pauseGame(true);
     document.getElementById("pauseOv").classList.add("hidden");
@@ -957,7 +1104,7 @@ function bumpChallenge(kind, amount){
     if (ch.progress>=ch.goal && !ch.claimed){
       ch.claimed = true; ch.progress = ch.goal;
       addShinies(ch.reward);
-      toast("Hustle done! +"+ch.reward+" Shinies");
+      toast("Hustle done! +"+ch.reward+" Scrap");
       got=true;
     }
   }
@@ -968,18 +1115,26 @@ function bumpChallenge(kind, amount){
 function checkDailyStreak(){
   const t = todayKey();
   if (save.lastPlayDate === t) return;
-  if (save.lastPlayDate === yesterdayKey()) save.dailyStreak += 1;
+  // Streak about to break: schedule reminder if returning after gap risk
+  if (save.lastPlayDate && save.lastPlayDate !== yesterdayKey() && (save.streakFreeze||0)>0){
+    save.streakFreeze--;
+    save.dailyStreak = Math.max(1, save.dailyStreak);
+    toast("Streak freeze used — streak saved!");
+  } else if (save.lastPlayDate === yesterdayKey()) save.dailyStreak += 1;
   else save.dailyStreak = 1;
   save.lastPlayDate = t;
   if (!save.loginHistory.includes(t)) save.loginHistory.push(t);
   while (save.loginHistory.length>42) save.loginHistory.shift();
-  const bonus = Math.min(120, 5*save.dailyStreak + Math.floor(save.dailyStreak/7)*20);
+  const bonus = EM().loginStreakScrap ? EM().loginStreakScrap(save.dailyStreak) : Math.min(120, 5*save.dailyStreak + Math.floor(save.dailyStreak/7)*20);
   if (save.lastLoginClaim !== t){
     save.lastLoginClaim = t;
     addShinies(bonus);
     addBattlePassXP(8 + Math.min(20, save.dailyStreak));
-    toast("Day "+save.dailyStreak+" streak  ·  +"+bonus+" Shinies");
+    toast("Day "+save.dailyStreak+" streak  ·  +"+bonus+" Scrap");
+    scheduleNotifKind("daily_reward", "Daily reward waiting", "Your Junkyard stash has Scrap ready — claim your streak.", Date.now()+20*60*60*1000);
   }
+  // Tomorrow streak risk reminder (~20h)
+  scheduleNotifKind("streak_risk", "Streak at risk", "Log in soon so your Day "+(save.dailyStreak+1)+" streak doesn't break.", Date.now()+20*60*60*1000);
   persist();
   checkAchievements();
 }
@@ -1019,9 +1174,11 @@ function checkAchievements(){
       const p = achievementProgress(def);
       if (p >= def.goal){
         save.achievements[def.id] = { at: Date.now() };
-        save.shinies += def.reward;
+        save.scrap = (save.scrap||0) + def.reward;
+        save.shinies = save.scrap;
         save.shiniesEarned = (save.shiniesEarned||0) + def.reward;
-        toast("Achievement: "+def.name+"  ·  +"+def.reward+" ✦");
+        save.scrapEarned = (save.scrapEarned||0) + def.reward;
+        toast("Achievement: "+def.name+"  ·  +"+def.reward+" Scrap");
         SFX.prize(); vibe(24);
         unlocked++;
       }
@@ -1036,26 +1193,34 @@ function addBattlePassXP(n){
   claimBattlePassReady();
 }
 function bpTierUnlocked(){
-  return Math.min(10, 1 + Math.floor((save.battlePass.xp||0)/100));
+  const sp = EC().SEASON_PASS || { tiers:30, xpPerTier:100 };
+  if (EM().seasonTierUnlocked) return EM().seasonTierUnlocked(save.battlePass.xp||0, sp.xpPerTier, sp.tiers);
+  return Math.min(sp.tiers||30, Math.floor((save.battlePass.xp||0)/(sp.xpPerTier||100)));
 }
 function grantBPReward(reward){
   if (reward.shinies) addShinies(reward.shinies);
-  if (reward.skin && !save.unlockedSkins.includes(reward.skin)){ save.unlockedSkins.push(reward.skin); }
-  if (reward.bg && !save.unlockedBgs.includes(reward.bg)){ save.unlockedBgs.push(reward.bg); }
-  if (reward.trail && !save.unlockedTrails.includes(reward.trail)){ save.unlockedTrails.push(reward.trail); }
+  if (reward.gems) addGems(reward.gems);
+  if (reward.skin && !save.unlockedSkins.includes(reward.skin)){ save.unlockedSkins.push(reward.skin); albumUnlock("skins", reward.skin); }
+  if (reward.bg && !save.unlockedBgs.includes(reward.bg)){ save.unlockedBgs.push(reward.bg); albumUnlock("bgs", reward.bg); }
+  if (reward.trail && !save.unlockedTrails.includes(reward.trail)){ save.unlockedTrails.push(reward.trail); albumUnlock("trails", reward.trail); }
+  if (reward.outfit && !(save.unlockedOutfits||[]).includes(reward.outfit)){
+    save.unlockedOutfits = save.unlockedOutfits||["default"];
+    save.unlockedOutfits.push(reward.outfit);
+    albumUnlock("outfits", reward.outfit);
+  }
 }
 function claimBattlePassReady(){
   const tier = bpTierUnlocked();
   let got=false;
-  for (const row of BP_FREE){
+  for (const row of BP_FREE()){
     if (row.at <= tier && !(save.battlePass.claimedFree||[]).includes(row.at)){
       save.battlePass.claimedFree.push(row.at);
       grantBPReward(row.reward);
       got=true;
     }
   }
-  if (save.premiumPass){
-    for (const row of BP_PREMIUM){
+  if (save.premiumPass || save.battlePass.premium){
+    for (const row of BP_PREMIUM()){
       if (row.at <= tier && !(save.battlePass.claimedPremium||[]).includes(row.at)){
         save.battlePass.claimedPremium.push(row.at);
         grantBPReward(row.reward);
@@ -1063,7 +1228,12 @@ function claimBattlePassReady(){
       }
     }
   }
-  if (got){ persist(); toast("Night Pass reward!"); }
+  if (got){ persist(); toast("Season Pass reward!"); }
+}
+function albumUnlock(kind, id){
+  if (!save.collection) save.collection={ skins:[], trails:[], bgs:[], outfits:[] };
+  const list = save.collection[kind] || (save.collection[kind]=[]);
+  if (!list.includes(id)) list.push(id);
 }
 function bumpWeekly(kind, amount){
   if (!save.weekly || !save.weekly.items) return;
@@ -1078,7 +1248,7 @@ function bumpWeekly(kind, amount){
       ch.claimed=true; ch.progress=ch.goal;
       addShinies(ch.reward);
       save.weekliesDone = (save.weekliesDone||0)+1;
-      toast("Weekly done! +"+ch.reward+" Shinies");
+      toast("Weekly done! +"+ch.reward+" Scrap");
       checkAchievements();
     }
   }
@@ -1354,7 +1524,7 @@ function juiceRecycle(groups){
   combo++;
   magnetCharge = Math.min(3, magnetCharge + (groups.length>=2?1:0) + (popped>=6?1:0));
   if (magnetCharge===0 && popped>=5) magnetCharge=1;
-  addShinies(2+groups.length*2, "run");
+  addShinies(2+groups.length*2, "recycle");
   addXP(popped*6);
   save.recycles=(save.recycles||0)+groups.length;
   bumpChallenge("combo", combo);
@@ -1383,7 +1553,7 @@ function juiceClear(n){
   level = newLv;
 
   const sh = (LINE_SHINY[Math.min(4,n)]||n) + Math.max(0, combo-1) + (difficult && b2b ? 5 : 0) + (leveled?10:0);
-  addShinies(sh, "run");
+  addShinies(sh, "clear");
   addXP(n*12 + combo*4 + (n>=3?20:0));
 
   bumpChallenge("lines", n);
@@ -1561,9 +1731,22 @@ function finalizeGameOver(){
   save.localScores.push({ score, lines, at: Date.now() });
   save.localScores.sort((a,b)=>b.score-a.score);
   save.localScores = save.localScores.slice(0,10);
-  lastRunShinies = save.runShinies||0;
+  lastRunShinies = save.runScrap||save.runShinies||0;
   addXP(Math.floor(score/80)+5);
   addBattlePassXP(Math.floor(lines/2)+5);
+  // Rare gem drip (cap from config)
+  const gemCap = (EC().PREMIUM && EC().PREMIUM.rareEarnPerRunCap) || 2;
+  if (lines >= 4 && Math.random() < 0.25){
+    const g = Math.min(gemCap, 1 + (lines>=12?1:0));
+    addGems(g);
+    toast("Found "+g+" Neon Gem"+(g>1?"s":"")+"!");
+  }
+  awardRunChest();
+  if (score > 0 && !save.firstWin){
+    save.firstWin = true;
+    persist();
+    setTimeout(()=>maybeAskNotifications(), 900);
+  }
   persist();
   checkAchievements();
   const ov = document.getElementById("overOv");
@@ -1573,9 +1756,8 @@ function finalizeGameOver(){
   document.getElementById("nearMiss").innerHTML = nearMissHTML();
   ov.classList.remove("hidden");
   syncMetaUI();
-  // Offer double Shinies if we earned some this run
   if (lastRunShinies > 0 && !save.adsRemoved){
-    document.getElementById("doubleHint").textContent = "Double the "+lastRunShinies+" Shinies from this run with a rewarded ad.";
+    document.getElementById("doubleHint").textContent = "Double the "+lastRunShinies+" Scrap from this run with a rewarded ad.";
     document.getElementById("doubleOv").classList.remove("hidden");
   } else {
     maybeInterstitialBetweenRuns();
@@ -1594,7 +1776,7 @@ async function doubleShiniesFromAd(){
   document.getElementById("doubleOv").classList.add("hidden");
   if (ok && lastRunShinies>0){
     addShinies(lastRunShinies);
-    toast("Doubled! +"+lastRunShinies+" Shinies");
+    toast("Doubled! +"+lastRunShinies+" Scrap");
   }
   maybeInterstitialBetweenRuns();
 }
@@ -1614,9 +1796,9 @@ function nearMissHTML(){
   ].sort((a,b)=>a.p-b.p);
   if (locked.length){
     const it=locked[0];
-    const left=Math.max(0,it.p-save.shinies);
-    const p=Math.min(100, Math.floor(save.shinies/it.p*100));
-    parts.push(`<div class="near"><div class="lab">${left===0?"You can unlock "+it.n+"!":"Only "+left+" Shinies from "+it.n}</div><div class="bar"><div class="fill" style="width:${p}%"></div></div></div>`);
+    const left=Math.max(0,it.p-(save.scrap||0));
+    const p=Math.min(100, Math.floor((save.scrap||0)/it.p*100));
+    parts.push(`<div class="near"><div class="lab">${left===0?"You can unlock "+it.n+"!":"Only "+left+" Scrap from "+it.n}</div><div class="bar"><div class="fill" style="width:${p}%"></div></div></div>`);
   }
   const ch = save.challenges.items.find(c=>!c.claimed && c.progress>0);
   if (ch){
@@ -1963,9 +2145,14 @@ function syncMuteUI(){
   g.textContent = save.muted ? "🔇" : "🔊";
 }
 function syncMetaUI(){
+  save.shinies = save.scrap||0;
   document.getElementById("hiChip").textContent = (save.highScore||0).toLocaleString();
-  document.getElementById("shChip").textContent = save.shinies;
-  document.getElementById("shInGame").textContent = save.shinies;
+  document.getElementById("shChip").textContent = save.scrap||0;
+  document.getElementById("shInGame").textContent = save.scrap||0;
+  const gemChip = document.getElementById("gemChip");
+  if (gemChip) gemChip.textContent = save.gems||0;
+  const gemIn = document.getElementById("gemInGame");
+  if (gemIn) gemIn.textContent = save.gems||0;
   document.getElementById("lvChip").textContent = save.playerLevel;
   document.getElementById("streakChip").textContent = "🔥 DAY "+(save.dailyStreak||1);
   const need = xpNeeded(save.playerLevel);
@@ -1974,13 +2161,26 @@ function syncMetaUI(){
   document.getElementById("xpRight").textContent = save.xp+" / "+need;
   document.getElementById("bg").setAttribute("data-bg", save.bg||"docks");
   syncMuteUI();
+  syncNotifToggles();
   renderChallenges();
 }
 function syncGameUI(){
   document.getElementById("scoreEl").textContent = (score||0).toLocaleString();
   document.getElementById("lvlEl").textContent = level||1;
   document.getElementById("linesEl").textContent = lines||0;
-  document.getElementById("shInGame").textContent = save.shinies;
+  document.getElementById("shInGame").textContent = save.scrap||0;
+  const gemIn = document.getElementById("gemInGame");
+  if (gemIn) gemIn.textContent = save.gems||0;
+}
+function syncNotifToggles(){
+  const n = save.notif && save.notif.enabled || {};
+  const map = { ntUpgrade:"upgrade_done", ntChest:"chest_ready", ntDaily:"daily_reward", ntStreak:"streak_risk", ntSeason:"new_season", ntQuiet:"quietHours" };
+  for (const [elId, key] of Object.entries(map)){
+    const el = document.getElementById(elId);
+    if (!el) continue;
+    if (key==="quietHours") el.checked = !!(save.notif && save.notif.quietHours);
+    else el.checked = n[key] !== false;
+  }
 }
 function updateComboUI(){
   const el=document.getElementById("comboFill");
@@ -2026,6 +2226,188 @@ function pauseGame(on){
   document.getElementById("pauseOv").classList.toggle("hidden", !on);
 }
 
+
+// ---------- Junkyard / Crates / Gem Shop / Collection ----------
+function fmtRemain(ms){
+  ms = Math.max(0, ms|0);
+  const s = Math.ceil(ms/1000);
+  if (s < 60) return s+"s";
+  const m = Math.floor(s/60), rem = s%60;
+  if (m < 60) return m+"m "+rem+"s";
+  const h = Math.floor(m/60);
+  return h+"h "+(m%60)+"m";
+}
+function renderBase(){
+  tickMetaTimers();
+  const host = document.getElementById("baseMap");
+  const buildings = EC().BUILDINGS || {};
+  const levels = (save.base && save.base.levels) || {};
+  const queue = (save.base && save.base.queue) || [];
+  const slots = (save.base && save.base.builderSlots) || 2;
+  const busy = queue.filter(q => q.readyAt > Date.now());
+  document.getElementById("builderHint").textContent = "Builders "+busy.length+"/"+slots+" · Scrap "+(save.scrap||0)+" · Gems "+(save.gems||0);
+  host.innerHTML = Object.keys(buildings).map(id=>{
+    const b = buildings[id];
+    const lv = levels[id]||1;
+    const q = queue.find(x => x.buildingId===id && x.readyAt > Date.now());
+    const next = EM().upgradeCost ? EM().upgradeCost(id, lv) : null;
+    const perk = EM().buildingPerk ? EM().buildingPerk(id, lv) : {};
+    let action = "";
+    if (q){
+      const gems = EM().gemsForReadyAt ? EM().gemsForReadyAt(q.readyAt) : 1;
+      action = `<div class="timers">Upgrading → Lv ${q.to} · ${fmtRemain(q.readyAt-Date.now())}</div>
+        <button class="btn gold small speedBtn" data-bid="${id}" type="button">Speed ◆${gems}</button>`;
+    } else if (!next){
+      action = `<div class="timers">MAX</div>`;
+    } else {
+      action = `<button class="btn small upBtn" data-bid="${id}" type="button">Upgrade ${next.scrap}⚙ · ${fmtRemain(next.sec*1000)}</button>`;
+    }
+    return `<div class="bldg"><b>${b.name} Lv ${lv}</b><div class="perk">${b.blurb}</div>${action}</div>`;
+  }).join("");
+  host.querySelectorAll(".upBtn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id = btn.getAttribute("data-bid");
+      const res = EM().applyStartUpgrade(save, id);
+      if (!res.ok){
+        toast(res.reason==="scrap"?"Need more Scrap":res.reason==="builders"?"All builders busy":"Max level");
+        return;
+      }
+      save = res.state; save.shinies = save.scrap; persist(); toast("Upgrade started");
+      renderBase(); syncMetaUI();
+    });
+  });
+  host.querySelectorAll(".speedBtn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id = btn.getAttribute("data-bid");
+      const idx = (save.base.queue||[]).findIndex(q => q.buildingId===id && q.readyAt > Date.now());
+      if (idx < 0) return;
+      const res = EM().speedupQueueItem(save, idx);
+      if (!res.ok){ toast("Need "+(res.cost||"?")+" Gems"); return; }
+      save = res.state; save.shinies = save.scrap; persist(); toast("Upgrade finished!");
+      renderBase(); syncMetaUI();
+    });
+  });
+}
+function renderChests(){
+  tickMetaTimers();
+  const chestsCfg = EC().CHESTS || {};
+  const oddsHost = document.getElementById("chestOdds");
+  oddsHost.innerHTML = Object.values(chestsCfg).map(c=>{
+    const line = EM().formatOddsLine ? EM().formatOddsLine(c.odds) : "";
+    return `<div><b>${c.name}</b> — ${line}</div>`;
+  }).join("");
+  const host = document.getElementById("chestList");
+  const list = (save.chests||[]).filter(c=>!c.opened);
+  if (!list.length){ host.innerHTML = `<p style="color:var(--dim);font-size:12px">No crates yet — finish a run to earn one.</p>`; return; }
+  const now = Date.now();
+  host.innerHTML = list.map(c=>{
+    const cfg = chestsCfg[c.chestId] || { name:c.chestId };
+    const ready = c.readyAt <= now;
+    const gems = EM().gemsForReadyAt ? EM().gemsForReadyAt(c.readyAt, now) : 1;
+    return `<div class="chest-row"><div style="flex:1"><b>${cfg.name}</b><div style="color:var(--dim)">${ready?"Ready!":"Unlocks in "+fmtRemain(c.readyAt-now)}</div></div>
+      ${ready?`<button class="btn small openChest" data-id="${c.id}" type="button">Open</button>`:
+        `<button class="btn gold small speedChest" data-id="${c.id}" type="button">◆${gems}</button>
+         <button class="btn mag small adChest" data-id="${c.id}" type="button">Ad</button>`}</div>`;
+  }).join("");
+  host.querySelectorAll(".openChest").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const res = EM().openChestIfReady(save, btn.getAttribute("data-id"));
+      if (!res.ok){ toast("Not ready"); return; }
+      save = res.state; save.shinies = save.scrap;
+      if (res.reward && res.reward.kind==="cosmetic") grantRandomCosmetic();
+      persist(); toast("Opened: "+(res.reward && res.reward.label));
+      renderChests(); syncMetaUI();
+    });
+  });
+  host.querySelectorAll(".speedChest").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const res = EM().speedupChest(save, btn.getAttribute("data-id"));
+      if (!res.ok){ toast("Need "+(res.cost||"?")+" Gems"); return; }
+      save = res.state; persist(); toast("Crate unlocked!");
+      renderChests(); syncMetaUI();
+    });
+  });
+  host.querySelectorAll(".adChest").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const bridge = TN();
+      let ok = true;
+      if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("chest_speed");
+      if (!ok){ toast("Ad not available"); return; }
+      const chests = (save.chests||[]).map(c=>({...c}));
+      const idx = chests.findIndex(c=>c.id===btn.getAttribute("data-id"));
+      if (idx>=0){ chests[idx].readyAt = Date.now(); save.chests = chests; persist(); toast("Crate unlocked via ad!"); renderChests(); }
+    });
+  });
+}
+function grantRandomCosmetic(){
+  const pools = [
+    { kind:"skins", list:SKINS, unlocked:save.unlockedSkins },
+    { kind:"trails", list:TRAILS, unlocked:save.unlockedTrails },
+    { kind:"bgs", list:BGS, unlocked:save.unlockedBgs },
+  ];
+  for (const p of pools){
+    const miss = p.list.filter(x=>!p.unlocked.includes(x.id) && x.id!=="none");
+    if (miss.length){
+      const it = miss[Math.floor(Math.random()*miss.length)];
+      p.unlocked.push(it.id);
+      albumUnlock(p.kind, it.id);
+      toast("Unlocked "+it.name+"!");
+      return;
+    }
+  }
+  addShinies(50);
+}
+function renderGemShop(){
+  const host = document.getElementById("gemPacks");
+  const packs = EC().GEM_PACKS || [];
+  host.innerHTML = packs.map(p=>`<div class="gem-pack"><b>${p.gems} ◆</b>${p.badge?`<div style="color:var(--mag)">${p.badge}</div>`:""}<div class="price">$${p.priceUsd.toFixed(2)}</div><button class="btn ghost small gemBuy" data-id="${p.id}" type="button" disabled style="opacity:.55;margin-top:6px">Coming soon</button></div>`).join("");
+  host.querySelectorAll(".gemBuy").forEach(btn=>{
+    btn.addEventListener("click", ()=>toast("Gem pack IAP stub — StoreKit/Play Billing TODO."));
+  });
+  const starter = document.getElementById("starterPackBtn");
+  if (starter){
+    const bought = !!(save.iap && save.iap.starterBought);
+    starter.disabled = true;
+    starter.style.opacity = ".55";
+    starter.textContent = bought ? "Starter Pack owned" : "Starter Pack $2.99 (coming soon)";
+  }
+}
+function renderAlbum(){
+  const host = document.getElementById("albumGrid");
+  const col = save.collection || {};
+  const sections = [
+    ["Skins", SKINS, col.skins||save.unlockedSkins||[]],
+    ["Trails", TRAILS, col.trails||save.unlockedTrails||[]],
+    ["Boards", BGS, col.bgs||save.unlockedBgs||[]],
+    ["Outfits", OUTFITS, col.outfits||save.unlockedOutfits||["default"]],
+  ];
+  host.innerHTML = sections.map(([title, items, owned])=>{
+    return `<div style="grid-column:1/-1;text-align:left;color:var(--cyan);font-size:11px;margin-top:6px">${title}</div>` +
+      items.map(it=>`<div class="album-item ${owned.includes(it.id)?"on":""}">${it.name}</div>`).join("");
+  }).join("");
+}
+function awardRunChest(){
+  if (!EM().pickWeightedChest || !EM().enqueueChest) return;
+  const perks = livePerks();
+  if (!EM().canEnqueueChest(save, perks)) return;
+  const id = EM().pickWeightedChest();
+  const res = EM().enqueueChest(save, id, Date.now(), perks);
+  if (res.ok){
+    save = res.state;
+    const name = (EC().CHESTS[id]||{}).name || id;
+    toast("Crate earned: "+name);
+  }
+}
+function buyStreakFreeze(){
+  const cost = (EC().LOGIN_STREAK && EC().LOGIN_STREAK.freezeCostGems) || 15;
+  const max = (EC().LOGIN_STREAK && EC().LOGIN_STREAK.freezeMaxOwned) || 2;
+  if ((save.streakFreeze||0) >= max){ toast("Freeze stock full"); return; }
+  if ((save.gems||0) < cost){ toast("Need "+cost+" Gems"); return; }
+  save.gems -= cost;
+  save.streakFreeze = (save.streakFreeze||0)+1;
+  persist(); syncMetaUI(); toast("Streak freeze +1");
+}
+
 // ---------- shop / spin ----------
 let shopTab="skins";
 function shopCatalog(){
@@ -2042,7 +2424,7 @@ function renderShop(){
     return `<div class="shop-item ${own?"owned":""} ${equipped?"eq":""}" data-id="${it.id}">
       <div class="swatch" style="background:${cat.sw(it)}"></div>
       <b>${it.name}</b>
-      <div class="gold">${own?(equipped?"Equipped":"Owned"):(it.price+" ✦")}</div>
+      <div class="gold">${own?(equipped?"Equipped":"Owned"):(it.price+" ⚙")}</div>
     </div>`;
   }).join("");
   host.querySelectorAll(".shop-item").forEach(el=>{
@@ -2051,8 +2433,8 @@ function renderShop(){
       const cat = shopCatalog();
       const it=cat.items.find(x=>x.id===id);
       if (!cat.unlocked.includes(id)){
-        if (save.shinies < it.price){ toast("Need "+(it.price-save.shinies)+" more Shinies"); vibe(20); return; }
-        save.shinies -= it.price;
+        if ((save.scrap||0) < it.price){ toast("Need "+(it.price-(save.scrap||0))+" more Scrap"); vibe(20); return; }
+        save.scrap -= it.price; save.shinies = save.scrap;
         cat.unlocked.push(id);
         toast("Unlocked "+it.name+"!");
         SFX.prize();
@@ -2087,7 +2469,7 @@ let spinning=false, wheelAng=0;
 function canSpin(){ return save.lastSpinDate !== todayKey(); }
 function openSpin(){
   document.getElementById("spinOv").classList.remove("hidden");
-  document.getElementById("spinHint").textContent = canSpin() ? "Free once a day. Cosmetics and Shinies only." : "Already spun today — or watch an ad for one extra spin.";
+  document.getElementById("spinHint").textContent = canSpin() ? "Free once a day. Cosmetics and Scrap only. Odds shown." : "Already spun today — or watch an ad for one extra spin.";
   document.getElementById("spinGo").disabled = !canSpin() || spinning;
   const adBtn = document.getElementById("spinAdBtn");
   adBtn.style.display = (!canSpin() && !save.adsRemoved) ? "block" : "none";
@@ -2111,7 +2493,7 @@ async function spinFromAd(){
 function grantPrize(p){
   if (p.kind==="shinies"){
     addShinies(p.n);
-    toast("You won "+p.n+" Shinies!");
+    toast("You won "+p.n+" Scrap!");
   } else {
     const locked = [
       ...SKINS.filter(s=>s.price>0 && !save.unlockedSkins.includes(s.id)),
@@ -2119,7 +2501,7 @@ function grantPrize(p){
     ];
     if (!locked.length){
       addShinies(80);
-      toast("All looks owned — 80 Shinies instead!");
+      toast("All looks owned — 80 Scrap instead!");
     } else {
       const it = locked[Math.floor(Math.random()*locked.length)];
       if (SKINS.some(s=>s.id===it.id)){ save.unlockedSkins.push(it.id); save.skin=it.id; }
@@ -2189,14 +2571,20 @@ function renderLeaderboard(){
 }
 function renderBattlePass(){
   const tier = bpTierUnlocked();
-  document.getElementById("bpFill").style.width = Math.min(100, ((save.battlePass.xp||0)%100))+"%";
+  const sp = EC().SEASON_PASS || { tiers:30, xpPerTier:100, label:"Neon Season" };
+  const xpPer = sp.xpPerTier || 100;
+  document.getElementById("bpFill").style.width = Math.min(100, ((save.battlePass.xp||0)%xpPer)/xpPer*100)+"%";
   const host=document.getElementById("bpList");
-  host.innerHTML = BP_FREE.map((row,i)=>{
-    const prem = BP_PREMIUM[i];
+  const free = BP_FREE();
+  const prem = BP_PREMIUM();
+  host.innerHTML = free.map((row,i)=>{
+    const p = prem[i];
     const freeClaimed = (save.battlePass.claimedFree||[]).includes(row.at);
     const premClaimed = (save.battlePass.claimedPremium||[]).includes(row.at);
     const unlocked = row.at <= tier;
-    return `<div class="bp-row"><b>T${row.at}</b><div style="flex:1">Free: ${freeClaimed?"claimed":unlocked?"ready":"locked"} · Premium: ${save.premiumPass?(premClaimed?"claimed":unlocked?"ready":"locked"):"stub"}</div></div>`;
+    const freeLab = freeClaimed?"claimed":unlocked?"ready":"locked";
+    const premLab = (save.premiumPass||save.battlePass.premium)?(premClaimed?"claimed":unlocked?"ready":"locked"):"stub";
+    return `<div class="bp-row"><b>T${row.at}</b><div style="flex:1">Free: ${freeLab} · Premium: ${premLab}</div></div>`;
   }).join("");
 }
 function renderCalendar(){
@@ -2213,8 +2601,8 @@ function renderCalendar(){
     const today=key===todayKey();
     return `<div class="cal-day ${on?"on":""} ${today?"today":""}" title="${key}">${key.slice(-2)}</div>`;
   }).join("");
-  document.getElementById("calHint").textContent = "Current streak: Day "+(save.dailyStreak||0)+" · next login bonus grows each day (cap 120 Shinies).";
-  document.getElementById("calOdds").textContent = "Streak bonus = min(120, 5×day + 20×floor(day/7)). No paid loot — login rewards are fixed.";
+  document.getElementById("calHint").textContent = "Current streak: Day "+(save.dailyStreak||0)+" · next login bonus grows each day (cap 120 Scrap). Freeze: "+(save.streakFreeze||0);
+  document.getElementById("calOdds").textContent = "Streak bonus = min(120, 5×day + 20×floor(day/7)). Freeze costs Gems (config). No paid loot — login rewards are fixed.";
 }
 
 // ---------- input ----------
@@ -2339,6 +2727,7 @@ document.getElementById("howBtn").addEventListener("click", ()=>document.getElem
 document.getElementById("howClose").addEventListener("click", ()=>{ document.getElementById("howOv").classList.add("hidden"); save.sawHow=true; persist(); });
 document.getElementById("settingsBtn").addEventListener("click", ()=>{
   document.getElementById("settingsMute").textContent = save.muted ? "Sound off" : "Sound on";
+  syncNotifToggles();
   document.getElementById("settingsOv").classList.remove("hidden");
 });
 document.getElementById("settingsClose").addEventListener("click", ()=>document.getElementById("settingsOv").classList.add("hidden"));
@@ -2375,6 +2764,51 @@ document.getElementById("bpClose").addEventListener("click", ()=>document.getEle
 document.getElementById("bpPremiumBtn").addEventListener("click", (ev)=>{ ev.preventDefault(); toast("Premium Night Pass lane is stubbed — coming soon."); });
 document.getElementById("calBtn").addEventListener("click", ()=>{ renderCalendar(); document.getElementById("calOv").classList.remove("hidden"); });
 document.getElementById("calClose").addEventListener("click", ()=>document.getElementById("calOv").classList.add("hidden"));
+document.getElementById("baseBtn").addEventListener("click", ()=>{ renderBase(); document.getElementById("baseOv").classList.remove("hidden"); });
+document.getElementById("baseClose").addEventListener("click", ()=>document.getElementById("baseOv").classList.add("hidden"));
+document.getElementById("chestBtn").addEventListener("click", ()=>{ renderChests(); document.getElementById("chestOv").classList.remove("hidden"); });
+document.getElementById("chestClose").addEventListener("click", ()=>document.getElementById("chestOv").classList.add("hidden"));
+document.getElementById("gemShopBtn").addEventListener("click", ()=>{ renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden"); });
+document.getElementById("gemShopClose").addEventListener("click", ()=>document.getElementById("gemShopOv").classList.add("hidden"));
+document.getElementById("starterPackBtn").addEventListener("click", ()=>toast("Starter Pack IAP stub — coming soon."));
+document.getElementById("albumBtn").addEventListener("click", ()=>{ renderAlbum(); document.getElementById("albumOv").classList.remove("hidden"); });
+document.getElementById("albumClose").addEventListener("click", ()=>document.getElementById("albumOv").classList.add("hidden"));
+document.getElementById("notifAllowBtn").addEventListener("click", async ()=>{
+  save.notif = save.notif || {};
+  save.notif.asked = true;
+  const bridge = TN();
+  let status = "granted";
+  if (bridge && bridge.requestNotificationPermission) status = await bridge.requestNotificationPermission();
+  save.notif.permission = status;
+  persist();
+  document.getElementById("notifPrompt").classList.add("hidden");
+  toast(status==="granted"||status==="prompt"?"Reminders on":"Reminders unavailable");
+});
+document.getElementById("notifSkipBtn").addEventListener("click", ()=>{
+  save.notif = save.notif || {};
+  save.notif.asked = true;
+  persist();
+  document.getElementById("notifPrompt").classList.add("hidden");
+});
+function bindNotifToggle(elId, key){
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.addEventListener("change", ()=>{
+    save.notif = save.notif || { enabled:{} };
+    if (key==="quietHours") save.notif.quietHours = !!el.checked;
+    else {
+      save.notif.enabled = save.notif.enabled || {};
+      save.notif.enabled[key] = !!el.checked;
+    }
+    persist();
+  });
+}
+bindNotifToggle("ntUpgrade","upgrade_done");
+bindNotifToggle("ntChest","chest_ready");
+bindNotifToggle("ntDaily","daily_reward");
+bindNotifToggle("ntStreak","streak_risk");
+bindNotifToggle("ntSeason","new_season");
+bindNotifToggle("ntQuiet","quietHours");
 
 document.addEventListener("pointerdown", ensureAudio, {once:false});
 
@@ -2435,8 +2869,14 @@ window.__TS = {
   renderAchievements, renderBattlePass, renderCalendar, renderLeaderboard,
   openShop(){ document.getElementById("shopOv").classList.remove("hidden"); renderShop(); },
   openAch(){ renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); },
-  openSettings(){ document.getElementById("settingsOv").classList.remove("hidden"); },
+  openSettings(){ syncNotifToggles(); document.getElementById("settingsOv").classList.remove("hidden"); },
   openChallenges(){ /* challenges live on title */ showScreen("title"); syncMetaUI(); },
+  openBase(){ renderBase(); document.getElementById("baseOv").classList.remove("hidden"); },
+  openChests(){ renderChests(); document.getElementById("chestOv").classList.remove("hidden"); },
+  openGemShop(){ renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden"); },
+  openAlbum(){ renderAlbum(); document.getElementById("albumOv").classList.remove("hidden"); },
+  openNotifPrompt(){ document.getElementById("notifPrompt").classList.remove("hidden"); },
+  economy(){ return { scrap:save.scrap, gems:save.gems, base:save.base, chests:save.chests, pass:save.battlePass }; },
   triggerContinue(){ continuedThisRun=false; gameOver(); },
   triggerLevelUp(){ const before=save.playerLevel; addXP(9999); },
   setMagnet(n){ magnetCharge=n; syncMagnetUI(); },
@@ -2506,18 +2946,41 @@ async function runDemoSequence(){
     document.getElementById("shopOv").classList.add("hidden");
     // Achievements
     renderAchievements(); document.getElementById("achOv").classList.remove("hidden");
-    await sleep(1600);
+    await sleep(1400);
     document.getElementById("achOv").classList.add("hidden");
+    // Junkyard base
+    save.scrap=Math.max(save.scrap||0,600); save.gems=Math.max(save.gems||0,40); save.shinies=save.scrap;
+    if (!save.base) save.base={levels:{recycler:2,compactor:1,neonSign:1,stashVault:1},queue:[],builderSlots:2};
+    renderBase(); document.getElementById("baseOv").classList.remove("hidden");
+    await sleep(1800);
+    document.getElementById("baseOv").classList.add("hidden");
+    // Season pass
+    save.battlePass.xp=Math.max(save.battlePass.xp||0,320); renderBattlePass();
+    document.getElementById("bpOv").classList.remove("hidden");
+    await sleep(1600);
+    document.getElementById("bpOv").classList.add("hidden");
+    // Crates + odds
+    save.chests=[{id:"demo_dock",chestId:"dock_crate",earnedAt:Date.now(),readyAt:Date.now()-1,opened:false}];
+    renderChests(); document.getElementById("chestOv").classList.remove("hidden");
+    await sleep(1600);
+    document.getElementById("chestOv").classList.add("hidden");
+    // Gem shop
+    renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden");
+    await sleep(1400);
+    document.getElementById("gemShopOv").classList.add("hidden");
+    // Notification prompt (after first win moment)
+    save.firstWin=true; document.getElementById("notifPrompt").classList.remove("hidden");
+    await sleep(1400);
+    document.getElementById("notifPrompt").classList.add("hidden");
     // Game over + revive prompt (test ad path)
     continuedThisRun=false; started=true; over=false; pendingGameOver=false;
     gameOver();
-    await sleep(2500);
-    // Stay on continue overlay so video captures rewarded revive prompt
-    await sleep(2000);
+    await sleep(2200);
+    await sleep(1600);
     skipContinue();
-    await sleep(1200);
+    await sleep(1000);
     showScreen("title"); syncMetaUI();
-    await sleep(1500);
+    await sleep(1200);
   }catch(e){ console.warn("demo", e); }
 }
 function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
@@ -2528,7 +2991,6 @@ async function applyShotMode(shot){
     setTimeout(()=>{ try{
       startGame();
       window.__TS.setupLineClear(2);
-      // paint a more interesting bin
       for (let y=ROWS-6;y<ROWS-2;y++){
         for (let x=0;x<COLS;x++) if ((x+y)%3!==0) board[y][x]=PIECE_IDS[(x+y)%PIECE_IDS.length];
       }
@@ -2539,9 +3001,26 @@ async function applyShotMode(shot){
   } else if (shot==="achievements" || shot==="ach"){
     setTimeout(()=>{ showScreen("title"); renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); }, 400);
   } else if (shot==="settings"){
-    setTimeout(()=>{ showScreen("title"); document.getElementById("settingsOv").classList.remove("hidden"); }, 400);
+    setTimeout(()=>{ showScreen("title"); syncNotifToggles(); document.getElementById("settingsOv").classList.remove("hidden"); }, 400);
   } else if (shot==="challenges"){
     setTimeout(()=>{ showScreen("title"); syncMetaUI(); document.getElementById("challenges").scrollIntoView({block:"center"}); }, 400);
+  } else if (shot==="base" || shot==="junkyard"){
+    setTimeout(()=>{ showScreen("title"); save.scrap=Math.max(save.scrap||0,900); save.gems=Math.max(save.gems||0,80); save.shinies=save.scrap;
+      if (!save.base) save.base={levels:{recycler:2,compactor:2,neonSign:1,stashVault:1},queue:[],builderSlots:2};
+      save.base.levels.recycler=3; save.base.levels.compactor=2;
+      save.base.queue=[{buildingId:"neonSign",from:1,to:2,startedAt:Date.now()-1000,readyAt:Date.now()+120000}];
+      persist(); renderBase(); document.getElementById("baseOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="chest" || shot==="crates"){
+    setTimeout(()=>{ showScreen("title");
+      save.chests=[{id:"shot_dock",chestId:"dock_crate",earnedAt:Date.now()-1000,readyAt:Date.now()-1,opened:false},
+        {id:"shot_neon",chestId:"neon_crate",earnedAt:Date.now(),readyAt:Date.now()+3600000,opened:false}];
+      persist(); renderChests(); document.getElementById("chestOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="gems" || shot==="gemshop"){
+    setTimeout(()=>{ showScreen("title"); renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="pass" || shot==="season"){
+    setTimeout(()=>{ showScreen("title"); save.battlePass.xp=Math.max(save.battlePass.xp||0,450); persist(); renderBattlePass(); document.getElementById("bpOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="notif" || shot==="notifications"){
+    setTimeout(()=>{ showScreen("title"); save.firstWin=true; document.getElementById("notifPrompt").classList.remove("hidden"); }, 400);
   } else if (shot==="demo"){
     setTimeout(()=>{ runDemoSequence(); }, 600);
   }

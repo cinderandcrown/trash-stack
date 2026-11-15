@@ -62,6 +62,15 @@ if (!/mascot|Trash Panda/.test(html)) fail('Trash Panda mascot missing');
 if (!/settingsOv|settingsBtn/.test(html)) fail('Settings screen missing');
 if (!/runDemoSequence|shot==="demo"/.test(html)) fail('CI demo sequence missing');
 
+if (!fs.existsSync(path.join(web, 'economy.js'))) fail('web/economy.js missing — run npm run build:economy');
+if (!/TrashEconomyConfig|economy\.js/.test(html)) fail('index.html should load economy.js');
+if (!/baseBtn|Junkyard|chestBtn|gemShopBtn|notifPrompt/.test(html)) fail('F2P meta UI (Junkyard/Crates/Gem Shop/notif) missing');
+if (!fs.existsSync(path.join(root, 'docs', 'ECONOMY.md'))) fail('docs/ECONOMY.md missing');
+if (!fs.existsSync(path.join(root, 'src', 'economy-config.js'))) fail('src/economy-config.js missing');
+if (!/SEASON_PASS|GEM_PACKS|CHESTS/.test(fs.readFileSync(path.join(root, 'src', 'economy-config.js'), 'utf8'))) {
+  fail('economy-config missing Season Pass / gem packs / chests');
+}
+
 const achIds = [...html.matchAll(/id:"([a-z0-9_]+)",\s*name:"/g)].map((m) => m[1]);
 // ACHIEVEMENTS block ids only — filter by known prefix patterns is hard; count unique achievement-like
 const achBlock = html.match(/const ACHIEVEMENTS = \[([\s\S]*?)\];/);

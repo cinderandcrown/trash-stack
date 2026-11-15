@@ -27,7 +27,7 @@ Night shift at the docks. Drop cans, tires, and neon tubes into the 8×15 compac
 
 Trash Stack is a neon steam-punk junk puzzle from Cinder and Crown — the same Trash Panda raccoon universe as our other game. You are on night shift at the docks. Drop crushed cans, pizza boxes, tires, bags, pipe sections, and neon tubes into an **8×15 dumpster / compactor bin** (not a plain well). Full rows get crushed by a hydraulic press for scrap points. Match three or more same-material tiles (metal, plastic, paper, glass) for a recycle pop. Charge the Magnet and Trash Panda steals a falling piece into your stash bin.
 
-Free to play with optional rewarded ads. Unlock raccoon-mask looks, trails, and city backgrounds with in-game Shinies — no accounts, no paid loot boxes, and no real-money gambling. Odds are shown for every random reward.
+Free to play with optional rewarded ads and IAP (Neon Gems, Season Pass, Remove Ads). Soft currency **Scrap** is earned in play; **Neon Gems** are premium. Unlock looks, build a Junkyard hideout, open run-earned crates (odds always shown). No accounts, no cash-out, no real-money gambling. Crates are never sold for cash without odds.
 
 - Portrait, one-hand friendly controls (tap, swipe, pads) with DAS, ARR, and lock delay
 - Compactor clears, recycle combos, Magnet power-up, Trash Panda mascot reactions
@@ -47,7 +47,7 @@ Crush clean. Stay neon. Don’t drop the trash.
 **Privacy Policy URL:** https://trash-stack.pages.dev/privacy.html  
 **Marketing URL (optional):** https://trash-stack.pages.dev/
 
-### Age rating questionnaire (likely 4+)
+### Age rating questionnaire (target ≤12+)
 
 Answer **No** / none / not present for:
 
@@ -65,7 +65,7 @@ Answer **No** / none / not present for:
 | Gambling and contests | No |
 | Contests | No |
 
-Casual abstract neon puzzle with cosmetics. Expected rating: **4+**.
+Casual abstract neon puzzle with cosmetics, ads, and optional IAP. Expected rating: **12+** max (Infrequent/Mild Simulated Gambling for lucky spin + crates with odds disclosed; no real-money gambling). Prefer **9+** / **12+** questionnaire answers — never 17+.
 
 ### Privacy nutrition labels (App Store Connect)
 
@@ -93,9 +93,9 @@ CI artifact **`app-store-review-evidence`** includes simulator captures + demo v
 
 | Slot | Caption idea | Content |
 |------|----------------|---------|
-| 1 | Neon junk. Night shift. | Title — logo, Shinies, Play, hustles |
+| 1 | Neon junk. Night shift. | Title — logo, Scrap/Gems, Play, hustles |
 | 2 | Crush it in the compactor | Gameplay — 8×15 dumpster, junk objects, mascot |
-| 3 | Spend Shinies, not cash | Shop — skins / trails |
+| 3 | Spend Scrap, not cash | Shop — skins / trails |
 | 4 | Tonight’s hustle | Challenges on title |
 | 5 | Flex the dock badges | Achievements |
 | 6 | Your bin, your rules | Settings — sound, privacy, support |
@@ -164,9 +164,12 @@ Random rewards are soft-currency or rewarded-ad only; odds are disclosed. No rea
 
 ## Monetization (free + ads)
 
-- **Rewarded video (opt-in):** revive once per run, double Shinies after a run, extra daily spin
+- **Rewarded video (opt-in):** revive once per run, double Scrap after a run, extra daily spin, chest speedup
 - **Interstitials:** between runs only; never first 2 runs of a session; at most one every 3 game overs; **no banners during play**
 - **Remove Ads** — one-time IAP stub (disabled; StoreKit/Play Billing TODO, no product IDs yet)
 - **Premium Pass / Night Pass premium lane** — stub only
 - Ad units default to **Google official TEST IDs**; real IDs via `web/ad-config.js` + native app ID strings
 - ATT + UMP on iOS; PrivacyInfo + privacy.html document advertising data collection
+
+
+See **docs/ECONOMY.md** for Scrap/Gems tuning, Junkyard, Season Pass, crates, and compliance tables.

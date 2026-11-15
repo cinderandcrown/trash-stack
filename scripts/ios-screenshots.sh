@@ -88,6 +88,11 @@ boot_and_shot() {
   shot_once "$udid" "challenges" "$OUT/${label}-challenges.png"
   shot_once "$udid" "achievements" "$OUT/${label}-achievements.png"
   shot_once "$udid" "settings" "$OUT/${label}-settings.png"
+  shot_once "$udid" "base" "$OUT/${label}-base.png"
+  shot_once "$udid" "pass" "$OUT/${label}-pass.png"
+  shot_once "$udid" "chest" "$OUT/${label}-chest.png"
+  shot_once "$udid" "gems" "$OUT/${label}-gems.png"
+  shot_once "$udid" "notif" "$OUT/${label}-notif.png"
 
   cp "$OUT/${label}-title.png" "$OUT/${label}-01-title-caption.png"
   cp "$OUT/${label}-game.png" "$OUT/${label}-02-compactor-caption.png"
@@ -95,6 +100,11 @@ boot_and_shot() {
   cp "$OUT/${label}-challenges.png" "$OUT/${label}-04-hustle-caption.png"
   cp "$OUT/${label}-achievements.png" "$OUT/${label}-05-achievements-caption.png"
   cp "$OUT/${label}-settings.png" "$OUT/${label}-06-settings-caption.png"
+  cp "$OUT/${label}-base.png" "$OUT/${label}-07-junkyard-caption.png"
+  cp "$OUT/${label}-pass.png" "$OUT/${label}-08-season-pass-caption.png"
+  cp "$OUT/${label}-chest.png" "$OUT/${label}-09-crates-caption.png"
+  cp "$OUT/${label}-gems.png" "$OUT/${label}-10-gem-shop-caption.png"
+  cp "$OUT/${label}-notif.png" "$OUT/${label}-11-notif-prompt-caption.png"
 
   xcrun simctl terminate "$udid" "$BUNDLE_ID" >/dev/null 2>&1 || true
   xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
