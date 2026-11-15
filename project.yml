@@ -85,6 +85,7 @@ targets:
     dependencies:
       - target: TrashStack
       - package: GameCore
+      - package: GameRender
       - package: Services
     settings:
       base:

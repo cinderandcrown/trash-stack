@@ -180,9 +180,11 @@ struct SeasonPassView: View {
 
                     NeonButton(title: "Unlock Premium Pass", style: .secondary) {}
                         .disabled(true)
+                        .opacity(0.95)
                         .padding(.horizontal, 16)
-                    NeonButton(title: "Pass + 25 Tiers", style: .ghost) {}
+                    NeonButton(title: "Pass + 25 Tiers", style: .secondary) {}
                         .disabled(true)
+                        .opacity(0.95)
                         .padding(.horizontal, 16)
                     Text("Tier buys with Gems are optional and never pushed.")
                         .font(.caption)

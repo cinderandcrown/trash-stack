@@ -89,12 +89,12 @@ struct NeonButton: View {
         case .secondary:
             LinearGradient(colors: [NeonTheme.magenta.opacity(0.85), NeonTheme.magenta.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
         case .ghost:
-            Color.white.opacity(0.14)
+            Color.white.opacity(0.2)
         }
     }
 
     private var border: Color {
-        style == .ghost ? NeonTheme.teal.opacity(0.85) : .clear
+        style == .ghost ? NeonTheme.teal : .clear
     }
 }
 
