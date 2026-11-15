@@ -75,8 +75,11 @@ jobs:
           path: artifacts/screenshots/
           if-no-files-found: warn
 
-      - name: Detect ASC secrets
+      # Signed archive + TestFlight upload only on testflight/* tags (Fire Fox tags).
+      # PR/branch runs stop after simulator validate + screenshots.
+      - name: Detect ASC secrets (TestFlight tags only)
         id: asc
+        if: startsWith(github.ref, 'refs/tags/testflight/')
         env:
           TEAM: ${{ secrets.APPLE_TEAM_ID }}
           ISSUER: ${{ secrets.ASC_ISSUER_ID }}
@@ -85,19 +88,21 @@ jobs:
         run: |
           if [ -n "${TEAM:-}" ] && [ -n "${ISSUER:-}" ] && [ -n "${KEY_ID:-}" ] && [ -n "${KEY_P8:-}" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
-            KEY_DIR="$RUNNER_TEMP/private_keys"
+            KEY_DIR="$HOME/private_keys"
             mkdir -p "$KEY_DIR"
+            # xcodebuild looks for AuthKey_<KEY_ID>.p8 under ~/private_keys or ./private_keys
             KEY_PATH="$KEY_DIR/AuthKey_${KEY_ID}.p8"
             printf '%s\n' "$KEY_P8" > "$KEY_PATH"
             echo "key_path=$KEY_PATH" >> "$GITHUB_OUTPUT"
             echo "ASC API key ready for automatic signing (contents not logged)."
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
-            echo "ASC secrets missing — simulator validate only. Need APPLE_TEAM_ID, ASC_ISSUER_ID, ASC_KEY_ID, ASC_KEY_P8."
+            echo "ASC secrets missing — cannot upload TestFlight build."
+            exit 1
           fi
 
-      - name: Ensure bundle id registered
-        if: steps.asc.outputs.present == 'true'
+      - name: Ensure bundle id + CI device for signing
+        if: startsWith(github.ref, 'refs/tags/testflight/') && steps.asc.outputs.present == 'true'
         env:
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
@@ -107,7 +112,7 @@ jobs:
         run: node scripts/ensure-asc-bundle-id.mjs
 
       - name: Archive (App Store, automatic signing)
-        if: steps.asc.outputs.present == 'true'
+        if: startsWith(github.ref, 'refs/tags/testflight/') && steps.asc.outputs.present == 'true'
         working-directory: ios/App
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -126,30 +131,27 @@ jobs:
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
             CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
             MARKETING_VERSION=1.0.0 \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             archive
 
-      - name: Export IPA (validate) or upload to TestFlight
-        if: steps.asc.outputs.present == 'true'
+      - name: Upload to TestFlight
+        if: startsWith(github.ref, 'refs/tags/testflight/') && steps.asc.outputs.present == 'true'
         env:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
           AUTH_KEY_PATH: ${{ steps.asc.outputs.key_path }}
-          REF: ${{ github.ref }}
         run: |
           set -euo pipefail
-          DEST="export"
-          case "$REF" in
-            refs/tags/testflight/*) DEST="upload" ;;
-          esac
           EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
           /usr/bin/plutil -create xml1 "$EXPORT_PLIST"
           /usr/bin/plutil -insert method -string app-store-connect "$EXPORT_PLIST"
-          /usr/bin/plutil -insert destination -string "$DEST" "$EXPORT_PLIST"
+          /usr/bin/plutil -insert destination -string upload "$EXPORT_PLIST"
           /usr/bin/plutil -insert signingStyle -string automatic "$EXPORT_PLIST"
           /usr/bin/plutil -insert manageAppVersionAndBuildNumber -bool true "$EXPORT_PLIST"
           /usr/bin/plutil -insert teamID -string "$APPLE_TEAM_ID" "$EXPORT_PLIST"
@@ -160,18 +162,6 @@ jobs:
             -authenticationKeyPath "$AUTH_KEY_PATH" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
-            -allowProvisioningUpdates
-          if [ "$DEST" = "upload" ]; then
-            echo "Uploaded build to App Store Connect / TestFlight for tag ${{ github.ref_name }} (app $ASC_APP_APPLE_ID)."
-          else
-            echo "Exported IPA for validation only — TestFlight upload requires a testflight/* tag."
-            ls -la "$RUNNER_TEMP/ipa"
-          fi
-
-      - name: Upload IPA artifact (non-tag signed builds)
-        if: steps.asc.outputs.present == 'true' && !startsWith(github.ref, 'refs/tags/testflight/')
-        uses: actions/upload-artifact@v4
-        with:
-          name: trash-stack-ipa
-          path: ${{ runner.temp }}/ipa/*.ipa
-          if-no-files-found: warn
+            -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration
+          echo "Uploaded build to App Store Connect / TestFlight for tag ${{ github.ref_name }} (app $ASC_APP_APPLE_ID)."

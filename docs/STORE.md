@@ -89,8 +89,9 @@ Manual polish before submit: crop status areas if needed, ensure no competitor m
 ### TestFlight CI
 
 - Push a tag matching `testflight/*` (for example `testflight/1.0.0-1`) to archive, sign with the App Store Connect API key, and upload.
-- PR / branch runs **build + validate only** (simulator build, screenshots, optional IPA export). They do **not** upload to TestFlight.
+- PR / branch runs **build + validate only** (simulator build + App Store screenshots). They do **not** archive or upload to TestFlight.
 - Required GitHub secrets: `APPLE_TEAM_ID`, `ASC_ISSUER_ID`, `ASC_KEY_ID`, `ASC_KEY_P8`.
+- Automatic signing needs at least one iOS device on the team (development profiles). CI registers a placeholder via ASC if the team has zero devices; registering Nicholas’s real iPhone UDID in Certificates, Identifiers & Profiles is still recommended for device builds.
 - Do **not** push TestFlight tags from agents — Fire Fox owns tagging.
 
 ### What’s left for App Store submission
