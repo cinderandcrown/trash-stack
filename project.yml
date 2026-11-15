@@ -63,7 +63,9 @@ targets:
       - package: GameRender
       - package: Services
       - package: GoogleMobileAds
+        product: GoogleMobileAds
       - package: GoogleUserMessagingPlatform
+        product: GoogleUserMessagingPlatform
       - sdk: SpriteKit.framework
       - sdk: GameKit.framework
       - sdk: StoreKit.framework
