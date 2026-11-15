@@ -458,7 +458,7 @@ struct NotifPromptView: View {
                     .foregroundStyle(Color.white.opacity(0.8))
                 NeonButton(title: "Enable reminders") {
                     Task {
-                        _ = await NotificationService.shared.requestAuthorization()
+                        _ = await NotificationService.shared.requestAfterFirstWin()
                         profile.notifAsked = true
                         profile.persist()
                         show = false
