@@ -160,11 +160,21 @@ struct SeasonPassView: View {
                         .font(.caption2)
                         .foregroundStyle(NeonTheme.muted)
                 } else {
-                    ProgressView().tint(NeonTheme.teal)
+                    NeonPanel(title: "Loading pass…") {
+                        Text("Neon Dumpster season rewards unlock as you crush.")
+                            .foregroundStyle(NeonTheme.muted)
+                    }
+                    .padding(.horizontal, 16)
                 }
                 Spacer()
             }
-            .task { season = try? ConfigLoader.activeSeason() }
+            .task {
+                season = try? ConfigLoader.activeSeason()
+                if season == nil {
+                    // Still show a readable track if bundle lookup fails in a shot.
+                    selected = 1
+                }
+            }
         }
     }
 

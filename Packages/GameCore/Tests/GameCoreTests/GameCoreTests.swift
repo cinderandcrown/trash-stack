@@ -97,10 +97,18 @@ final class GameCoreTests: XCTestCase {
         recycle.applyShotScenario("recycle")
         var revive = GameEngine(seed: 1)
         revive.applyShotScenario("revive")
+        var crush = GameEngine(seed: 1)
+        crush.applyShotScenario("compactor")
+        var play = GameEngine(seed: 1)
+        play.applyShotScenario("game")
         XCTAssertFalse(recycle.state.over)
         XCTAssertTrue(revive.state.over)
         XCTAssertNotEqual(recycle.state.score, revive.state.score)
+        XCTAssertNotEqual(crush.state.score, play.state.score)
+        XCTAssertNotEqual(crush.state.level, recycle.state.level)
         let recycleFilled = (0..<recycle.state.board.config.cols).filter { recycle.state.board[$0, recycle.state.board.config.rows - 1] != nil }.count
         XCTAssertGreaterThanOrEqual(recycleFilled, 3)
+        let reviveTop = (0..<revive.state.board.config.cols).compactMap { revive.state.board[$0, revive.state.board.config.hiddenRows] }.count
+        XCTAssertEqual(reviveTop, revive.state.board.config.cols)
     }
 }

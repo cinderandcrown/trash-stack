@@ -5,20 +5,22 @@ import Services
 
 @main
 struct TrashStackApp: App {
-    @ObservedObject private var profile = PlayerProfile.shared
-
     var body: some Scene {
         WindowGroup {
             RootView()
-                .environmentObject(profile)
+                .environmentObject(PlayerProfile.shared)
                 .preferredColorScheme(.dark)
                 .task {
                     HapticsService.shared.prepare()
                     AudioService.shared.prepare()
-                    await AdsBootstrap.start()
-                    await StoreKitService.shared.loadProducts()
-                    await GameKitService.shared.authenticate()
-                    AdsService.shared.adsRemoved = profile.adsRemoved
+                    let skipAds = ProcessInfo.processInfo.arguments.contains("-trashStackSkipAds")
+                        || UserDefaults.standard.bool(forKey: "trashStack.skipAds")
+                    if !skipAds {
+                        await AdsBootstrap.start()
+                        await StoreKitService.shared.loadProducts()
+                        await GameKitService.shared.authenticate()
+                    }
+                    AdsService.shared.adsRemoved = PlayerProfile.shared.adsRemoved
                 }
         }
     }

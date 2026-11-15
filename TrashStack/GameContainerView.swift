@@ -148,18 +148,20 @@ struct GameContainerView: View {
 
     private func bootstrap() {
         scene.scaleMode = .resizeFill
-        scene.configureForProMotion(true)
+        scene.configureForProMotion(false)
         let shot = UserDefaults.standard.string(forKey: "trashStack.shotActive")
+            ?? PlayerProfile.shotArgument()
+        // Still-frame evidence shots must NOT autoplay — autoplay erases distinct boards.
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
         scene.autoplay = auto
         if let shot, ["game", "gameplay", "compactor", "recycle", "revive", "demo", "autoplay"].contains(shot) {
             scene.applyShot(shot)
-            if shot == "recycle" || shot == "compactor" || shot == "demo" {
+            if shot == "demo" || shot == "autoplay" {
                 scene.autoplay = true
             }
             if shot == "revive" {
                 scene.autoplay = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
                     showContinue = true
                 }
             }

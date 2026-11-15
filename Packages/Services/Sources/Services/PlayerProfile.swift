@@ -31,10 +31,23 @@ public final class PlayerProfile: ObservableObject {
 
     public init() {
         load()
-        if let shot = defaults.string(forKey: "trashStack.shot"), !shot.isEmpty {
+        // Launch-arg wins (simctl): -trashStackShot <mode>
+        if let arg = Self.shotArgument() {
+            shotMode = arg
+        } else if let shot = defaults.string(forKey: "trashStack.shot"), !shot.isEmpty {
             shotMode = shot
             defaults.removeObject(forKey: "trashStack.shot")
         }
+    }
+
+    /// Prefer `simctl launch … -trashStackShot recycle` over defaults write (more reliable in CI).
+    public static func shotArgument() -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        if let idx = args.firstIndex(of: "-trashStackShot"), idx + 1 < args.count {
+            let v = args[idx + 1]
+            return v.isEmpty ? nil : v
+        }
+        return nil
     }
 
     public func load() {

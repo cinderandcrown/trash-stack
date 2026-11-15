@@ -274,20 +274,23 @@ public struct GameEngine: Sendable {
 
         switch shot {
         case "recycle":
-            // Three metal cans in a row → recycle group ready to read.
-            for x in 2..<5 {
-                state.board[x, rows - 1] = Cell(piece: .can, material: .metal)
+            // Tall metal stack on the left + glass tubes on the right — recycle-readable.
+            for y in (rows - 5)..<rows {
+                state.board[1, y] = Cell(piece: .can, material: .metal)
+                state.board[2, y] = Cell(piece: .pipe, material: .metal)
             }
-            for x in 1..<4 {
-                state.board[x, rows - 2] = Cell(piece: .pipe, material: .metal)
+            for y in (rows - 3)..<rows {
+                state.board[5, y] = Cell(piece: .tube, material: .glass)
+                state.board[6, y] = Cell(piece: .tube, material: .glass)
             }
             state.score = 2400
             state.combo = 3
             state.magnetCharge = 2
+            state.level = 2
             state.active = ActivePiece(id: .scrap, x: 3, y: hid + 2)
         case "compactor":
-            // Nearly full bottom rows ready for a hydraulic crush.
-            for y in (rows - 3)..<rows {
+            // Nearly full bottom rows ready for a hydraulic crush (one gap to plug).
+            for y in (rows - 4)..<rows {
                 for x in 0..<cols where !(y == rows - 1 && x == 3) {
                     let ids: [JunkID] = [.box, .bag, .tire, .crate]
                     let id = ids[(x + y) % ids.count]
@@ -296,27 +299,31 @@ public struct GameEngine: Sendable {
             }
             state.score = 5100
             state.level = 4
+            state.combo = 1
             state.active = ActivePiece(id: .tube, x: 3, y: hid + 1)
         case "revive", "game-over":
-            // Topped-out dumpster + game over flag for revive sheet.
-            for y in hid..<(hid + 8) {
+            // Topped-out dumpster (checkerboard bags/boxes) + game over for revive sheet.
+            for y in hid..<(hid + 10) {
                 for x in 0..<cols {
                     let id: JunkID = (x + y) % 2 == 0 ? .bag : .box
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
             state.score = 8800
+            state.level = 6
             state.over = true
             state.active = nil
             events.append(.gameOver)
         case "game", "gameplay", "demo", "autoplay":
-            for y in (rows - 4)..<rows {
+            // Sparse mid-bin stack — visibly different from crush/recycle/revive.
+            for y in (rows - 3)..<rows {
                 for x in 0..<cols where (x + y) % 3 != 0 {
                     let id: JunkID = [.can, .tire, .scrap, .pipe][(x + y) % 4]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
             state.score = 1200
+            state.level = 1
             state.magnetCharge = 1
             spawn()
         default:

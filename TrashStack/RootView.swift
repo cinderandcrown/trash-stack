@@ -15,6 +15,9 @@ struct RootView: View {
 
     var body: some View {
         ZStack {
+            // Always-on backdrop so a late SwiftUI paint never flashes system white.
+            NeonTheme.alleyGradient.ignoresSafeArea()
+
             switch screen {
             case .title: TitleView(screen: $screen, showNotifPrompt: $showNotifPrompt)
             case .game: GameContainerView(screen: $screen, showNotifPrompt: $showNotifPrompt)
@@ -56,7 +59,13 @@ struct RootView: View {
     }
 
     private func applyShotMode() {
-        guard let shot = profile.consumeShotMode() else { return }
+        // Re-read defaults each appear; consumeShotMode alone can miss simctl writes
+        // if the process was warm or the singleton init raced the defaults write.
+        let shot = profile.consumeShotMode()
+            ?? PlayerProfile.shotArgument()
+            ?? UserDefaults.standard.string(forKey: "trashStack.shot")
+        guard let shot, !shot.isEmpty else { return }
+        UserDefaults.standard.removeObject(forKey: "trashStack.shot")
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
         switch shot {
         case "game", "gameplay", "compactor", "recycle", "revive":

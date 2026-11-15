@@ -44,10 +44,31 @@ public final class CompactorScene: SKScene {
 
     public override func didMove(to view: SKView) {
         backgroundColor = SKColor(red: 0.02, green: 0.02, blue: 0.05, alpha: 1)
+        preferredFPS = 60
         view.preferredFramesPerSecond = preferredFPS
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = false
+        // Idempotent rebuild — SpriteView can call didMove more than once; re-parenting
+        // an existing child throws and kills the process (springboard screenshots).
+        world.removeAllActions()
+        world.removeFromParent()
+        rainLayer.removeAllChildren()
+        rainLayer.removeFromParent()
+        boardLayer.removeAllChildren()
+        boardLayer.removeFromParent()
+        fxLayer.removeAllChildren()
+        fxLayer.removeFromParent()
         removeAllChildren()
+        world = SKNode()
+        rainLayer = SKNode()
+        boardLayer = SKNode()
+        fxLayer = SKNode()
+        raccoon = nil
+        comboLabel = nil
+        fpsLabel = nil
+        dumpsterFrame = nil
+        cellNodes = []
+        activeNodes = []
         addChild(world)
         world.addChild(rainLayer)
         world.addChild(boardLayer)
@@ -60,7 +81,8 @@ public final class CompactorScene: SKScene {
     }
 
     public func configureForProMotion(_ enabled: Bool) {
-        preferredFPS = enabled ? 120 : 60
+        // Cap at 60 in simulator evidence builds — ProMotion 120 is optional juice, not required.
+        preferredFPS = enabled ? 60 : 60
         view?.preferredFramesPerSecond = preferredFPS
     }
 
@@ -109,7 +131,7 @@ public final class CompactorScene: SKScene {
     private func startRain() {
         rainLayer.removeAllChildren()
         // Baked rain: short thin sprites, no glow nodes.
-        for i in 0..<40 {
+        for i in 0..<24 {
             let drop = SKSpriteNode(color: SKColor(white: 0.75, alpha: 0.28), size: CGSize(width: 1.5, height: CGFloat.random(in: 10...22)))
             drop.position = CGPoint(x: CGFloat.random(in: 0...size.width), y: CGFloat.random(in: 0...size.height))
             drop.zPosition = -10
