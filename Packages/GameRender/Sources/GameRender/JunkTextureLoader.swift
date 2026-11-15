@@ -43,7 +43,9 @@ public enum JunkTextureLoader {
     /// Package-local PNGs under Resources/Junk and Resources/HUD.
     public static func imageFromModule(named name: String) -> UIImage? {
         let bundle = Bundle.module
-        for sub in ["Junk", "HUD"] {
+        // SPM `.copy("Resources")` may keep or strip the Resources/ prefix — try both.
+        let subs = ["Junk", "HUD", "Resources/Junk", "Resources/HUD", "Resources"]
+        for sub in subs {
             if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
                let img = UIImage(contentsOfFile: url.path) {
                 return img
