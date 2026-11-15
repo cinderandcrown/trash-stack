@@ -27,7 +27,8 @@ enum AdsBootstrap {
     private static func requestUMPConsent() async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let params = UMPRequestParameters()
-            params.isTaggedForUnderAgeOfConsent = false
+            // ObjC property name (Swift `isTagged…` rename is not on this SPM binary).
+            params.tagForUnderAgeOfConsent = false
             UMPConsentInformation.sharedInstance.requestConsentInfoUpdate(with: params) { _ in
                 // Form presentation is skipped in CI / simulator smoke; non-personalized ads may still serve.
                 cont.resume()
