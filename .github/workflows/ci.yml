@@ -107,6 +107,7 @@ jobs:
 
       - name: Unit tests
         id: tests
+        timeout-minutes: 15
         run: |
           set -o pipefail
           device="$(python3 scripts/pick_iphone_simulator.py)"
@@ -123,13 +124,15 @@ jobs:
           | xcbeautify --renderer github-actions || (tail -n 80 xcodebuild-test.log; exit 1)
 
       - name: Simulator smoke (screenshots + 45–60s video)
+        timeout-minutes: 25
         env:
           DEVICE: ${{ steps.tests.outputs.device }}
         run: |
           set -euo pipefail
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
-          ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
+          # Hard wall so a stuck simctl launch/record cannot hold the job for 90m.
+          timeout 20m ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
 
       - name: Upload smoke artifacts
         if: always()

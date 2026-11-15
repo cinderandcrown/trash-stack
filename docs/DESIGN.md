@@ -21,12 +21,12 @@ You work the **night shift** in a neon junkyard. Drop junk **items** into an 8×
 | Bottle | 1×2 | glass / plastic |
 | Plank | 1×3 | paper |
 | Pipe | 1×3 | metal |
-| Crate | 2×2 | paper |
-| Tire | 2×2 (round art) | plastic |
+| Crate | 2×2 (single crate art, not 4 tiles) | paper |
+| Tire | 2×2 (single round art) | plastic |
 | Bent pipe | L of 3 | metal |
 | Fridge | 2×3 (rare) | metal / plastic |
 
-Materials: **metal, plastic, glass, paper** only.
+Max straight span is **3** (no 1×4 / I-tetromino shapes). Materials: **metal, plastic, glass, paper** only.
 
 **Forbidden:** UI text, code identifiers, or asset names that say Tetris, tetromino, “line clear”, or letter piece names **T / S / Z / I / O**.
 

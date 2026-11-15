@@ -170,4 +170,34 @@ final class GameCoreTests: XCTestCase {
         eng.applyShotScenario("revive")
         XCTAssertTrue(eng.isNearOverflow())
     }
+
+    func testPreviewMatchesSpawnedPiece() {
+        var eng = GameEngine(seed: 2026_11_15)
+        for _ in 0..<40 {
+            guard !eng.state.over, eng.state.active != nil else { break }
+            let preview = eng.peekNext(2)
+            XCTAssertFalse(preview.isEmpty)
+            let expected = preview[0]
+            eng.hardDrop()
+            if eng.state.over { break }
+            XCTAssertEqual(
+                eng.state.active?.id,
+                expected,
+                "NEXT preview[0] must equal the piece that spawns after lock"
+            )
+            XCTAssertEqual(eng.peekNext(1).first, eng.state.queue.first)
+        }
+    }
+
+    func testNoStraightSpanLongerThanThree() {
+        for def in JunkCatalog.all {
+            for rot in def.rotations {
+                let xs = Dictionary(grouping: rot, by: { $0[0] }).mapValues(\.count)
+                let ys = Dictionary(grouping: rot, by: { $0[1] }).mapValues(\.count)
+                XCTAssertLessThanOrEqual(xs.values.max() ?? 0, 3, "\(def.id) vertical span")
+                XCTAssertLessThanOrEqual(ys.values.max() ?? 0, 3, "\(def.id) horizontal span")
+                XCTAssertFalse(rot.contains { $0.count != 2 })
+            }
+        }
+    }
 }

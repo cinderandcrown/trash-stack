@@ -219,46 +219,61 @@ launch_shot() {
   exit 1
 }
 
+# Overall watchdog (CI also wraps with `timeout 20m`).
+SMOKE_START=$SECONDS
+smoke_budget() {
+  local elapsed=$((SECONDS - SMOKE_START))
+  if (( elapsed > 1100 )); then
+    echo "Smoke watchdog exceeded ${elapsed}s — aborting" >&2
+    exit 124
+  fi
+}
+
 echo "Smoke on $DEVICE (display=$DISPLAY)"
 xcrun simctl bootstatus "$DEVICE" -b || xcrun simctl boot "$DEVICE" || true
 xcrun simctl bootstatus "$DEVICE" -b
 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$DEVICE" "$APP_PATH"
+smoke_budget()
 
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
-launch_shot "" "$OUT_DIR/01-title.png" 5
+launch_shot "" "$OUT_DIR/01-title.png" 4
+smoke_budget
 # Longer settle so mid-game / crush juice / recycle banner are on-screen.
-launch_shot "game" "$OUT_DIR/02-gameplay.png" 7
+launch_shot "game" "$OUT_DIR/02-gameplay.png" 6
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
-launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 8
+launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 6
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 8
+launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 6
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 7
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 5
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-launch_shot "base" "$OUT_DIR/06-base.png" 5
-launch_shot "pass" "$OUT_DIR/07-pass.png" 5
-launch_shot "shop" "$OUT_DIR/08-shop.png" 5
-launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 5
+launch_shot "base" "$OUT_DIR/06-base.png" 4
+launch_shot "pass" "$OUT_DIR/07-pass.png" 4
+launch_shot "shop" "$OUT_DIR/08-shop.png" 4
+launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 4
+smoke_budget
 # Retention evidence: Daily Dumpster, share card, streak reward.
-launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 7
+launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 5
 assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png"
-launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 5
-launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 5
+launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 4
+launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 4
+smoke_budget
 
-launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 7
+launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 5
 assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
-launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 8
+launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 6
 assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
-launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 8
+launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 6
 assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
-launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 5
-launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 5
-launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 5
-launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 7
+launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 4
+launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 4
+launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 4
+launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 5
 assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
+smoke_budget
 
 python3 - "$OUT_DIR" <<'PY'
 import hashlib, pathlib, sys
@@ -302,11 +317,18 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
 fi
 set -e
 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
-# Continuous autoplay (~50s): recycle/press/snatch/game-over beats without board teleport spam.
-sleep 50
+# Continuous autoplay (~45s): recycle/press/snatch/game-over beats without board teleport spam.
+sleep 45
 kill -INT "$REC_PID" 2>/dev/null || true
+# Force-kill if simctl recordVideo ignores INT (known hang source).
+sleep 2
+if kill -0 "$REC_PID" 2>/dev/null; then
+  echo "recordVideo still alive after INT — sending KILL" >&2
+  kill -KILL "$REC_PID" 2>/dev/null || true
+fi
 wait "$REC_PID" 2>/dev/null || true
-sleep 3
+sleep 2
+smoke_budget
 
 # simctl recordVideo has no app audio — mux music+SFX, re-encode under ~150MB.
 AUDIO_DIR="$(cd "$(dirname "$0")/.." && pwd)/TrashStack/Resources/Audio"

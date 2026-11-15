@@ -1,9 +1,16 @@
 // Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 
+public struct BoardCoord: Sendable, Equatable, Hashable {
+    public var x: Int
+    public var y: Int
+    public init(_ x: Int, _ y: Int) { self.x = x; self.y = y }
+}
+
 public enum GameEvent: Sendable, Equatable {
     case spawned(JunkID)
     case locked
-    case recycled(groups: Int, cells: Int, score: Int, scrap: Int, material: Material)
+    /// `coords` are board cells sucked into the chute (for VFX).
+    case recycled(groups: Int, cells: Int, score: Int, scrap: Int, material: Material, coords: [BoardCoord])
     case pressed(cells: Int, score: Int, scrap: Int)
     case orderCompleted(OrderTicket)
     case snatchUsed
@@ -140,12 +147,18 @@ public struct GameEngine: Sendable {
         }
     }
 
+    /// Next junk IDs that will spawn (front of the queue). Preview UI must use this.
+    public func peekNext(_ count: Int = 2) -> [JunkID] {
+        Array(state.queue.prefix(count))
+    }
+
     @discardableResult
     public mutating func spawn() -> Bool {
         fillQueue()
+        precondition(!state.queue.isEmpty, "spawn queue empty")
         let id = state.queue.removeFirst()
         fillQueue()
-        let piece = ActivePiece(id: id, x: state.board.config.cols / 2 - 1, y: 0)
+        let piece = ActivePiece(id: id, x: max(0, state.board.config.cols / 2 - 1), y: 0)
         if !piece.fits(state.board) {
             state.over = true
             events.append(.gameOver)
@@ -251,9 +264,11 @@ public struct GameEngine: Sendable {
             chain += 1
             var cells = 0
             var primary = groups[0].material
+            var coords: [BoardCoord] = []
             for g in groups {
                 cells += g.cells.count
                 primary = g.material
+                coords.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
                 for (x, y) in g.cells { state.board[x, y] = nil }
                 state.recycledByMaterial[g.material, default: 0] += g.cells.count
                 bumpOrderMaterial(g.material, amount: g.cells.count)
@@ -264,7 +279,7 @@ public struct GameEngine: Sendable {
             state.runScrap += scrap
             state.combo = chain
             state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary))
+            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary, coords: coords))
             if chain >= 3 {
                 bumpOrder(kind: .recycleChain, amount: chain)
             }
@@ -339,9 +354,11 @@ public struct GameEngine: Sendable {
             chain += 1
             var cells = 0
             var primary = groups[0].material
+            var cleared: [BoardCoord] = []
             for g in groups {
                 cells += g.cells.count
                 primary = g.material
+                cleared.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
                 for (x, y) in g.cells { state.board[x, y] = nil }
                 state.recycledByMaterial[g.material, default: 0] += g.cells.count
                 bumpOrderMaterial(g.material, amount: g.cells.count)
@@ -352,7 +369,7 @@ public struct GameEngine: Sendable {
             state.runScrap += sp
             state.combo = chain
             state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: sc, scrap: sp, material: primary))
+            events.append(.recycled(groups: groups.count, cells: cells, score: sc, scrap: sp, material: primary, coords: cleared))
             applyGravity()
         }
         checkOrders()
@@ -394,9 +411,11 @@ public struct GameEngine: Sendable {
             chain += 1
             var cells = 0
             var primary = groups[0].material
+            var coords: [BoardCoord] = []
             for g in groups {
                 cells += g.cells.count
                 primary = g.material
+                coords.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
                 for (x, y) in g.cells { state.board[x, y] = nil }
                 state.recycledByMaterial[g.material, default: 0] += g.cells.count
                 bumpOrderMaterial(g.material, amount: g.cells.count)
@@ -407,7 +426,7 @@ public struct GameEngine: Sendable {
             state.runScrap += scrap
             state.combo = chain
             state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary))
+            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary, coords: coords))
             if chain >= 3 { bumpOrder(kind: .recycleChain, amount: chain) }
             applyGravity()
         }
@@ -628,8 +647,9 @@ public struct GameEngine: Sendable {
             spawn()
         case "daily":
             // Seeded daily board — identical for all players on the same UTC day.
+            // Fill the board from the bag first, then rebuild the spawn queue so
+            // preview[0] always matches the next spawn (never a stale bag peek).
             bag = RNGBag(seed: DailyDumpster.seed())
-            fillQueue()
             for y in (rows - 5)..<rows {
                 for x in 0..<cols where (x * 3 + y) % 4 != 0 {
                     let id = bag.next()
@@ -650,6 +670,8 @@ public struct GameEngine: Sendable {
                 OrderTicket(id: "daily-press", label: "Slam the press", kind: .pressSlam, target: 1),
                 OrderTicket(id: "daily-chain", label: "Make a 2× chain", kind: .recycleChain, target: 2),
             ]
+            state.queue = []
+            fillQueue()
             spawn()
         case "streak":
             // Presentation-only: empty board + high streak context via score field.

@@ -35,4 +35,26 @@ final class SmokeTests: XCTestCase {
         XCTAssertFalse(ShiftCatalog.levels.isEmpty)
         XCTAssertEqual(StreakRewards.scrap(forDay: 3), 34)
     }
+
+    func testPreviewQueueMatchesSpawn() {
+        var eng = GameEngine(seed: 4242)
+        for _ in 0..<20 {
+            guard !eng.state.over, eng.state.active != nil else { break }
+            let next = eng.peekNext(1)[0]
+            eng.hardDrop()
+            if eng.state.over { break }
+            XCTAssertEqual(eng.state.active?.id, next)
+        }
+    }
+
+    func testNoITetrominoStraight() {
+        for def in JunkCatalog.all {
+            for rot in def.rotations {
+                let byX = Dictionary(grouping: rot, by: { $0[0] }).mapValues(\.count).values.max() ?? 0
+                let byY = Dictionary(grouping: rot, by: { $0[1] }).mapValues(\.count).values.max() ?? 0
+                XCTAssertLessThanOrEqual(byX, 3)
+                XCTAssertLessThanOrEqual(byY, 3)
+            }
+        }
+    }
 }

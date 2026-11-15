@@ -30,11 +30,17 @@ struct GameContainerView: View {
     @State private var preview: [JunkID] = []
     @State private var holdItem: JunkID? = nil
     @State private var nearMiss = false
+    @State private var toastText: String? = nil
+    @State private var toastTask: Task<Void, Never>? = nil
+    @State private var snatchPressed = false
+    @State private var completedOrderFlash: String? = nil
+    @State private var rewardFly: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
             hudBar
             orderStrip
+            toastBanner
             previewHoldBar
 
             SpriteView(scene: scene)
@@ -93,10 +99,15 @@ struct GameContainerView: View {
                 .disabled(pressMeter < pressMax)
 
                 Button {
+                    snatchPressed = true
                     scene.magnet()
                     AudioService.shared.playSFX("magnet")
                     HapticsService.shared.tap()
                     syncHUD()
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 180_000_000)
+                        snatchPressed = false
+                    }
                 } label: {
                     HStack(spacing: 8) {
                         BundleImage(name: raccoonAsset).frame(width: 28, height: 28)
@@ -117,6 +128,8 @@ struct GameContainerView: View {
                     )
                     .clipShape(Capsule())
                     .opacity(snatchReady ? 1 : 0.55)
+                    .scaleEffect(snatchPressed ? 0.92 : 1)
+                    .animation(.easeOut(duration: 0.12), value: snatchPressed)
                 }
                 .buttonStyle(.plain)
                 .disabled(!snatchReady)
@@ -253,23 +266,59 @@ struct GameContainerView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(orders) { order in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(order.label)
-                            .font(.caption2.weight(.bold))
-                            .foregroundStyle(order.done ? NeonTheme.teal : .white)
-                            .lineLimit(1)
-                        ProgressView(value: Double(min(order.progress, order.target)), total: Double(max(1, order.target)))
-                            .tint(order.done ? NeonTheme.teal : NeonTheme.magenta)
+                    HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(order.label)
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(order.done ? NeonTheme.teal : .white)
+                                .lineLimit(1)
+                            ProgressView(value: Double(min(order.progress, order.target)), total: Double(max(1, order.target)))
+                                .tint(order.done ? NeonTheme.teal : NeonTheme.magenta)
+                        }
+                        if order.done || completedOrderFlash == order.id {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(NeonTheme.teal)
+                                .transition(.scale.combined(with: .opacity))
+                        }
                     }
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(Color.white.opacity(0.07))
+                    .background(Color.white.opacity(order.done ? 0.12 : 0.07))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10)
+                            .stroke(completedOrderFlash == order.id ? NeonTheme.teal : .clear, lineWidth: 1.5)
+                    )
+                }
+                if let rewardFly {
+                    Text(rewardFly)
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(NeonTheme.magenta)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
             .padding(.horizontal, 12)
+            .animation(.easeOut(duration: 0.35), value: completedOrderFlash)
+            .animation(.easeOut(duration: 0.35), value: rewardFly)
         }
         .frame(height: orders.isEmpty ? 0 : 44)
+    }
+
+    private var toastBanner: some View {
+        Group {
+            if let toastText {
+                Text(toastText)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .background(NeonTheme.panel.opacity(0.92))
+                    .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .frame(height: toastText == nil ? 0 : 28)
+        .animation(.easeOut(duration: 0.2), value: toastText)
     }
 
     private var previewHoldBar: some View {
@@ -367,7 +416,7 @@ struct GameContainerView: View {
         snatchReady = scene.engine.state.snatchAvailable
         orders = scene.engine.state.orders
         raccoonMood = scene.raccoonMood
-        preview = Array(scene.engine.state.queue.prefix(2))
+        preview = scene.engine.peekNext(2)
         holdItem = scene.engine.state.hold
         let wasNear = nearMiss
         nearMiss = scene.engine.isNearOverflow()
@@ -379,6 +428,15 @@ struct GameContainerView: View {
             HapticsService.shared.tap()
         } else if !nearMiss, wasNear {
             AudioService.shared.playMusic("game_loop")
+        }
+    }
+
+    private func showToast(_ text: String) {
+        toastTask?.cancel()
+        toastText = text
+        toastTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_100_000_000)
+            if !Task.isCancelled { toastText = nil }
         }
     }
 
@@ -414,6 +472,11 @@ struct GameContainerView: View {
                 await handleGameOver(state)
             }
         }
+        scene.onToast = { text in
+            Task { @MainActor in
+                showToast(text)
+            }
+        }
         scene.onEvents = { [weak scene] events in
             Task { @MainActor in
                 guard let scene else { return }
@@ -436,13 +499,24 @@ struct GameContainerView: View {
                         AudioService.shared.playSFX("crush")
                         HapticsService.shared.clear()
                         Task { await GameKitService.shared.reportAchievement(AchievementID.pressSlam) }
-                    case .orderCompleted:
+                    case .orderCompleted(let order):
                         AudioService.shared.playSFX("levelup")
+                        completedOrderFlash = order.id
+                        rewardFly = "+XP · +gems"
+                        showToast("Order done")
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 1_200_000_000)
+                            if completedOrderFlash == order.id { completedOrderFlash = nil }
+                            rewardFly = nil
+                        }
                     case .snatchUsed:
                         AudioService.shared.playSFX("magnet")
                         Task { await GameKitService.shared.reportAchievement(AchievementID.snatchUsed) }
-                    case .leveledUp:
+                    case .leveledUp(let lvl):
                         AudioService.shared.playSFX("levelup")
+                        showToast("Level \(lvl)")
+                    case .spawned:
+                        syncHUD()
                     default: break
                     }
                 }
