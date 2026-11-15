@@ -9,6 +9,7 @@ import {
   CHESTS,
   LOGIN_STREAK,
   COMPLIANCE,
+  ONE_TIME_OFFER,
 } from './economy-config.js';
 
 export function assertOddsSum100(odds, label = 'odds') {
@@ -254,6 +255,9 @@ export function migrateLegacySave(raw) {
   if (!s.iap) s.iap = {};
   s.iap.starterBought = !!s.iap.starterBought;
   s.iap.removeAds = !!s.adsRemoved;
+  if (!s.offer) {
+    s.offer = { sessionSurfaces: 0, daySurfaces: 0, dayKey: '', dismissedDay: '' };
+  }
   if (!s.battlePass) s.battlePass = { season: SEASON_PASS.seasonId, xp: 0, claimedFree: [], claimedPremium: [] };
   if (s.battlePass.premium == null) s.battlePass.premium = !!s.premiumPass;
   if (s.streakFreeze == null) s.streakFreeze = 0;
@@ -273,4 +277,128 @@ export function applyXpGain(amount, perks) {
   const n = Math.max(0, amount | 0);
   if (!perks?.xpBonus) return n;
   return Math.floor(n * (1 + perks.xpBonus));
+}
+
+export function calendarDayKey(ms = Date.now()) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function offerState(state) {
+  return state?.offer || state?.iap?.offer || {};
+}
+
+/**
+ * Gate special-offer surfaces. Desire from gameplay — never nag to buy.
+ * @param {object} state save slice with offer / iap.offer tracking
+ * @param {string} context launch | mid_run | after_loss | after_win | after_level_up | shop
+ * @param {number} now
+ * @param {object} cfg ONE_TIME_OFFER
+ */
+export function canSurfaceSpecialOffer(state, context, now = Date.now(), cfg = ONE_TIME_OFFER) {
+  if (!cfg?.enabled) return { ok: false, reason: 'disabled' };
+  if (!COMPLIANCE.noPurchaseNagging) return { ok: false, reason: 'compliance' };
+
+  const deny = cfg.denyContexts || [];
+  if (deny.includes(context)) return { ok: false, reason: 'denied_context' };
+
+  // Shop may list packs quietly; auto-cards only on allowContexts.
+  if (context === 'shop') return { ok: true, reason: 'shop_catalog' };
+
+  const allow = cfg.allowContexts || [];
+  if (!allow.includes(context)) return { ok: false, reason: 'context' };
+
+  const o = offerState(state);
+  const day = calendarDayKey(now);
+  const maxSession = cfg.maxPerSession ?? 1;
+  const maxDay = cfg.maxSurfacesPerDay ?? 1;
+
+  // Dismiss / day caps beat session so a new session the same day still stays quiet.
+  if (cfg.neverReshowSameDay && o.dismissedDay === day) return { ok: false, reason: 'dismissed_today' };
+  if ((o.daySurfaces || 0) >= maxDay && o.dayKey === day) return { ok: false, reason: 'day_cap' };
+  if ((o.sessionSurfaces || 0) >= maxSession) return { ok: false, reason: 'session_cap' };
+
+  if (cfg.cooldownHours && o.lastSurfaceAt) {
+    const coolMs = cfg.cooldownHours * 3600 * 1000;
+    if (now - o.lastSurfaceAt < coolMs) {
+      return { ok: false, reason: 'cooldown' };
+    }
+  }
+
+  if (cfg.quietHours) {
+    const h = new Date(now).getHours();
+    const { start, end } = cfg.quietHours;
+    const quiet = start > end ? h >= start || h < end : h >= start && h < end;
+    if (quiet) return { ok: false, reason: 'quiet_hours' };
+  }
+
+  return { ok: true, reason: 'allowed' };
+}
+
+/** Record that a special-offer card was shown (counts toward session/day caps). */
+export function recordSpecialOfferSurface(state, now = Date.now()) {
+  const day = calendarDayKey(now);
+  const prev = offerState(state);
+  const sameDay = prev.dayKey === day;
+  const offer = {
+    ...prev,
+    dayKey: day,
+    daySurfaces: sameDay ? (prev.daySurfaces || 0) + 1 : 1,
+    sessionSurfaces: (prev.sessionSurfaces || 0) + 1,
+    lastSurfaceAt: now,
+  };
+  return { ...state, offer };
+}
+
+/** One-tap dismiss — never re-show that calendar day. */
+export function recordSpecialOfferDismiss(state, now = Date.now()) {
+  const day = calendarDayKey(now);
+  const prev = offerState(state);
+  return {
+    ...state,
+    offer: {
+      ...prev,
+      dismissedDay: day,
+      dayKey: day,
+      lastDismissAt: now,
+    },
+  };
+}
+
+/** Config invariants for no-nag / offer frequency (used by unit tests). */
+export function assertOfferFrequencyCaps(cfg = ONE_TIME_OFFER) {
+  if ((cfg.maxPerSession ?? 0) !== 1) {
+    throw new Error('maxPerSession must be 1');
+  }
+  if ((cfg.maxSurfacesPerDay ?? 0) !== 1) {
+    throw new Error('maxSurfacesPerDay must be 1');
+  }
+  if (cfg.neverReshowSameDay !== true) throw new Error('neverReshowSameDay required');
+  if (cfg.fakeCountdownTimers !== false) throw new Error('fakeCountdownTimers must be false');
+  if (cfg.confirmshaming !== false) throw new Error('confirmshaming must be false');
+  if (cfg.dismissOneTap !== true) throw new Error('dismissOneTap required');
+  if (cfg.rewardedAdsOptInOnly !== true) throw new Error('rewarded ads must be opt-in');
+  if (cfg.freeToPlayComplete !== true) throw new Error('freeToPlayComplete required');
+  const allow = cfg.allowContexts || [];
+  if (!allow.includes('after_win') || !allow.includes('after_level_up')) {
+    throw new Error('offers only after_win / after_level_up');
+  }
+  for (const bad of ['launch', 'mid_run', 'after_loss']) {
+    if (!(cfg.denyContexts || []).includes(bad)) {
+      throw new Error(`denyContexts must include ${bad}`);
+    }
+    if (allow.includes(bad)) throw new Error(`${bad} must not be allowed`);
+  }
+  if (!(cfg.placements || []).includes('shop') || !(cfg.placements || []).includes('dismissible_badge')) {
+    throw new Error('placements must include shop + dismissible_badge');
+  }
+  return true;
+}
+
+export function isConfirmshamingCopy(text, cfg = ONE_TIME_OFFER) {
+  const t = String(text || '').toLowerCase();
+  for (const p of cfg.bannedCopyPatterns || []) {
+    if (t.includes(String(p).toLowerCase())) return true;
+  }
+  return false;
 }

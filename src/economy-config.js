@@ -43,13 +43,36 @@ export const STARTER_PACK = {
   oneTime: true,
 };
 
-/** Framework for time-limited one-time offers (UI stub; no auto-pressure on kids). */
+/**
+ * Special-offer framework — desire from gameplay/cosmetics, never purchase nagging.
+ * Nicholas rule: players must never feel pressured to buy.
+ */
 export const ONE_TIME_OFFER = {
   enabled: true,
+  /** At most one special-offer card per play session. */
+  maxPerSession: 1,
+  /** Once dismissed, never re-show that calendar day. */
+  maxSurfacesPerDay: 1,
+  neverReshowSameDay: true,
   cooldownHours: 48,
   quietHours: { start: 21, end: 8 },
-  maxSurfacesPerDay: 1,
+  /** Only after a win or level-up — never launch / mid-run / after loss. */
+  allowContexts: ['after_win', 'after_level_up'],
+  denyContexts: ['launch', 'mid_run', 'after_loss'],
+  /** Offers live in Shop or as one small dismissible badge — not blocking popups. */
+  placements: ['shop', 'dismissible_badge'],
+  dismissOneTap: true,
+  fakeCountdownTimers: false,
+  confirmshaming: false,
+  bannedCopyPatterns: ['no thanks, i like losing', "don't miss out", 'last chance'],
   copy: 'Optional offer — never required to play.',
+  rewardedAdsOptInOnly: true,
+  freeToPlayComplete: true,
+  premiumShowcase: {
+    leaderboardOtherSkins: true,
+    passPreviews: true,
+    tryForOneRun: true,
+  },
 };
 
 export const BUILDINGS = {
@@ -293,6 +316,12 @@ export const COMPLIANCE = {
   showOddsForRandom: true,
   noPaidLootWithoutOdds: true,
   noDarkPatternsAimedAtKids: true,
+  noPurchaseNagging: true,
+  noPurchasePopupsAtLaunch: true,
+  noPurchasePopupsMidRun: true,
+  noPurchasePopupsAfterLoss: true,
+  rewardedAdsOptInOnly: true,
+  freeToPlayComplete: true,
 };
 
 /** Browser global for the offline shell (non-module script). */

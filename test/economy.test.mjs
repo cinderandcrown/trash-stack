@@ -22,8 +22,23 @@ import {
   applyScrapGain,
   applyXpGain,
   formatOddsLine,
+  canSurfaceSpecialOffer,
+  recordSpecialOfferSurface,
+  recordSpecialOfferDismiss,
+  assertOfferFrequencyCaps,
+  isConfirmshamingCopy,
+  calendarDayKey,
 } from '../src/economy-math.js';
-import { CHESTS, SEASON_PASS, BUILDINGS, SPEEDUP, GEM_PACKS, STARTER_PACK } from '../src/economy-config.js';
+import {
+  CHESTS,
+  SEASON_PASS,
+  BUILDINGS,
+  SPEEDUP,
+  GEM_PACKS,
+  STARTER_PACK,
+  ONE_TIME_OFFER,
+  COMPLIANCE,
+} from '../src/economy-config.js';
 
 describe('compliance / odds', () => {
   it('all chest odds sum to 100', () => {
@@ -189,5 +204,67 @@ describe('migration + perks', () => {
     assert.equal(applyScrapGain(100, perks, 'recycle'), 150);
     assert.equal(applyScrapGain(100, perks, 'clear'), 150);
     assert.equal(applyXpGain(100, perks), 110);
+  });
+});
+
+describe('no-nag offer frequency', () => {
+  const noon = Date.parse('2026-11-15T12:00:00');
+
+  it('assertOfferFrequencyCaps locks config', () => {
+    assert.equal(assertOfferFrequencyCaps(), true);
+    assert.equal(ONE_TIME_OFFER.maxPerSession, 1);
+    assert.equal(ONE_TIME_OFFER.maxSurfacesPerDay, 1);
+    assert.equal(COMPLIANCE.noPurchaseNagging, true);
+    assert.equal(COMPLIANCE.freeToPlayComplete, true);
+  });
+
+  it('blocks launch, mid-run, and after-loss', () => {
+    const s = migrateLegacySave({});
+    assert.equal(canSurfaceSpecialOffer(s, 'launch', noon).ok, false);
+    assert.equal(canSurfaceSpecialOffer(s, 'mid_run', noon).ok, false);
+    assert.equal(canSurfaceSpecialOffer(s, 'after_loss', noon).ok, false);
+  });
+
+  it('allows after_win / after_level_up once per session', () => {
+    let s = migrateLegacySave({});
+    assert.equal(canSurfaceSpecialOffer(s, 'after_win', noon).ok, true);
+    assert.equal(canSurfaceSpecialOffer(s, 'after_level_up', noon).ok, true);
+    s = recordSpecialOfferSurface(s, noon);
+    const again = canSurfaceSpecialOffer(s, 'after_level_up', noon);
+    assert.equal(again.ok, false);
+    assert.ok(['session_cap', 'day_cap'].includes(again.reason));
+  });
+
+  it('dismissed offer never re-shows that day', () => {
+    let s = migrateLegacySave({});
+    s = recordSpecialOfferSurface(s, noon);
+    s = recordSpecialOfferDismiss(s, noon);
+    assert.equal(canSurfaceSpecialOffer(s, 'after_win', noon + 60_000).ok, false);
+    assert.equal(canSurfaceSpecialOffer(s, 'after_win', noon + 60_000).reason, 'dismissed_today');
+    // next calendar day + past cooldown is fine (new session counters)
+    const later = Date.parse('2026-11-18T12:00:00');
+    s = {
+      ...s,
+      offer: {
+        sessionSurfaces: 0,
+        daySurfaces: 0,
+        dayKey: calendarDayKey(later),
+        dismissedDay: calendarDayKey(noon),
+        lastSurfaceAt: noon,
+      },
+    };
+    assert.equal(canSurfaceSpecialOffer(s, 'after_win', later).ok, true);
+  });
+
+  it('shop catalog is allowed without counting as a nag popup', () => {
+    const s = migrateLegacySave({ offer: { sessionSurfaces: 1, daySurfaces: 1, dayKey: calendarDayKey(noon) } });
+    assert.equal(canSurfaceSpecialOffer(s, 'shop', noon).ok, true);
+  });
+
+  it('rejects confirmshaming copy and fake timers in config', () => {
+    assert.equal(ONE_TIME_OFFER.fakeCountdownTimers, false);
+    assert.equal(ONE_TIME_OFFER.confirmshaming, false);
+    assert.equal(isConfirmshamingCopy('No thanks, I like losing'), true);
+    assert.equal(isConfirmshamingCopy('Maybe later'), false);
   });
 });

@@ -39,10 +39,30 @@
   };
   var ONE_TIME_OFFER = {
     enabled: true,
+    /** At most one special-offer card per play session. */
+    maxPerSession: 1,
+    /** Once dismissed, never re-show that calendar day. */
+    maxSurfacesPerDay: 1,
+    neverReshowSameDay: true,
     cooldownHours: 48,
     quietHours: { start: 21, end: 8 },
-    maxSurfacesPerDay: 1,
-    copy: "Optional offer \u2014 never required to play."
+    /** Only after a win or level-up — never launch / mid-run / after loss. */
+    allowContexts: ["after_win", "after_level_up"],
+    denyContexts: ["launch", "mid_run", "after_loss"],
+    /** Offers live in Shop or as one small dismissible badge — not blocking popups. */
+    placements: ["shop", "dismissible_badge"],
+    dismissOneTap: true,
+    fakeCountdownTimers: false,
+    confirmshaming: false,
+    bannedCopyPatterns: ["no thanks, i like losing", "don't miss out", "last chance"],
+    copy: "Optional offer \u2014 never required to play.",
+    rewardedAdsOptInOnly: true,
+    freeToPlayComplete: true,
+    premiumShowcase: {
+      leaderboardOtherSkins: true,
+      passPreviews: true,
+      tryForOneRun: true
+    }
   };
   var BUILDINGS = {
     recycler: {
@@ -270,7 +290,13 @@
     noCashOut: true,
     showOddsForRandom: true,
     noPaidLootWithoutOdds: true,
-    noDarkPatternsAimedAtKids: true
+    noDarkPatternsAimedAtKids: true,
+    noPurchaseNagging: true,
+    noPurchasePopupsAtLaunch: true,
+    noPurchasePopupsMidRun: true,
+    noPurchasePopupsAfterLoss: true,
+    rewardedAdsOptInOnly: true,
+    freeToPlayComplete: true
   };
   function attachEconomyGlobal(target = globalThis) {
     target.TrashEconomyConfig = {
@@ -303,19 +329,25 @@
     applyStartUpgrade: () => applyStartUpgrade,
     applyXpGain: () => applyXpGain,
     assertOddsSum100: () => assertOddsSum100,
+    assertOfferFrequencyCaps: () => assertOfferFrequencyCaps,
     buildingPerk: () => buildingPerk,
+    calendarDayKey: () => calendarDayKey,
     canEnqueueChest: () => canEnqueueChest,
     canStartUpgrade: () => canStartUpgrade,
+    canSurfaceSpecialOffer: () => canSurfaceSpecialOffer,
     chestUnlockMs: () => chestUnlockMs,
     completeReadyUpgrades: () => completeReadyUpgrades,
     enqueueChest: () => enqueueChest,
     formatOddsLine: () => formatOddsLine,
     gemsForReadyAt: () => gemsForReadyAt,
     gemsForSpeedup: () => gemsForSpeedup,
+    isConfirmshamingCopy: () => isConfirmshamingCopy,
     loginStreakScrap: () => loginStreakScrap,
     migrateLegacySave: () => migrateLegacySave,
     openChestIfReady: () => openChestIfReady,
     pickWeightedChest: () => pickWeightedChest,
+    recordSpecialOfferDismiss: () => recordSpecialOfferDismiss,
+    recordSpecialOfferSurface: () => recordSpecialOfferSurface,
     rollChestReward: () => rollChestReward,
     seasonTierUnlocked: () => seasonTierUnlocked,
     speedupChest: () => speedupChest,
@@ -544,6 +576,9 @@
     if (!s.iap) s.iap = {};
     s.iap.starterBought = !!s.iap.starterBought;
     s.iap.removeAds = !!s.adsRemoved;
+    if (!s.offer) {
+      s.offer = { sessionSurfaces: 0, daySurfaces: 0, dayKey: "", dismissedDay: "" };
+    }
     if (!s.battlePass) s.battlePass = { season: SEASON_PASS.seasonId, xp: 0, claimedFree: [], claimedPremium: [] };
     if (s.battlePass.premium == null) s.battlePass.premium = !!s.premiumPass;
     if (s.streakFreeze == null) s.streakFreeze = 0;
@@ -560,6 +595,103 @@
     const n = Math.max(0, amount | 0);
     if (!perks?.xpBonus) return n;
     return Math.floor(n * (1 + perks.xpBonus));
+  }
+  function calendarDayKey(ms = Date.now()) {
+    const d = new Date(ms);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  function offerState(state) {
+    return state?.offer || state?.iap?.offer || {};
+  }
+  function canSurfaceSpecialOffer(state, context, now = Date.now(), cfg = ONE_TIME_OFFER) {
+    if (!cfg?.enabled) return { ok: false, reason: "disabled" };
+    if (!COMPLIANCE.noPurchaseNagging) return { ok: false, reason: "compliance" };
+    const deny = cfg.denyContexts || [];
+    if (deny.includes(context)) return { ok: false, reason: "denied_context" };
+    if (context === "shop") return { ok: true, reason: "shop_catalog" };
+    const allow = cfg.allowContexts || [];
+    if (!allow.includes(context)) return { ok: false, reason: "context" };
+    const o = offerState(state);
+    const day = calendarDayKey(now);
+    const maxSession = cfg.maxPerSession ?? 1;
+    const maxDay = cfg.maxSurfacesPerDay ?? 1;
+    if (cfg.neverReshowSameDay && o.dismissedDay === day) return { ok: false, reason: "dismissed_today" };
+    if ((o.daySurfaces || 0) >= maxDay && o.dayKey === day) return { ok: false, reason: "day_cap" };
+    if ((o.sessionSurfaces || 0) >= maxSession) return { ok: false, reason: "session_cap" };
+    if (cfg.cooldownHours && o.lastSurfaceAt) {
+      const coolMs = cfg.cooldownHours * 3600 * 1e3;
+      if (now - o.lastSurfaceAt < coolMs) {
+        return { ok: false, reason: "cooldown" };
+      }
+    }
+    if (cfg.quietHours) {
+      const h = new Date(now).getHours();
+      const { start, end } = cfg.quietHours;
+      const quiet = start > end ? h >= start || h < end : h >= start && h < end;
+      if (quiet) return { ok: false, reason: "quiet_hours" };
+    }
+    return { ok: true, reason: "allowed" };
+  }
+  function recordSpecialOfferSurface(state, now = Date.now()) {
+    const day = calendarDayKey(now);
+    const prev = offerState(state);
+    const sameDay = prev.dayKey === day;
+    const offer = {
+      ...prev,
+      dayKey: day,
+      daySurfaces: sameDay ? (prev.daySurfaces || 0) + 1 : 1,
+      sessionSurfaces: (prev.sessionSurfaces || 0) + 1,
+      lastSurfaceAt: now
+    };
+    return { ...state, offer };
+  }
+  function recordSpecialOfferDismiss(state, now = Date.now()) {
+    const day = calendarDayKey(now);
+    const prev = offerState(state);
+    return {
+      ...state,
+      offer: {
+        ...prev,
+        dismissedDay: day,
+        dayKey: day,
+        lastDismissAt: now
+      }
+    };
+  }
+  function assertOfferFrequencyCaps(cfg = ONE_TIME_OFFER) {
+    if ((cfg.maxPerSession ?? 0) !== 1) {
+      throw new Error("maxPerSession must be 1");
+    }
+    if ((cfg.maxSurfacesPerDay ?? 0) !== 1) {
+      throw new Error("maxSurfacesPerDay must be 1");
+    }
+    if (cfg.neverReshowSameDay !== true) throw new Error("neverReshowSameDay required");
+    if (cfg.fakeCountdownTimers !== false) throw new Error("fakeCountdownTimers must be false");
+    if (cfg.confirmshaming !== false) throw new Error("confirmshaming must be false");
+    if (cfg.dismissOneTap !== true) throw new Error("dismissOneTap required");
+    if (cfg.rewardedAdsOptInOnly !== true) throw new Error("rewarded ads must be opt-in");
+    if (cfg.freeToPlayComplete !== true) throw new Error("freeToPlayComplete required");
+    const allow = cfg.allowContexts || [];
+    if (!allow.includes("after_win") || !allow.includes("after_level_up")) {
+      throw new Error("offers only after_win / after_level_up");
+    }
+    for (const bad of ["launch", "mid_run", "after_loss"]) {
+      if (!(cfg.denyContexts || []).includes(bad)) {
+        throw new Error(`denyContexts must include ${bad}`);
+      }
+      if (allow.includes(bad)) throw new Error(`${bad} must not be allowed`);
+    }
+    if (!(cfg.placements || []).includes("shop") || !(cfg.placements || []).includes("dismissible_badge")) {
+      throw new Error("placements must include shop + dismissible_badge");
+    }
+    return true;
+  }
+  function isConfirmshamingCopy(text, cfg = ONE_TIME_OFFER) {
+    const t = String(text || "").toLowerCase();
+    for (const p of cfg.bannedCopyPatterns || []) {
+      if (t.includes(String(p).toLowerCase())) return true;
+    }
+    return false;
   }
 
   // src/economy-browser.js
