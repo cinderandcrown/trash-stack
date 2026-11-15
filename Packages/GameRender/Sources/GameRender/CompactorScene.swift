@@ -6,7 +6,7 @@ import UIKit
 import QuartzCore
 import GameCore
 
-/// SpriteKit playfield — texture atlases + baked glow art. No per-node glow/shader spam (jetsam-safe).
+/// SpriteKit playfield — atlas textures + baked colors. No per-node glow/shader spam (jetsam-safe).
 public final class CompactorScene: SKScene {
     public var engine = GameEngine(seed: UInt64.random(in: 1...UInt64.max))
     public var onGameOver: ((GameState) -> Void)?
@@ -15,18 +15,15 @@ public final class CompactorScene: SKScene {
     public var preferredFPS: Int = 60
     public private(set) var measuredFPS: Double = 60
     public var raccoonMood: RaccoonMood = .idle {
-        didSet { updateRaccoon() }
+        didSet {
+            if oldValue != raccoonMood { updateRaccoon() }
+        }
     }
 
-    public enum RaccoonMood { case idle, cheer, panic }
+    public enum RaccoonMood: Equatable { case idle, cheer, panic }
 
-    private var world = SKNode()
-    private var rainLayer = SKNode()
-    private var boardLayer = SKNode()
-    private var fxLayer = SKNode()
     private var cellNodes: [[SKSpriteNode?]] = []
     private var activeNodes: [SKSpriteNode] = []
-    private var dumpsterFrame: SKSpriteNode?
     private var raccoon: SKSpriteNode?
     private var comboLabel: SKLabelNode?
     private var fpsLabel: SKLabelNode?
@@ -34,55 +31,32 @@ public final class CompactorScene: SKScene {
     private var lockAcc: TimeInterval = 0
     private var lastTime: TimeInterval = 0
     private var fpsSamples: [Double] = []
+    private var didBuild = false
     private let cellPad: CGFloat = 1.5
 
     // Gestures
     private var touchStart: CGPoint?
     private var touchStartTime: TimeInterval = 0
-    private var dragOriginX: Int = 0
     private var movedCols: Int = 0
 
     public override func didMove(to view: SKView) {
-        backgroundColor = SKColor(red: 0.02, green: 0.02, blue: 0.05, alpha: 1)
+        backgroundColor = SKColor(red: 0.03, green: 0.03, blue: 0.07, alpha: 1)
         preferredFPS = 60
         view.preferredFramesPerSecond = preferredFPS
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = false
-        // Idempotent rebuild — SpriteView can call didMove more than once; re-parenting
-        // an existing child throws and kills the process (springboard screenshots).
-        world.removeAllActions()
-        world.removeFromParent()
-        rainLayer.removeAllChildren()
-        rainLayer.removeFromParent()
-        boardLayer.removeAllChildren()
-        boardLayer.removeFromParent()
-        fxLayer.removeAllChildren()
-        fxLayer.removeFromParent()
-        removeAllChildren()
-        world = SKNode()
-        rainLayer = SKNode()
-        boardLayer = SKNode()
-        fxLayer = SKNode()
-        raccoon = nil
-        comboLabel = nil
-        fpsLabel = nil
-        dumpsterFrame = nil
-        cellNodes = []
-        activeNodes = []
-        addChild(world)
-        world.addChild(rainLayer)
-        world.addChild(boardLayer)
-        world.addChild(fxLayer)
-        buildBackground()
-        rebuildGrid()
-        buildHUD()
-        render()
-        startRain()
+        rebuild()
+    }
+
+    public override func didChangeSize(_ oldSize: CGSize) {
+        // SpriteView resizeFill — rebuild once we have a real size.
+        if size.width > 10, size.height > 10, size != oldSize {
+            rebuild()
+        }
     }
 
     public func configureForProMotion(_ enabled: Bool) {
-        // Cap at 60 in simulator evidence builds — ProMotion 120 is optional juice, not required.
-        preferredFPS = enabled ? 60 : 60
+        preferredFPS = 60
         view?.preferredFramesPerSecond = preferredFPS
     }
 
@@ -101,69 +75,32 @@ public final class CompactorScene: SKScene {
         if shot == "recycle" { raccoonMood = .cheer }
         else if shot == "revive" || shot == "game-over" { raccoonMood = .panic }
         else { raccoonMood = .idle }
-        render()
+        if didBuild { render() }
     }
 
     private func tex(_ name: String) -> SKTexture? {
         let t = SKTexture(imageNamed: name)
-        // Unloaded placeholder is 1x1 — treat as missing when tiny.
         if t.size().width <= 1 { return nil }
         t.filteringMode = .nearest
         return t
     }
 
-    private func buildBackground() {
-        if let alley = tex("AlleyBackground") {
-            let bg = SKSpriteNode(texture: alley)
-            bg.size = size
-            bg.position = CGPoint(x: size.width / 2, y: size.height / 2)
-            bg.zPosition = -20
-            bg.name = "alley"
-            world.addChild(bg)
-        } else {
-            let bg = SKSpriteNode(color: SKColor(red: 0.05, green: 0.04, blue: 0.1, alpha: 1), size: size)
-            bg.position = CGPoint(x: size.width / 2, y: size.height / 2)
-            bg.zPosition = -20
-            world.addChild(bg)
-        }
-    }
-
-    private func startRain() {
-        rainLayer.removeAllChildren()
-        // Baked rain: short thin sprites, no glow nodes.
-        for i in 0..<24 {
-            let drop = SKSpriteNode(color: SKColor(white: 0.75, alpha: 0.28), size: CGSize(width: 1.5, height: CGFloat.random(in: 10...22)))
-            drop.position = CGPoint(x: CGFloat.random(in: 0...size.width), y: CGFloat.random(in: 0...size.height))
-            drop.zPosition = -10
-            rainLayer.addChild(drop)
-            let fall = SKAction.moveBy(x: -8, y: -size.height - 40, duration: Double.random(in: 0.55...1.1))
-            let reset = SKAction.run { [weak drop, weak self] in
-                guard let drop, let self else { return }
-                drop.position = CGPoint(x: CGFloat.random(in: 0...self.size.width), y: self.size.height + 20)
-            }
-            drop.run(SKAction.repeatForever(SKAction.sequence([fall, reset])))
-            drop.alpha = i % 3 == 0 ? 0.45 : 0.22
-        }
-        // Steam vent puffs — solid soft sprites, not shaders.
-        for x: CGFloat in [0.18, 0.82] {
-            let steam = SKSpriteNode(color: SKColor(white: 0.7, alpha: 0.12), size: CGSize(width: 40, height: 18))
-            steam.position = CGPoint(x: size.width * x, y: size.height * 0.22)
-            steam.zPosition = -8
-            rainLayer.addChild(steam)
-            steam.run(SKAction.repeatForever(SKAction.sequence([
-                SKAction.group([SKAction.fadeAlpha(to: 0.2, duration: 1.2), SKAction.moveBy(x: 0, y: 30, duration: 1.2)]),
-                SKAction.group([SKAction.fadeAlpha(to: 0.05, duration: 1.0), SKAction.moveBy(x: 0, y: 20, duration: 1.0)]),
-                SKAction.run { [weak steam, weak self] in
-                    guard let steam, let self else { return }
-                    steam.position.y = self.size.height * 0.22
-                },
-            ])))
-        }
-    }
-
-    private func rebuildGrid() {
-        boardLayer.removeAllChildren()
+    private func rebuild() {
+        removeAllChildren()
         cellNodes = []
+        activeNodes = []
+        raccoon = nil
+        comboLabel = nil
+        fpsLabel = nil
+        didBuild = false
+        guard size.width > 10, size.height > 10 else { return }
+
+        // Solid alley wash — avoid a second full-screen AlleyBackground texture (SwiftUI already shows it).
+        let wash = SKSpriteNode(color: SKColor(red: 0.04, green: 0.03, blue: 0.1, alpha: 1), size: size)
+        wash.position = CGPoint(x: size.width / 2, y: size.height / 2)
+        wash.zPosition = -20
+        addChild(wash)
+
         let cols = engine.state.board.config.cols
         let vis = engine.state.board.config.visibleRows
         cellNodes = Array(repeating: Array(repeating: nil, count: cols), count: vis)
@@ -177,8 +114,7 @@ public final class CompactorScene: SKScene {
             frame.size = CGSize(width: gridW + 48, height: gridH + 64)
             frame.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2 - 4)
             frame.zPosition = 0
-            boardLayer.addChild(frame)
-            dumpsterFrame = frame
+            addChild(frame)
         } else {
             let frame = SKShapeNode(
                 rectOf: CGSize(width: cs.width * CGFloat(cols) + 16, height: cs.height * CGFloat(vis) + 16),
@@ -188,10 +124,9 @@ public final class CompactorScene: SKScene {
             frame.fillColor = SKColor(red: 0.04, green: 0.05, blue: 0.09, alpha: 0.92)
             frame.lineWidth = 2
             frame.position = CGPoint(x: origin.x + cs.width * CGFloat(cols) / 2, y: origin.y + cs.height * CGFloat(vis) / 2)
-            boardLayer.addChild(frame)
+            addChild(frame)
         }
 
-        // Hydraulic rails (baked color bars — no glow FX nodes)
         for side in [-1, 1] {
             let rail = SKSpriteNode(color: SKColor(red: 0.9, green: 0.2, blue: 0.75, alpha: 0.55), size: CGSize(width: 6, height: cs.height * CGFloat(vis)))
             rail.position = CGPoint(
@@ -199,31 +134,43 @@ public final class CompactorScene: SKScene {
                 y: origin.y + cs.height * CGFloat(vis) / 2
             )
             rail.zPosition = 2
-            boardLayer.addChild(rail)
+            addChild(rail)
         }
 
         for y in 0..<vis {
             for x in 0..<cols {
-                let n = SKSpriteNode(color: SKColor(white: 1, alpha: 0.03), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                let n = SKSpriteNode(color: SKColor(white: 1, alpha: 0.04), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
                 n.position = positionFor(x: x, boardY: y + engine.state.board.config.hiddenRows)
                 n.zPosition = 3
-                boardLayer.addChild(n)
+                addChild(n)
                 cellNodes[y][x] = n
             }
         }
-    }
 
-    private func buildHUD() {
+        // Light rain (few nodes; no glow).
+        for i in 0..<16 {
+            let drop = SKSpriteNode(color: SKColor(white: 0.8, alpha: 0.25), size: CGSize(width: 1.5, height: CGFloat.random(in: 10...18)))
+            drop.position = CGPoint(x: CGFloat.random(in: 0...size.width), y: CGFloat.random(in: 0...size.height))
+            drop.zPosition = -5
+            addChild(drop)
+            let fall = SKAction.moveBy(x: -6, y: -size.height - 30, duration: Double.random(in: 0.6...1.1))
+            let reset = SKAction.run { [weak drop, weak self] in
+                guard let drop, let self else { return }
+                drop.position = CGPoint(x: CGFloat.random(in: 0...self.size.width), y: self.size.height + 10)
+            }
+            drop.run(SKAction.repeatForever(SKAction.sequence([fall, reset])))
+            drop.alpha = i % 2 == 0 ? 0.35 : 0.18
+        }
+
         let rac: SKSpriteNode
         if let t = tex("RaccoonIdle") {
-            rac = SKSpriteNode(texture: t, size: CGSize(width: 88, height: 88))
+            rac = SKSpriteNode(texture: t, size: CGSize(width: 84, height: 84))
         } else {
-            rac = SKSpriteNode(color: SKColor(white: 0.2, alpha: 1), size: CGSize(width: 72, height: 72))
+            rac = SKSpriteNode(color: SKColor(white: 0.25, alpha: 1), size: CGSize(width: 64, height: 64))
         }
-        rac.position = CGPoint(x: size.width - 58, y: size.height - 70)
+        rac.position = CGPoint(x: size.width - 56, y: size.height - 64)
         rac.zPosition = 40
-        rac.name = "raccoon"
-        world.addChild(rac)
+        addChild(rac)
         raccoon = rac
 
         let combo = SKLabelNode(fontNamed: "AvenirNext-Heavy")
@@ -232,7 +179,7 @@ public final class CompactorScene: SKScene {
         combo.position = CGPoint(x: size.width / 2, y: size.height * 0.86)
         combo.zPosition = 45
         combo.alpha = 0
-        world.addChild(combo)
+        addChild(combo)
         comboLabel = combo
 
         let fps = SKLabelNode(fontNamed: "Menlo-Bold")
@@ -242,8 +189,12 @@ public final class CompactorScene: SKScene {
         fps.position = CGPoint(x: 10, y: 8)
         fps.zPosition = 50
         fps.text = "60 fps"
-        world.addChild(fps)
+        addChild(fps)
         fpsLabel = fps
+
+        didBuild = true
+        updateRaccoon()
+        render()
     }
 
     private func updateRaccoon() {
@@ -256,7 +207,7 @@ public final class CompactorScene: SKScene {
         }
         if let t = tex(name) {
             raccoon.texture = t
-            raccoon.size = CGSize(width: 88, height: 88)
+            raccoon.size = CGSize(width: 84, height: 84)
         }
         raccoon.removeAllActions()
         switch raccoonMood {
@@ -308,7 +259,7 @@ public final class CompactorScene: SKScene {
     public override func update(_ currentTime: TimeInterval) {
         if lastTime > 0 {
             let dt = currentTime - lastTime
-            if dt > 0 {
+            if dt > 0, dt < 1 {
                 let fps = min(144, 1.0 / dt)
                 fpsSamples.append(fps)
                 if fpsSamples.count > 30 { fpsSamples.removeFirst() }
@@ -318,13 +269,14 @@ public final class CompactorScene: SKScene {
         }
         lastTime = currentTime
 
-        // Panic near top
         let filledTop = (0..<engine.state.board.config.cols).contains { x in
             engine.state.board[x, engine.state.board.config.hiddenRows + 2] != nil
         }
-        if engine.state.over { raccoonMood = .panic }
-        else if filledTop { raccoonMood = .panic }
-        else if engine.state.combo >= 2 { raccoonMood = .cheer }
+        let nextMood: RaccoonMood
+        if engine.state.over || filledTop { nextMood = .panic }
+        else if engine.state.combo >= 2 { nextMood = .cheer }
+        else { nextMood = .idle }
+        if nextMood != raccoonMood { raccoonMood = nextMood }
 
         if autoplay {
             gravityAcc += 1 / 60
@@ -332,17 +284,14 @@ public final class CompactorScene: SKScene {
                 gravityAcc = 0
                 engine.autoplayStep()
                 handleEvents()
-                if engine.state.over {
-                    onGameOver?(engine.state)
-                    if !autoplay { reset() }
-                }
+                if engine.state.over { onGameOver?(engine.state) }
                 render()
             }
             return
         }
         guard !engine.state.over, engine.state.active != nil else { return }
         let grav = max(0.08, 0.55 - Double(engine.state.level) * 0.03)
-        gravityAcc += 1.0 / Double(max(30, preferredFPS))
+        gravityAcc += 1.0 / 60.0
         if gravityAcc >= grav {
             gravityAcc = 0
             if !engine.softDrop() {
@@ -365,7 +314,7 @@ public final class CompactorScene: SKScene {
         for e in ev {
             switch e {
             case .locked:
-                pulseActive()
+                break
             case .cleared(let rows, _, _):
                 crushJuice(rows: rows)
                 showCombo()
@@ -409,7 +358,7 @@ public final class CompactorScene: SKScene {
         label.position = CGPoint(x: size.width / 2, y: size.height * 0.55)
         label.zPosition = 60
         label.setScale(0.4)
-        fxLayer.addChild(label)
+        addChild(label)
         label.run(SKAction.sequence([
             SKAction.group([SKAction.scale(to: 1.2, duration: 0.18), SKAction.fadeAlpha(to: 1, duration: 0.1)]),
             SKAction.wait(forDuration: 0.5),
@@ -425,7 +374,7 @@ public final class CompactorScene: SKScene {
         label.fontColor = .white
         label.position = CGPoint(x: size.width / 2, y: size.height * 0.6)
         label.zPosition = 60
-        fxLayer.addChild(label)
+        addChild(label)
         label.run(SKAction.sequence([
             SKAction.fadeIn(withDuration: 0.1),
             SKAction.wait(forDuration: 0.6),
@@ -435,28 +384,26 @@ public final class CompactorScene: SKScene {
     }
 
     private func crushJuice(rows: [Int]) {
-        // Hydraulic slam: shake world + press flash (single overlay, not per-cell glow).
-        world.run(SKAction.sequence([
-            SKAction.moveBy(x: 0, y: -10, duration: 0.04),
-            SKAction.moveBy(x: 4, y: 14, duration: 0.05),
-            SKAction.moveBy(x: -4, y: -6, duration: 0.05),
+        run(SKAction.sequence([
+            SKAction.moveBy(x: 0, y: -8, duration: 0.04),
+            SKAction.moveBy(x: 3, y: 12, duration: 0.05),
+            SKAction.moveBy(x: -3, y: -6, duration: 0.05),
             SKAction.move(to: .zero, duration: 0.06),
         ]))
-        let flash = SKSpriteNode(color: SKColor(red: 1, green: 0.4, blue: 0.9, alpha: 0.35), size: size)
+        let flash = SKSpriteNode(color: SKColor(red: 1, green: 0.4, blue: 0.9, alpha: 0.28), size: size)
         flash.position = CGPoint(x: size.width / 2, y: size.height / 2)
         flash.zPosition = 55
-        fxLayer.addChild(flash)
+        addChild(flash)
         flash.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.18), SKAction.removeFromParent()]))
-        // Sparks as tiny solid squares (baked, no glow).
-        for _ in 0..<min(18, 6 * rows.count) {
+        for _ in 0..<min(12, 4 * max(1, rows.count)) {
             let spark = SKSpriteNode(color: SKColor(red: 1, green: 0.85, blue: 0.2, alpha: 1), size: CGSize(width: 3, height: 3))
-            spark.position = CGPoint(x: size.width / 2 + CGFloat.random(in: -80...80), y: size.height * 0.4)
+            spark.position = CGPoint(x: size.width / 2 + CGFloat.random(in: -70...70), y: size.height * 0.4)
             spark.zPosition = 56
-            fxLayer.addChild(spark)
+            addChild(spark)
             spark.run(SKAction.sequence([
                 SKAction.group([
-                    SKAction.moveBy(x: CGFloat.random(in: -60...60), y: CGFloat.random(in: 20...90), duration: 0.35),
-                    SKAction.fadeOut(withDuration: 0.35),
+                    SKAction.moveBy(x: CGFloat.random(in: -50...50), y: CGFloat.random(in: 20...70), duration: 0.3),
+                    SKAction.fadeOut(withDuration: 0.3),
                 ]),
                 SKAction.removeFromParent(),
             ]))
@@ -464,26 +411,18 @@ public final class CompactorScene: SKScene {
     }
 
     private func recycleJuice() {
-        let burst = SKSpriteNode(color: SKColor(red: 0.2, green: 0.95, blue: 0.7, alpha: 0.4), size: CGSize(width: 120, height: 120))
+        let burst = SKSpriteNode(color: SKColor(red: 0.2, green: 0.95, blue: 0.7, alpha: 0.35), size: CGSize(width: 110, height: 110))
         burst.position = CGPoint(x: size.width / 2, y: size.height * 0.42)
         burst.zPosition = 54
-        fxLayer.addChild(burst)
+        addChild(burst)
         burst.run(SKAction.sequence([
-            SKAction.group([SKAction.scale(to: 1.6, duration: 0.22), SKAction.fadeOut(withDuration: 0.22)]),
+            SKAction.group([SKAction.scale(to: 1.5, duration: 0.2), SKAction.fadeOut(withDuration: 0.2)]),
             SKAction.removeFromParent(),
         ]))
     }
 
-    private func pulseActive() {
-        for n in activeNodes {
-            n.run(SKAction.sequence([
-                SKAction.scale(to: 1.12, duration: 0.05),
-                SKAction.scale(to: 1.0, duration: 0.08),
-            ]))
-        }
-    }
-
     public func render() {
+        guard didBuild else { return }
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
         let cs = cellSize()
@@ -505,7 +444,7 @@ public final class CompactorScene: SKScene {
                     node.alpha = 1
                 } else {
                     node.texture = nil
-                    node.color = SKColor(white: 1, alpha: 0.03)
+                    node.color = SKColor(white: 1, alpha: 0.04)
                     node.colorBlendFactor = 1
                     node.alpha = 1
                 }
@@ -523,8 +462,7 @@ public final class CompactorScene: SKScene {
                 }
                 n.position = positionFor(x: x, boardY: y)
                 n.zPosition = 8
-                // Cyan rim via slight scale shadow sibling avoided — use outline color blend lightly.
-                boardLayer.addChild(n)
+                addChild(n)
                 activeNodes.append(n)
             }
         }
@@ -540,13 +478,12 @@ public final class CompactorScene: SKScene {
         }
     }
 
-    // MARK: - Gestures (touch)
+    // MARK: - Gestures
 
     public override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let t = touches.first else { return }
         touchStart = t.location(in: self)
         touchStartTime = CACurrentMediaTime()
-        dragOriginX = engine.state.active?.x ?? 0
         movedCols = 0
     }
 
@@ -554,7 +491,7 @@ public final class CompactorScene: SKScene {
         guard let t = touches.first, let start = touchStart, engine.state.active != nil else { return }
         let p = t.location(in: self)
         let dx = p.x - start.x
-        let colW = cellSize().width
+        let colW = max(1, cellSize().width)
         let cols = Int((dx / colW).rounded())
         if cols != movedCols {
             let step = cols > movedCols ? 1 : -1
@@ -585,13 +522,11 @@ public final class CompactorScene: SKScene {
             _ = engine.tryRotate()
             render()
         } else if dy < -55, abs(dy) > abs(dx), dt < 0.35 {
-            // Flick down → hard drop
             engine.hardDrop()
             handleEvents()
             render()
             if engine.state.over { onGameOver?(engine.state) }
         } else if dy > 55, abs(dy) > abs(dx) {
-            // Swipe up → stash
             engine.stash()
             render()
         }

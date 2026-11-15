@@ -18,61 +18,61 @@ struct GameContainerView: View {
     @State private var hudLevel = 1
 
     var body: some View {
-        ZStack {
-            AlleyBackdrop()
-            VStack(spacing: 0) {
-                HStack {
-                    NeonButton(title: "Lobby", style: .ghost) {
-                        AudioService.shared.playMusic("menu_loop")
-                        screen = .title
-                    }
-                    .frame(width: 88)
-                    Spacer()
-                    VStack(spacing: 2) {
-                        Text("SCORE \(hudScore)").font(.caption.monospacedDigit().weight(.bold)).foregroundStyle(.white)
-                        Text("LVL \(hudLevel)").font(.caption2.monospacedDigit()).foregroundStyle(NeonTheme.teal)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 4) {
-                        CurrencyChip(kind: .scrap, value: profile.scrap)
-                        Text("HI \(profile.highScore)").font(.caption2).foregroundStyle(NeonTheme.muted)
-                    }
+        // No SwiftUI AlleyBackdrop here — SpriteKit owns the playfield wash.
+        // Dual full-bleed alley textures + TimelineView rain caused jetsam kills in CI.
+        VStack(spacing: 0) {
+            HStack {
+                NeonButton(title: "Lobby", style: .ghost) {
+                    AudioService.shared.playMusic("menu_loop")
+                    screen = .title
                 }
-                .padding(.horizontal, 10)
-                .padding(.top, 6)
-
-                SpriteView(scene: scene, options: [.allowsTransparency])
-                    .ignoresSafeArea(edges: .horizontal)
-                    .padding(.horizontal, 4)
-
-                if profile.classicButtons {
-                    classicPad
-                } else {
-                    gestureHint
+                .frame(width: 88)
+                Spacer()
+                VStack(spacing: 2) {
+                    Text("SCORE \(hudScore)").font(.caption.monospacedDigit().weight(.bold)).foregroundStyle(.white)
+                    Text("LVL \(hudLevel)").font(.caption2.monospacedDigit()).foregroundStyle(NeonTheme.teal)
                 }
-
-                Button {
-                    scene.magnet()
-                    AudioService.shared.playSFX("magnet")
-                    HapticsService.shared.tap()
-                } label: {
-                    HStack(spacing: 8) {
-                        Image("MagnetIcon").resizable().frame(width: 28, height: 28)
-                        Text("MAGNET \(scene.engine.state.magnetCharge)")
-                            .font(.caption.weight(.black))
-                            .foregroundStyle(.black)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .background(
-                        LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
-                    )
-                    .clipShape(Capsule())
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    CurrencyChip(kind: .scrap, value: profile.scrap)
+                    Text("HI \(profile.highScore)").font(.caption2).foregroundStyle(NeonTheme.muted)
                 }
-                .buttonStyle(.plain)
-                .padding(.bottom, 10)
             }
+            .padding(.horizontal, 10)
+            .padding(.top, 6)
+
+            SpriteView(scene: scene)
+                .ignoresSafeArea(edges: .horizontal)
+                .padding(.horizontal, 4)
+
+            if profile.classicButtons {
+                classicPad
+            } else {
+                gestureHint
+            }
+
+            Button {
+                scene.magnet()
+                AudioService.shared.playSFX("magnet")
+                HapticsService.shared.tap()
+            } label: {
+                HStack(spacing: 8) {
+                    Image("MagnetIcon").resizable().frame(width: 28, height: 28)
+                    Text("MAGNET \(scene.engine.state.magnetCharge)")
+                        .font(.caption.weight(.black))
+                        .foregroundStyle(.black)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(
+                    LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
+                )
+                .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 10)
         }
+        .background(NeonTheme.alleyGradient.ignoresSafeArea())
         .onAppear(perform: bootstrap)
         .sheet(isPresented: $showContinue) {
             ZStack {
@@ -154,26 +154,16 @@ struct GameContainerView: View {
         // Still-frame evidence shots must NOT autoplay — autoplay erases distinct boards.
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
         scene.autoplay = auto
-        if let shot, ["game", "gameplay", "compactor", "recycle", "revive", "demo", "autoplay"].contains(shot) {
-            scene.applyShot(shot)
-            if shot == "demo" || shot == "autoplay" {
-                scene.autoplay = true
-            }
-            if shot == "revive" {
-                scene.autoplay = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-                    showContinue = true
-                }
-            }
-        }
-        scene.onGameOver = { state in
+        scene.onGameOver = { [weak scene] state in
             Task { @MainActor in
                 hudScore = state.score
                 await handleGameOver(state)
             }
+            _ = scene
         }
-        scene.onEvents = { events in
+        scene.onEvents = { [weak scene] events in
             Task { @MainActor in
+                guard let scene else { return }
                 hudScore = scene.engine.state.score
                 hudLevel = scene.engine.state.level
                 for e in events {
@@ -202,7 +192,22 @@ struct GameContainerView: View {
                 UserDefaults.standard.set(scene.measuredFPS, forKey: "trashStack.measuredFPS")
             }
         }
-        AudioService.shared.playMusic("game_loop")
+        // Apply shot after SpriteView has sized the scene (didMove/didChangeSize).
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+            if let shot, ["game", "gameplay", "compactor", "recycle", "revive", "demo", "autoplay"].contains(shot) {
+                scene.applyShot(shot)
+                if shot == "demo" || shot == "autoplay" {
+                    scene.autoplay = true
+                }
+                if shot == "revive" {
+                    scene.autoplay = false
+                    showContinue = true
+                }
+            }
+            hudScore = scene.engine.state.score
+            hudLevel = scene.engine.state.level
+            AudioService.shared.playMusic("game_loop")
+        }
         hudScore = scene.engine.state.score
         hudLevel = scene.engine.state.level
     }
