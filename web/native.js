@@ -64,12 +64,12 @@ var init_dist = __esm({
           console.warn(`Capacitor plugin "${pluginName}" already registered. Cannot register plugins twice.`);
           return registeredPlugin.proxy;
         }
-        const platform = getPlatform();
+        const platform2 = getPlatform();
         const pluginHeader = getPluginHeader(pluginName);
         let jsImplementation;
         const loadPluginImplementation = async () => {
-          if (!jsImplementation && platform in jsImplementations) {
-            jsImplementation = typeof jsImplementations[platform] === "function" ? jsImplementation = await jsImplementations[platform]() : jsImplementation = jsImplementations[platform];
+          if (!jsImplementation && platform2 in jsImplementations) {
+            jsImplementation = typeof jsImplementations[platform2] === "function" ? jsImplementation = await jsImplementations[platform2]() : jsImplementation = jsImplementations[platform2];
           } else if (capCustomPlatform !== null && !jsImplementation && "web" in jsImplementations) {
             jsImplementation = typeof jsImplementations["web"] === "function" ? jsImplementation = await jsImplementations["web"]() : jsImplementation = jsImplementations["web"];
           }
@@ -91,7 +91,7 @@ var init_dist = __esm({
           } else if (impl) {
             return (_b = impl[prop]) === null || _b === void 0 ? void 0 : _b.bind(impl);
           } else {
-            throw new CapacitorException(`"${pluginName}" plugin is not implemented on ${platform}`, ExceptionCode.Unimplemented);
+            throw new CapacitorException(`"${pluginName}" plugin is not implemented on ${platform2}`, ExceptionCode.Unimplemented);
           }
         };
         const createPluginMethodWrapper = (prop) => {
@@ -104,7 +104,7 @@ var init_dist = __esm({
                 remove = p2 === null || p2 === void 0 ? void 0 : p2.remove;
                 return p2;
               } else {
-                throw new CapacitorException(`"${pluginName}.${prop}()" is not implemented on ${platform}`, ExceptionCode.Unimplemented);
+                throw new CapacitorException(`"${pluginName}.${prop}()" is not implemented on ${platform2}`, ExceptionCode.Unimplemented);
               }
             });
             if (prop === "addListener") {
@@ -159,7 +159,7 @@ var init_dist = __esm({
         registeredPlugins.set(pluginName, {
           name: pluginName,
           proxy,
-          platforms: /* @__PURE__ */ new Set([...Object.keys(jsImplementations), ...pluginHeader ? [platform] : []])
+          platforms: /* @__PURE__ */ new Set([...Object.keys(jsImplementations), ...pluginHeader ? [platform2] : []])
         });
         return proxy;
       };
@@ -290,10 +290,10 @@ var init_dist = __esm({
         cookies.split(";").forEach((cookie) => {
           if (cookie.length <= 0)
             return;
-          let [key, value] = cookie.replace(/=/, "CAP_COOKIE").split("CAP_COOKIE");
-          key = decode(key).trim();
+          let [key2, value] = cookie.replace(/=/, "CAP_COOKIE").split("CAP_COOKIE");
+          key2 = decode(key2).trim();
           value = decode(value).trim();
-          cookieMap[key] = value;
+          cookieMap[key2] = value;
         });
         return cookieMap;
       }
@@ -349,8 +349,8 @@ var init_dist = __esm({
     normalizeHttpHeaders = (headers = {}) => {
       const originalKeys = Object.keys(headers);
       const loweredKeys = Object.keys(headers).map((k) => k.toLocaleLowerCase());
-      const normalized = loweredKeys.reduce((acc, key, index) => {
-        acc[key] = headers[originalKeys[index]];
+      const normalized = loweredKeys.reduce((acc, key2, index) => {
+        acc[key2] = headers[originalKeys[index]];
         return acc;
       }, {});
       return normalized;
@@ -359,19 +359,19 @@ var init_dist = __esm({
       if (!params)
         return null;
       const output = Object.entries(params).reduce((accumulator, entry) => {
-        const [key, value] = entry;
+        const [key2, value] = entry;
         let encodedValue;
         let item;
         if (Array.isArray(value)) {
           item = "";
           value.forEach((str) => {
             encodedValue = shouldEncode ? encodeURIComponent(str) : str;
-            item += `${key}=${encodedValue}&`;
+            item += `${key2}=${encodedValue}&`;
           });
           item.slice(0, -1);
         } else {
           encodedValue = shouldEncode ? encodeURIComponent(value) : value;
-          item = `${key}=${encodedValue}`;
+          item = `${key2}=${encodedValue}`;
         }
         return `${accumulator}&${item}`;
       }, "");
@@ -385,19 +385,19 @@ var init_dist = __esm({
         output.body = options.data;
       } else if (type.includes("application/x-www-form-urlencoded")) {
         const params = new URLSearchParams();
-        for (const [key, value] of Object.entries(options.data || {})) {
-          params.set(key, value);
+        for (const [key2, value] of Object.entries(options.data || {})) {
+          params.set(key2, value);
         }
         output.body = params.toString();
       } else if (type.includes("multipart/form-data") || options.data instanceof FormData) {
         const form = new FormData();
         if (options.data instanceof FormData) {
-          options.data.forEach((value, key) => {
-            form.append(key, value);
+          options.data.forEach((value, key2) => {
+            form.append(key2, value);
           });
         } else {
-          for (const key of Object.keys(options.data)) {
-            form.append(key, options.data[key]);
+          for (const key2 of Object.keys(options.data)) {
+            form.append(key2, options.data[key2]);
           }
         }
         output.body = form;
@@ -441,8 +441,8 @@ var init_dist = __esm({
             data = await response.text();
         }
         const headers = {};
-        response.headers.forEach((value, key) => {
-          headers[key] = value;
+        response.headers.forEach((value, key2) => {
+          headers[key2] = value;
         });
         return {
           data,
@@ -635,8 +635,8 @@ var init_web2 = __esm({
         return { keys };
       }
       async clear() {
-        for (const key of this.rawKeys()) {
-          this.impl.removeItem(key);
+        for (const key2 of this.rawKeys()) {
+          this.impl.removeItem(key2);
         }
       }
       async migrate() {
@@ -646,14 +646,14 @@ var init_web2 = __esm({
         const oldprefix = "_cap_";
         const keys = Object.keys(this.impl).filter((k) => k.indexOf(oldprefix) === 0);
         for (const oldkey of keys) {
-          const key = oldkey.substring(oldprefix.length);
+          const key2 = oldkey.substring(oldprefix.length);
           const value = (_a = this.impl.getItem(oldkey)) !== null && _a !== void 0 ? _a : "";
-          const { value: currentValue } = await this.get({ key });
+          const { value: currentValue } = await this.get({ key: key2 });
           if (typeof currentValue === "string") {
-            existing.push(key);
+            existing.push(key2);
           } else {
-            await this.set({ key, value });
-            migrated.push(key);
+            await this.set({ key: key2, value });
+            migrated.push(key2);
           }
         }
         return { migrated, existing };
@@ -674,8 +674,8 @@ var init_web2 = __esm({
       rawKeys() {
         return Object.keys(this.impl).filter((k) => k.indexOf(this.prefix) === 0);
       }
-      applyPrefix(key) {
-        return this.prefix + key;
+      applyPrefix(key2) {
+        return this.prefix + key2;
       }
     };
   }
@@ -753,6 +753,166 @@ var init_web4 = __esm({
   }
 });
 
+// node_modules/@capacitor-community/admob/dist/esm/consent/consent-status.enum.js
+var AdmobConsentStatus;
+var init_consent_status_enum = __esm({
+  "node_modules/@capacitor-community/admob/dist/esm/consent/consent-status.enum.js"() {
+    (function(AdmobConsentStatus2) {
+      AdmobConsentStatus2["NOT_REQUIRED"] = "NOT_REQUIRED";
+      AdmobConsentStatus2["OBTAINED"] = "OBTAINED";
+      AdmobConsentStatus2["REQUIRED"] = "REQUIRED";
+      AdmobConsentStatus2["UNKNOWN"] = "UNKNOWN";
+    })(AdmobConsentStatus || (AdmobConsentStatus = {}));
+  }
+});
+
+// node_modules/@capacitor-community/admob/dist/esm/consent/privacy-options-requirement-status.enum.js
+var PrivacyOptionsRequirementStatus;
+var init_privacy_options_requirement_status_enum = __esm({
+  "node_modules/@capacitor-community/admob/dist/esm/consent/privacy-options-requirement-status.enum.js"() {
+    (function(PrivacyOptionsRequirementStatus2) {
+      PrivacyOptionsRequirementStatus2["NOT_REQUIRED"] = "NOT_REQUIRED";
+      PrivacyOptionsRequirementStatus2["REQUIRED"] = "REQUIRED";
+      PrivacyOptionsRequirementStatus2["UNKNOWN"] = "UNKNOWN";
+    })(PrivacyOptionsRequirementStatus || (PrivacyOptionsRequirementStatus = {}));
+  }
+});
+
+// node_modules/@capacitor-community/admob/dist/esm/web.js
+var web_exports5 = {};
+__export(web_exports5, {
+  AdMobWeb: () => AdMobWeb
+});
+var AdMobWeb;
+var init_web5 = __esm({
+  "node_modules/@capacitor-community/admob/dist/esm/web.js"() {
+    init_dist();
+    init_consent_status_enum();
+    init_privacy_options_requirement_status_enum();
+    AdMobWeb = class extends WebPlugin {
+      async initialize() {
+        console.log("initialize");
+      }
+      async requestTrackingAuthorization() {
+        console.log("requestTrackingAuthorization");
+      }
+      async trackingAuthorizationStatus() {
+        return {
+          status: "authorized"
+        };
+      }
+      async requestConsentInfo(options) {
+        console.log("requestConsentInfo", options);
+        return {
+          status: AdmobConsentStatus.REQUIRED,
+          isConsentFormAvailable: true,
+          canRequestAds: true,
+          privacyOptionsRequirementStatus: PrivacyOptionsRequirementStatus.REQUIRED
+        };
+      }
+      async showPrivacyOptionsForm() {
+        console.log("showPrivacyOptionsForm");
+      }
+      async showConsentForm() {
+        console.log("showConsentForm");
+        return {
+          status: AdmobConsentStatus.REQUIRED,
+          canRequestAds: true,
+          privacyOptionsRequirementStatus: PrivacyOptionsRequirementStatus.REQUIRED
+        };
+      }
+      async resetConsentInfo() {
+        console.log("resetConsentInfo");
+      }
+      async setApplicationMuted(options) {
+        console.log("setApplicationMuted", options);
+      }
+      async setApplicationVolume(options) {
+        console.log("setApplicationVolume", options);
+      }
+      async showBanner(options) {
+        console.log("showBanner", options);
+      }
+      async hideBanner() {
+        console.log("hideBanner");
+      }
+      async resumeBanner() {
+        console.log("resumeBanner");
+      }
+      async removeBanner() {
+        console.log("removeBanner");
+      }
+      async startNativeAdFeed() {
+        throw new Error("Native ads are only available on iOS and Android");
+      }
+      async destroyNativeAdFeed(options) {
+        console.log("destroyNativeAdFeed", options);
+      }
+      async loadNativeAd() {
+        throw new Error("Native ads are only available on iOS and Android");
+      }
+      async updateNativeAdPlacements(options) {
+        console.log("updateNativeAdPlacements", options);
+      }
+      async removeNativeAd(options) {
+        console.log("removeNativeAd", options);
+      }
+      async prepareInterstitial(options) {
+        console.log("prepareInterstitial", options);
+        return {
+          adUnitId: options.adId
+        };
+      }
+      async showInterstitial(options) {
+        console.log("showInterstitial", options);
+      }
+      async prepareRewardVideoAd(options) {
+        console.log("prepareRewardVideoAd", options);
+        return {
+          adUnitId: options.adId
+        };
+      }
+      async showRewardVideoAd(options) {
+        console.log("showRewardVideoAd", options);
+        return {
+          type: "",
+          amount: 0
+        };
+      }
+      async prepareRewardInterstitialAd(options) {
+        console.log("prepareRewardInterstitialAd", options);
+        return {
+          adUnitId: options.adId
+        };
+      }
+      async showRewardInterstitialAd(options) {
+        console.log("showRewardInterstitialAd", options);
+        return {
+          type: "",
+          amount: 0
+        };
+      }
+      async loadAppOpen(options) {
+        console.log("loadAppOpen", options);
+        return {
+          adUnitId: options.adId
+        };
+      }
+      async showAppOpen(options) {
+        console.log("showAppOpen", options);
+      }
+      async isAppOpenLoaded() {
+        return { value: false };
+      }
+      addListener(eventName, listenerFunc) {
+        void listenerFunc;
+        console.log("addListener", eventName);
+        return Promise.resolve({ remove: () => Promise.resolve() });
+      }
+    };
+  }
+});
+
 // src/native-bridge.js
 init_dist();
 
@@ -801,6 +961,361 @@ var App = registerPlugin("App", {
   web: () => Promise.resolve().then(() => (init_web4(), web_exports4)).then((m) => new m.AppWeb())
 });
 
+// src/ads.js
+init_dist();
+
+// node_modules/@capacitor-community/admob/dist/esm/index.js
+init_dist();
+
+// node_modules/@capacitor-community/admob/dist/esm/native-ads/native-ad-feed.js
+init_dist();
+
+// node_modules/@webview-native-ui/engine/dist/projection/styles.js
+var hidden = ":is([data-native-ui-snapshot-source], [data-native-ui-snapshot-prepared], [data-native-ui-snapshot-content])";
+var snapshotStyles = `
+@layer native-ui-projection {
+${hidden}, ${hidden} *, ${hidden}::part(native) { visibility: hidden !important; }
+${hidden}::before, ${hidden}::after,
+${hidden} *::before, ${hidden} *::after {
+  visibility: hidden !important;
+}
+}
+[data-native-ui-snapshot-visible] { opacity:1!important;overflow:visible!important; }
+[data-native-ui-snapshot-visible][data-native-ui-snapshot-positioned] { position:relative!important; }
+`;
+
+// node_modules/@webview-native-ui/engine/dist/dom/overlays.js
+var key = Symbol.for("@webview-native-ui/engine/overlays/v1");
+
+// node_modules/@webview-native-ui/engine/dist/projection/placement.js
+var placementKey = Symbol.for("webview-native-ui-engine.projection-placement");
+
+// node_modules/@capacitor-community/admob/dist/esm/native-ads/native-ad-template.enum.js
+var NativeAdTemplate;
+(function(NativeAdTemplate2) {
+  NativeAdTemplate2["Small"] = "small";
+  NativeAdTemplate2["Medium"] = "medium";
+})(NativeAdTemplate || (NativeAdTemplate = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/native-ads/native-ad-feed.js
+var bridge;
+var configureNativeAdBridge = (adMobBridge) => {
+  bridge = adMobBridge;
+};
+
+// node_modules/@capacitor-community/admob/dist/esm/definitions.js
+var MaxAdContentRating;
+(function(MaxAdContentRating2) {
+  MaxAdContentRating2["General"] = "General";
+  MaxAdContentRating2["ParentalGuidance"] = "ParentalGuidance";
+  MaxAdContentRating2["Teen"] = "Teen";
+  MaxAdContentRating2["MatureAudience"] = "MatureAudience";
+})(MaxAdContentRating || (MaxAdContentRating = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/banner/banner-ad-plugin-events.enum.js
+var BannerAdPluginEvents;
+(function(BannerAdPluginEvents2) {
+  BannerAdPluginEvents2["SizeChanged"] = "bannerAdSizeChanged";
+  BannerAdPluginEvents2["Loaded"] = "bannerAdLoaded";
+  BannerAdPluginEvents2["FailedToLoad"] = "bannerAdFailedToLoad";
+  BannerAdPluginEvents2["Opened"] = "bannerAdOpened";
+  BannerAdPluginEvents2["Closed"] = "bannerAdClosed";
+  BannerAdPluginEvents2["AdImpression"] = "bannerAdImpression";
+  BannerAdPluginEvents2["AdPaid"] = "bannerAdPaid";
+})(BannerAdPluginEvents || (BannerAdPluginEvents = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/banner/banner-ad-position.enum.js
+var BannerAdPosition;
+(function(BannerAdPosition2) {
+  BannerAdPosition2["TOP_CENTER"] = "TOP_CENTER";
+  BannerAdPosition2["CENTER"] = "CENTER";
+  BannerAdPosition2["BOTTOM_CENTER"] = "BOTTOM_CENTER";
+})(BannerAdPosition || (BannerAdPosition = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/banner/banner-ad-size.enum.js
+var BannerAdSize;
+(function(BannerAdSize2) {
+  BannerAdSize2["BANNER"] = "BANNER";
+  BannerAdSize2["FULL_BANNER"] = "FULL_BANNER";
+  BannerAdSize2["LARGE_BANNER"] = "LARGE_BANNER";
+  BannerAdSize2["MEDIUM_RECTANGLE"] = "MEDIUM_RECTANGLE";
+  BannerAdSize2["LEADERBOARD"] = "LEADERBOARD";
+  BannerAdSize2["ADAPTIVE_BANNER"] = "ADAPTIVE_BANNER";
+  BannerAdSize2["SMART_BANNER"] = "SMART_BANNER";
+})(BannerAdSize || (BannerAdSize = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/interstitial/interstitial-ad-plugin-events.enum.js
+var InterstitialAdPluginEvents;
+(function(InterstitialAdPluginEvents2) {
+  InterstitialAdPluginEvents2["Loaded"] = "interstitialAdLoaded";
+  InterstitialAdPluginEvents2["FailedToLoad"] = "interstitialAdFailedToLoad";
+  InterstitialAdPluginEvents2["Showed"] = "interstitialAdShowed";
+  InterstitialAdPluginEvents2["FailedToShow"] = "interstitialAdFailedToShow";
+  InterstitialAdPluginEvents2["Dismissed"] = "interstitialAdDismissed";
+  InterstitialAdPluginEvents2["AdImpression"] = "interstitialAdImpression";
+})(InterstitialAdPluginEvents || (InterstitialAdPluginEvents = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/reward-interstitial/reward-interstitial-ad-plugin-events.enum.js
+var RewardInterstitialAdPluginEvents;
+(function(RewardInterstitialAdPluginEvents2) {
+  RewardInterstitialAdPluginEvents2["Loaded"] = "onRewardedInterstitialAdLoaded";
+  RewardInterstitialAdPluginEvents2["FailedToLoad"] = "onRewardedInterstitialAdFailedToLoad";
+  RewardInterstitialAdPluginEvents2["Showed"] = "onRewardedInterstitialAdShowed";
+  RewardInterstitialAdPluginEvents2["FailedToShow"] = "onRewardedInterstitialAdFailedToShow";
+  RewardInterstitialAdPluginEvents2["Dismissed"] = "onRewardedInterstitialAdDismissed";
+  RewardInterstitialAdPluginEvents2["Rewarded"] = "onRewardedInterstitialAdReward";
+  RewardInterstitialAdPluginEvents2["AdImpression"] = "onRewardedInterstitialAdImpression";
+})(RewardInterstitialAdPluginEvents || (RewardInterstitialAdPluginEvents = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/reward/reward-ad-plugin-events.enum.js
+var RewardAdPluginEvents;
+(function(RewardAdPluginEvents2) {
+  RewardAdPluginEvents2["adClicked"] = "onRewardedVideoAdClicked";
+  RewardAdPluginEvents2["Loaded"] = "onRewardedVideoAdLoaded";
+  RewardAdPluginEvents2["FailedToLoad"] = "onRewardedVideoAdFailedToLoad";
+  RewardAdPluginEvents2["Showed"] = "onRewardedVideoAdShowed";
+  RewardAdPluginEvents2["FailedToShow"] = "onRewardedVideoAdFailedToShow";
+  RewardAdPluginEvents2["Dismissed"] = "onRewardedVideoAdDismissed";
+  RewardAdPluginEvents2["Rewarded"] = "onRewardedVideoAdReward";
+  RewardAdPluginEvents2["AdImpression"] = "onRewardedVideoAdImpression";
+})(RewardAdPluginEvents || (RewardAdPluginEvents = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/consent/index.js
+init_consent_status_enum();
+
+// node_modules/@capacitor-community/admob/dist/esm/consent/consent-debug-geography.enum.js
+var AdmobConsentDebugGeography;
+(function(AdmobConsentDebugGeography2) {
+  AdmobConsentDebugGeography2[AdmobConsentDebugGeography2["DISABLED"] = 0] = "DISABLED";
+  AdmobConsentDebugGeography2[AdmobConsentDebugGeography2["EEA"] = 1] = "EEA";
+  AdmobConsentDebugGeography2[AdmobConsentDebugGeography2["NOT_EEA"] = 2] = "NOT_EEA";
+  AdmobConsentDebugGeography2[AdmobConsentDebugGeography2["US"] = 3] = "US";
+  AdmobConsentDebugGeography2[AdmobConsentDebugGeography2["OTHER"] = 4] = "OTHER";
+})(AdmobConsentDebugGeography || (AdmobConsentDebugGeography = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/shared/ad-mob-revenue-data.interface.js
+var AdValuePrecision;
+(function(AdValuePrecision2) {
+  AdValuePrecision2[AdValuePrecision2["Unknown"] = 0] = "Unknown";
+  AdValuePrecision2[AdValuePrecision2["Estimated"] = 1] = "Estimated";
+  AdValuePrecision2[AdValuePrecision2["PublisherProvided"] = 2] = "PublisherProvided";
+  AdValuePrecision2[AdValuePrecision2["Precise"] = 3] = "Precise";
+})(AdValuePrecision || (AdValuePrecision = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/app-open/app-open-ad-plugin-events.enum.js
+var AppOpenAdPluginEvents;
+(function(AppOpenAdPluginEvents2) {
+  AppOpenAdPluginEvents2["Loaded"] = "appOpenAdLoaded";
+  AppOpenAdPluginEvents2["FailedToLoad"] = "appOpenAdFailedToLoad";
+  AppOpenAdPluginEvents2["Opened"] = "appOpenAdOpened";
+  AppOpenAdPluginEvents2["Closed"] = "appOpenAdClosed";
+  AppOpenAdPluginEvents2["FailedToShow"] = "appOpenAdFailedToShow";
+  AppOpenAdPluginEvents2["AdImpression"] = "appOpenAdImpression";
+})(AppOpenAdPluginEvents || (AppOpenAdPluginEvents = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/native-ads/native-ad-plugin-events.enum.js
+var NativeAdPluginEvents;
+(function(NativeAdPluginEvents2) {
+  NativeAdPluginEvents2["Loaded"] = "nativeAdLoaded";
+  NativeAdPluginEvents2["FailedToLoad"] = "nativeAdFailedToLoad";
+  NativeAdPluginEvents2["Clicked"] = "nativeAdClicked";
+  NativeAdPluginEvents2["AdImpression"] = "nativeAdImpression";
+  NativeAdPluginEvents2["Opened"] = "nativeAdOpened";
+  NativeAdPluginEvents2["Closed"] = "nativeAdClosed";
+  NativeAdPluginEvents2["AdPaid"] = "nativeAdPaid";
+})(NativeAdPluginEvents || (NativeAdPluginEvents = {}));
+
+// node_modules/@capacitor-community/admob/dist/esm/index.js
+var nativeAdBridge = registerPlugin("AdMob", {
+  web: () => Promise.resolve().then(() => (init_web5(), web_exports5)).then((m) => new m.AdMobWeb())
+});
+var AdMob = nativeAdBridge;
+configureNativeAdBridge(nativeAdBridge);
+
+// src/ads.js
+var TEST = {
+  appId: {
+    ios: "ca-app-pub-3940256099942544~1458002511",
+    android: "ca-app-pub-3940256099942544~3347511713"
+  },
+  interstitial: {
+    ios: "ca-app-pub-3940256099942544/4411468910",
+    android: "ca-app-pub-3940256099942544/1033173712"
+  },
+  rewarded: {
+    ios: "ca-app-pub-3940256099942544/1712485313",
+    android: "ca-app-pub-3940256099942544/5224354917"
+  }
+};
+function platform() {
+  return Capacitor.getPlatform();
+}
+function cfg() {
+  return typeof window !== "undefined" && window.TRASH_AD_CONFIG || {};
+}
+function unit(kind) {
+  const c = cfg();
+  const p = platform();
+  const custom = c[kind] && (c[kind][p] || c[kind].default);
+  if (custom && String(custom).trim()) return String(custom).trim();
+  return TEST[kind][p] || TEST[kind].android;
+}
+var ready = false;
+var canRequestAds = true;
+var sessionRuns = 0;
+var oversSinceInterstitial = 0;
+var interstitialReady = false;
+var rewardReady = false;
+async function requestTrackingIfNeeded() {
+  if (platform() !== "ios") return;
+  try {
+    const status = await AdMob.trackingAuthorizationStatus();
+    if (status && (status.status === "notDetermined" || status.status === 0)) {
+      await AdMob.requestTrackingAuthorization();
+    }
+  } catch (_) {
+  }
+}
+async function runConsentFlow() {
+  try {
+    let info = await AdMob.requestConsentInfo({
+      debugGeography: cfg().debugGeography,
+      testDeviceIdentifiers: cfg().testDeviceIds || []
+    });
+    if (info && info.isConsentFormAvailable && info.status === AdmobConsentStatus.REQUIRED) {
+      info = await AdMob.showConsentForm();
+    }
+    canRequestAds = !info || info.canRequestAds !== false;
+  } catch (_) {
+    canRequestAds = true;
+  }
+}
+async function initAds() {
+  if (!Capacitor.isNativePlatform()) {
+    ready = true;
+    canRequestAds = true;
+    return { ready, canRequestAds, mode: "web-stub" };
+  }
+  await requestTrackingIfNeeded();
+  await runConsentFlow();
+  if (!canRequestAds) {
+    ready = false;
+    return { ready, canRequestAds, mode: "consent-blocked" };
+  }
+  try {
+    await AdMob.initialize({
+      initializeForTesting: cfg().useTestIds !== false,
+      testingDevices: cfg().testDeviceIds || []
+    });
+    ready = true;
+    await preloadInterstitial();
+    await preloadRewarded();
+  } catch (_) {
+    ready = false;
+  }
+  return { ready, canRequestAds, mode: "native" };
+}
+async function preloadInterstitial() {
+  if (!ready || !canRequestAds || !Capacitor.isNativePlatform()) return;
+  try {
+    await AdMob.prepareInterstitial({ adId: unit("interstitial") });
+    interstitialReady = true;
+  } catch (_) {
+    interstitialReady = false;
+  }
+}
+async function preloadRewarded() {
+  if (!ready || !canRequestAds || !Capacitor.isNativePlatform()) return;
+  try {
+    await AdMob.prepareRewardVideoAd({ adId: unit("rewarded") });
+    rewardReady = true;
+  } catch (_) {
+    rewardReady = false;
+  }
+}
+function noteRunStarted() {
+  sessionRuns += 1;
+}
+async function maybeShowInterstitial({ adsRemoved } = {}) {
+  if (adsRemoved) return false;
+  oversSinceInterstitial += 1;
+  if (sessionRuns <= 2) return false;
+  if (oversSinceInterstitial < 3) return false;
+  if (!Capacitor.isNativePlatform()) {
+    oversSinceInterstitial = 0;
+    return false;
+  }
+  if (!ready || !canRequestAds) return false;
+  try {
+    if (!interstitialReady) await preloadInterstitial();
+    if (!interstitialReady) return false;
+    await AdMob.showInterstitial();
+    oversSinceInterstitial = 0;
+    interstitialReady = false;
+    await preloadInterstitial();
+    return true;
+  } catch (_) {
+    interstitialReady = false;
+    return false;
+  }
+}
+function showRewarded(reason) {
+  return new Promise(async (resolve) => {
+    if (!Capacitor.isNativePlatform()) {
+      setTimeout(() => resolve(true), 600);
+      return;
+    }
+    if (!ready || !canRequestAds) {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(!!ok);
+    };
+    const rewardHandle = await AdMob.addListener(
+      RewardAdPluginEvents.Rewarded,
+      () => finish(true)
+    ).catch(() => null);
+    const dismissHandle = await AdMob.addListener(
+      RewardAdPluginEvents.Dismissed,
+      () => finish(false)
+    ).catch(() => null);
+    const failHandle = await AdMob.addListener(
+      RewardAdPluginEvents.FailedToLoad,
+      () => finish(false)
+    ).catch(() => null);
+    try {
+      if (!rewardReady) await preloadRewarded();
+      await AdMob.showRewardVideoAd();
+      setTimeout(() => finish(false), 12e4);
+    } catch (_) {
+      finish(false);
+    } finally {
+      setTimeout(() => {
+        rewardHandle && rewardHandle.remove && rewardHandle.remove();
+        dismissHandle && dismissHandle.remove && dismissHandle.remove();
+        failHandle && failHandle.remove && failHandle.remove();
+        preloadRewarded();
+      }, 1500);
+    }
+  });
+}
+function getAdDebugInfo() {
+  return {
+    ready,
+    canRequestAds,
+    sessionRuns,
+    oversSinceInterstitial,
+    platform: platform(),
+    interstitialUnit: unit("interstitial"),
+    rewardedUnit: unit("rewarded"),
+    usingTestDefaults: !(cfg().interstitial && cfg().interstitial[platform()])
+  };
+}
+
 // src/native-bridge.js
 var native = Capacitor.isNativePlatform();
 async function prepareChrome() {
@@ -826,6 +1341,7 @@ async function hideSplash() {
   }
 }
 async function haptic(ms) {
+  const duration = Array.isArray(ms) ? ms.reduce((a, b) => a + b, 0) / ms.length : ms;
   if (!native) {
     try {
       if (navigator.vibrate) navigator.vibrate(ms);
@@ -834,9 +1350,9 @@ async function haptic(ms) {
     return;
   }
   try {
-    if (ms >= 80) {
+    if (duration >= 80) {
       await Haptics.impact({ style: ImpactStyle.Heavy });
-    } else if (ms >= 30) {
+    } else if (duration >= 30) {
       await Haptics.impact({ style: ImpactStyle.Medium });
     } else {
       await Haptics.impact({ style: ImpactStyle.Light });
@@ -848,40 +1364,40 @@ async function haptic(ms) {
     }
   }
 }
-async function getPref(key) {
+async function getPref(key2) {
   if (native) {
-    const { value } = await Preferences.get({ key });
+    const { value } = await Preferences.get({ key: key2 });
     return value;
   }
   try {
-    return localStorage.getItem(key);
+    return localStorage.getItem(key2);
   } catch (_) {
     return null;
   }
 }
-async function setPref(key, value) {
+async function setPref(key2, value) {
   if (native) {
-    await Preferences.set({ key, value });
+    await Preferences.set({ key: key2, value });
     try {
-      localStorage.setItem(key, value);
+      localStorage.setItem(key2, value);
     } catch (_) {
     }
     return;
   }
   try {
-    localStorage.setItem(key, value);
+    localStorage.setItem(key2, value);
   } catch (_) {
   }
 }
-async function loadProgress(key) {
-  let value = await getPref(key);
+async function loadProgress(key2) {
+  let value = await getPref(key2);
   if (value == null) {
     try {
-      const legacy = localStorage.getItem(key);
+      const legacy = localStorage.getItem(key2);
       if (legacy != null) {
         value = legacy;
         if (native) {
-          await Preferences.set({ key, value: legacy });
+          await Preferences.set({ key: key2, value: legacy });
         }
       }
     } catch (_) {
@@ -889,8 +1405,8 @@ async function loadProgress(key) {
   }
   return value;
 }
-async function saveProgress(key, value) {
-  await setPref(key, value);
+async function saveProgress(key2, value) {
+  await setPref(key2, value);
 }
 async function consumeShotMode() {
   try {
@@ -917,6 +1433,11 @@ window.TrashNative = {
   loadProgress,
   saveProgress,
   consumeShotMode,
+  initAds,
+  noteRunStarted,
+  maybeShowInterstitial,
+  showRewarded,
+  getAdDebugInfo,
   App
 };
 document.documentElement.classList.toggle("native-app", native);

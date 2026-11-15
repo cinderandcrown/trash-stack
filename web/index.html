@@ -13,6 +13,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
+<script src="ad-config.js"></script>
 <script type="module" src="native.js"></script>
 <style>
 /* Capacitor / native WebView: kill bounce + overscroll chrome */
@@ -179,6 +180,25 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   .btn{padding:12px 16px}
 }
 @media (max-width:340px){aside.rail{width:52px;flex-basis:52px}}
+
+/* META_V2_BEGIN */
+.btn.tiny{padding:8px 10px;font-size:11px;border-radius:10px}
+.panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:min(360px,92%);margin:8px auto 0}
+.ach-list,.lb-list,.bp-list,.cal-grid{max-height:42vh;overflow:auto;margin:8px 0;text-align:left}
+.ach-row,.lb-row,.bp-row{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:#0e1220;border:1px solid rgba(255,255,255,.08);margin:6px 0;font-size:12px}
+.ach-row.on{border-color:rgba(125,255,107,.45)}
+.ach-ico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:#16182a;flex:0 0 auto}
+.odds{font-size:11px;color:var(--dim);text-align:left;margin:8px 0;line-height:1.45}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-day{aspect-ratio:1;border-radius:8px;background:#12162a;border:1px solid rgba(255,255,255,.08);display:grid;place-items:center;font-size:10px;color:var(--dim)}
+.cal-day.on{background:linear-gradient(180deg,#1a3a40,#102028);border-color:var(--cyan);color:var(--cyan);font-weight:800}
+.cal-day.today{box-shadow:0 0 0 1px var(--gold)}
+.bp-track{height:10px;background:#1a1d30;border-radius:99px;overflow:hidden;border:1px solid rgba(255,255,255,.08);margin:6px 0 10px}
+.bp-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--mag))}
+.trail-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:4px}
+#continueOv .card{border-color:rgba(255,43,214,.45)}
+/* META_V2_END */
+
 </style>
 </head>
 <body>
@@ -220,8 +240,17 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
       <button class="btn ghost small" id="howBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">How to play</button>
       <button class="btn ghost small" id="muteTitle" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">Sound on</button>
     </div>
+    
+    <div class="panel-grid">
+      <button class="btn ghost small" id="achBtn" type="button">Achievements</button>
+      <button class="btn ghost small" id="lbBtn" type="button">Records</button>
+      <button class="btn ghost small" id="bpBtn" type="button">Night Pass</button>
+      <button class="btn ghost small" id="calBtn" type="button">Streak</button>
+    </div>
+
+    <button class="btn mag wide" id="removeAdsBtn" type="button" disabled aria-disabled="true" style="margin-top:10px;opacity:.55;font-size:13px;padding:12px">Remove Ads (coming soon)</button>
     <button class="btn gold wide" id="passBtn" type="button" disabled aria-disabled="true" style="margin-top:12px;opacity:.55;font-size:13px;padding:12px">Premium Pass (coming soon)</button>
-    <p id="premiumNote">No real-money buys in 1.0. Shinies and cosmetics only. Premium Pass is not available yet.</p>
+    <p id="premiumNote">Free to play with optional rewarded ads. Remove Ads &amp; Premium Pass are coming — no real-money gambling.</p>
   </section>
 
   <section id="gameScreen" class="screen hidden">
@@ -285,7 +314,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 <div id="shopOv" class="overlay hidden"><div class="card">
   <h2>SHOP</h2>
   <p>Spend Shinies on looks. Nothing for sale with real money.</p>
-  <div class="tabby"><button type="button" class="on" data-tab="skins">Skins</button><button type="button" data-tab="bgs">Backgrounds</button></div>
+  <div class="tabby"><button type="button" class="on" data-tab="skins">Skins</button><button type="button" data-tab="bgs">Backgrounds</button><button type="button" data-tab="trails">Trails</button></div>
   <div id="shopGrid" class="shop-grid"></div>
   <button class="btn ghost wide" id="shopClose" type="button">Close</button>
 </div></div>
@@ -293,6 +322,8 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 <div id="spinOv" class="overlay hidden"><div class="card">
   <h2>DAILY SPIN</h2>
   <p id="spinHint">Free once a day. Cosmetics and Shinies only.</p>
+  <div class="odds" id="spinOdds"></div>
+  <button class="btn mag small smag" id="spinAdBtn" type="button" style="width:100%;margin:6px 0;display:none">Extra spin (rewarded ad)</button>
   <div id="wheelWrap"><div id="wheelNub"></div><canvas id="wheel" width="260" height="260"></canvas></div>
   <button class="btn wide pulse" id="spinGo" type="button">Spin</button>
   <button class="btn ghost wide" id="spinClose" type="button" style="margin-top:10px">Close</button>
@@ -305,7 +336,8 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     <li>Tap the well to rotate. Swipe left or right to move.</li>
     <li>Swipe down to soft drop. Flick down to hard drop.</li>
     <li>Hold a piece for later. Chain clears for combos.</li>
-    <li>Earn Shinies, level up, and unlock looks. No real-money shop.</li>
+    <li>Earn Shinies (soft currency), level up, unlock looks, chase achievements.</li>
+    <li>Optional rewarded ads for continue, double Shinies, or an extra daily spin. Odds shown for random rewards.</li>
   </ol>
   <button class="btn wide" id="howClose" type="button" style="margin-top:8px">Got it</button>
 </div></div>
@@ -314,6 +346,52 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   <h2>LEVEL UP</h2>
   <p id="lvlFanfare">Player level 2</p>
   <button class="btn wide" id="lvlClose" type="button" style="margin-top:8px">Let’s go</button>
+</div></div>
+
+
+<div id="continueOv" class="overlay hidden"><div class="card">
+  <h2>ONE MORE?</h2>
+  <p>Watch a short rewarded ad to revive once this run.</p>
+  <button class="btn wide pulse" id="continueAdBtn" type="button">Revive (ad)</button>
+  <button class="btn ghost wide" id="continueSkipBtn" type="button" style="margin-top:10px">Stack out</button>
+</div></div>
+
+<div id="doubleOv" class="overlay hidden"><div class="card">
+  <h2>DOUBLE SHINIES?</h2>
+  <p id="doubleHint">Watch a rewarded ad to double Shinies earned this run.</p>
+  <button class="btn wide gold" id="doubleAdBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.25) inset,0 8px 0 #9a7010">Double (ad)</button>
+  <button class="btn ghost wide" id="doubleSkipBtn" type="button" style="margin-top:10px">Keep as-is</button>
+</div></div>
+
+<div id="achOv" class="overlay hidden"><div class="card">
+  <h2>ACHIEVEMENTS</h2>
+  <p id="achProgress">0 / 0</p>
+  <div id="achList" class="ach-list"></div>
+  <button class="btn ghost wide" id="achClose" type="button">Close</button>
+</div></div>
+
+<div id="lbOv" class="overlay hidden"><div class="card">
+  <h2>LOCAL RECORDS</h2>
+  <p>Personal best chase — saved on this device only.</p>
+  <div id="lbList" class="lb-list"></div>
+  <button class="btn ghost wide" id="lbClose" type="button">Close</button>
+</div></div>
+
+<div id="bpOv" class="overlay hidden"><div class="card">
+  <h2>NIGHT PASS</h2>
+  <p>Season track. Free lane active. Premium lane is a stub.</p>
+  <div class="bp-track"><div class="bp-fill" id="bpFill"></div></div>
+  <div id="bpList" class="bp-list"></div>
+  <button class="btn gold wide" id="bpPremiumBtn" type="button" disabled style="opacity:.55">Premium Pass (coming soon)</button>
+  <button class="btn ghost wide" id="bpClose" type="button" style="margin-top:10px">Close</button>
+</div></div>
+
+<div id="calOv" class="overlay hidden"><div class="card">
+  <h2>STREAK CALENDAR</h2>
+  <p id="calHint">Login streak rewards escalate each day.</p>
+  <div id="calGrid" class="cal-grid"></div>
+  <div class="odds" id="calOdds"></div>
+  <button class="btn ghost wide" id="calClose" type="button">Close</button>
 </div></div>
 
 <div id="flash"></div>
@@ -438,6 +516,85 @@ const WHEEL = [
   {label:"100 ✦", kind:"shinies", n:100, color:"#4a3a10"}
 ];
 
+
+/* META_JS_V2_BEGIN */
+const TRAILS = [
+  {id:"none", name:"No Trail", price:0, color:"transparent"},
+  {id:"cyan", name:"Cyan Sparks", price:250, color:"#00f5ff"},
+  {id:"mag", name:"Magenta Dust", price:350, color:"#ff2bd6"},
+  {id:"gold", name:"Gold Embers", price:450, color:"#ffd166"},
+  {id:"lime", name:"Lime Static", price:550, color:"#7dff6b"}
+];
+const ACHIEVEMENTS = [
+  {id:"first_clear", name:"First Clear", desc:"Clear any line", goal:1, kind:"linesTotal", reward:20},
+  {id:"lines_50", name:"Dock Sweeper", desc:"Clear 50 lines total", goal:50, kind:"linesTotal", reward:40},
+  {id:"lines_200", name:"Night Janitor", desc:"Clear 200 lines total", goal:200, kind:"linesTotal", reward:80},
+  {id:"lines_500", name:"City Recycler", desc:"Clear 500 lines total", goal:500, kind:"linesTotal", reward:150},
+  {id:"score_1k", name:"Warm Up", desc:"Score 1,000 in a run", goal:1000, kind:"bestScore", reward:25},
+  {id:"score_5k", name:"Neon Climber", desc:"Score 5,000 in a run", goal:5000, kind:"bestScore", reward:50},
+  {id:"score_10k", name:"Skyline", desc:"Score 10,000 in a run", goal:10000, kind:"bestScore", reward:90},
+  {id:"score_25k", name:"Overdrive", desc:"Score 25,000 in a run", goal:25000, kind:"bestScore", reward:160},
+  {id:"combo_3", name:"Triple Threat", desc:"Hit a x3 combo", goal:3, kind:"bestCombo", reward:30},
+  {id:"combo_5", name:"On Fire", desc:"Hit a x5 combo", goal:5, kind:"bestCombo", reward:60},
+  {id:"combo_8", name:"Inferno", desc:"Hit a x8 combo", goal:8, kind:"bestCombo", reward:120},
+  {id:"quad_1", name:"Full Sweep", desc:"Land a 4-line clear", goal:1, kind:"quads", reward:40},
+  {id:"quad_10", name:"Sweep Artist", desc:"Land 10 four-line clears", goal:10, kind:"quads", reward:100},
+  {id:"games_5", name:"Shift Starter", desc:"Play 5 runs", goal:5, kind:"games", reward:25},
+  {id:"games_25", name:"Night Shift", desc:"Play 25 runs", goal:25, kind:"games", reward:70},
+  {id:"games_100", name:"Dock Lifer", desc:"Play 100 runs", goal:100, kind:"games", reward:200},
+  {id:"streak_3", name:"Three Nights", desc:"3-day login streak", goal:3, kind:"streak", reward:40},
+  {id:"streak_7", name:"Week on the Docks", desc:"7-day login streak", goal:7, kind:"streak", reward:100},
+  {id:"streak_14", name:"Fortnight Neon", desc:"14-day login streak", goal:14, kind:"streak", reward:180},
+  {id:"level_5", name:"Rising Raccoon", desc:"Reach player level 5", goal:5, kind:"playerLevel", reward:50},
+  {id:"level_10", name:"Mask Veteran", desc:"Reach player level 10", goal:10, kind:"playerLevel", reward:100},
+  {id:"level_20", name:"Boss of Trash", desc:"Reach player level 20", goal:20, kind:"playerLevel", reward:220},
+  {id:"shinies_500", name:"Shiny Pockets", desc:"Hold 500 Shinies at once", goal:500, kind:"shiniesHeld", reward:40},
+  {id:"shinies_earned", name:"Hoarder", desc:"Earn 1,000 Shinies lifetime", goal:1000, kind:"shiniesEarned", reward:80},
+  {id:"skins_3", name:"Wardrobe", desc:"Own 3 skins", goal:3, kind:"skinsOwned", reward:35},
+  {id:"skins_all", name:"Full Closet", desc:"Own every skin", goal:7, kind:"skinsOwned", reward:150},
+  {id:"bgs_3", name:"Scenic", desc:"Own 3 backgrounds", goal:3, kind:"bgsOwned", reward:35},
+  {id:"hard_50", name:"Drop Machine", desc:"Hard-drop 50 times", goal:50, kind:"hardDrops", reward:40},
+  {id:"spin_1", name:"Lucky Night", desc:"Spin the daily wheel", goal:1, kind:"spins", reward:20},
+  {id:"spin_7", name:"Wheel Regular", desc:"Spin 7 times", goal:7, kind:"spins", reward:70},
+  {id:"continue_1", name:"Second Chance", desc:"Revive once via rewarded ad", goal:1, kind:"continues", reward:30},
+  {id:"pb_chase", name:"Chaser", desc:"Beat your personal best", goal:1, kind:"pbBeats", reward:45},
+  {id:"week_clear", name:"Weekly Hero", desc:"Complete a weekly challenge", goal:1, kind:"weeklies", reward:60}
+];
+const WEEKLY_POOL = [
+  {id:"w_lines100", name:"Clear 100 lines this week", goal:100, kind:"linesWeek", reward:120},
+  {id:"w_score20k", name:"Best run score 20,000", goal:20000, kind:"scoreWeekBest", reward:140},
+  {id:"w_quads5", name:"Land 5 four-line clears", goal:5, kind:"quadWeek", reward:110},
+  {id:"w_games10", name:"Play 10 runs this week", goal:10, kind:"gamesWeek", reward:90},
+  {id:"w_combo6", name:"Hit a x6 combo", goal:6, kind:"comboWeek", reward:130}
+];
+const BP_FREE = [
+  {at:1, reward:{shinies:20}},
+  {at:2, reward:{shinies:30}},
+  {at:3, reward:{trail:"cyan"}},
+  {at:4, reward:{shinies:40}},
+  {at:5, reward:{shinies:50}},
+  {at:6, reward:{bg:"rooftop"}},
+  {at:7, reward:{shinies:60}},
+  {at:8, reward:{shinies:80}},
+  {at:9, reward:{skin:"glass"}},
+  {at:10, reward:{shinies:120}}
+];
+const BP_PREMIUM = [
+  {at:1, reward:{shinies:40}},
+  {at:2, reward:{shinies:60}},
+  {at:3, reward:{trail:"mag"}},
+  {at:4, reward:{shinies:80}},
+  {at:5, reward:{skin:"gold"}},
+  {at:6, reward:{shinies:100}},
+  {at:7, reward:{trail:"gold"}},
+  {at:8, reward:{shinies:120}},
+  {at:9, reward:{skin:"circuit"}},
+  {at:10, reward:{shinies:200}}
+];
+const WHEEL_ODDS = WHEEL.map(w => ({ label:w.label, pct: Math.round(100/WHEEL.length) }));
+/* META_JS_V2_END */
+
+
 const LINE_SCORE = [0,100,300,500,800];
 const LINE_SHINY = [0,1,3,6,12];
 const ANNOUNCE = {
@@ -470,12 +627,19 @@ function hashStr(s){
 function defaultSave(){
   return {
     highScore:0, shinies:50, xp:0, playerLevel:1,
-    unlockedSkins:["neon"], unlockedBgs:["docks"],
-    skin:"neon", bg:"docks", muted:false,
-    dailyStreak:0, lastPlayDate:"", lastSpinDate:"",
-    welcomed:false, sawHow:false,
+    unlockedSkins:["neon"], unlockedBgs:["docks"], unlockedTrails:["none"],
+    skin:"neon", bg:"docks", trail:"none", muted:false,
+    dailyStreak:0, lastPlayDate:"", lastSpinDate:"", lastLoginClaim:"",
+    loginHistory:[], welcomed:false, sawHow:false, adsRemoved:false, premiumPass:false,
     challenges:{date:"", items:[]},
-    gamesPlayed:0, totalLines:0, dayLines:0, dayGames:0, dayDate:""
+    weekly:{week:"", items:[]},
+    achievements:{},
+    gamesPlayed:0, totalLines:0, dayLines:0, dayGames:0, dayDate:"",
+    shiniesEarned:50, quads:0, hardDropTotal:0, bestCombo:0, spins:0, continues:0, pbBeats:0, weekliesDone:0,
+    runShinies:0, localScores:[],
+    battlePass:{ season:1, xp:0, claimedFree:[], claimedPremium:[] },
+    // IAP stubs — TODO: StoreKit / Play Billing product IDs
+    iap:{ removeAdsProductId:"", premiumPassProductId:"" }
   };
 }
 let save = defaultSave();
@@ -500,9 +664,20 @@ function persist(){
     Promise.resolve(bridge.saveProgress(KEY, payload)).catch(()=>{});
   }
 }
+function weekKey(){
+  const d=new Date();
+  const onejan=new Date(d.getFullYear(),0,1);
+  const week=Math.ceil((((d-onejan)/86400000)+onejan.getDay()+1)/7);
+  return d.getFullYear()+"-W"+String(week).padStart(2,"0");
+}
 function rollDaily(){
   const t = todayKey();
   if (save.dayDate !== t){ save.dayLines = 0; save.dayGames = 0; save.dayDate = t; }
+  if (!save.unlockedTrails) save.unlockedTrails=["none"];
+  if (!save.achievements) save.achievements={};
+  if (!save.localScores) save.localScores=[];
+  if (!save.battlePass) save.battlePass={ season:1, xp:0, claimedFree:[], claimedPremium:[] };
+  if (!save.loginHistory) save.loginHistory=[];
   if (save.challenges.date !== t){
     const rng = hashStr(t + "hustle");
     const pool = CH_POOL.slice();
@@ -513,6 +688,18 @@ function rollDaily(){
       items.push({id:ch.id, name:ch.name, goal:ch.goal, kind:ch.kind, reward:ch.reward, progress:0, claimed:false});
     }
     save.challenges = {date:t, items};
+  }
+  const wk = weekKey();
+  if (!save.weekly || save.weekly.week !== wk){
+    const rng = hashStr(wk + "week");
+    const pool = WEEKLY_POOL.slice();
+    const items=[];
+    for (let i=0;i<2;i++){
+      const idx = (rng + i*13) % pool.length;
+      const ch = pool.splice(idx % pool.length, 1)[0];
+      items.push({id:ch.id, name:ch.name, goal:ch.goal, kind:ch.kind, reward:ch.reward, progress:0, claimed:false});
+    }
+    save.weekly = {week:wk, items};
   }
 }
 
@@ -639,9 +826,12 @@ function toast(msg){
 function addShinies(n, why){
   if (!n) return;
   save.shinies += n;
+  save.shiniesEarned = (save.shiniesEarned||0) + Math.max(0,n);
+  if (why==="run") save.runShinies = (save.runShinies||0) + n;
   persist();
   syncMetaUI();
   SFX.coin();
+  checkAchievements();
 }
 function addXP(n){
   if (n<=0) return;
@@ -694,10 +884,116 @@ function checkDailyStreak(){
   if (save.lastPlayDate === yesterdayKey()) save.dailyStreak += 1;
   else save.dailyStreak = 1;
   save.lastPlayDate = t;
-  const bonus = Math.min(50, 5*save.dailyStreak);
-  addShinies(bonus);
+  if (!save.loginHistory.includes(t)) save.loginHistory.push(t);
+  while (save.loginHistory.length>42) save.loginHistory.shift();
+  const bonus = Math.min(120, 5*save.dailyStreak + Math.floor(save.dailyStreak/7)*20);
+  if (save.lastLoginClaim !== t){
+    save.lastLoginClaim = t;
+    addShinies(bonus);
+    addBattlePassXP(8 + Math.min(20, save.dailyStreak));
+    toast("Day "+save.dailyStreak+" streak  ·  +"+bonus+" Shinies");
+  }
   persist();
-  toast("Day "+save.dailyStreak+" streak  ·  +"+bonus+" Shinies");
+  checkAchievements();
+}
+
+function achievementProgress(def){
+  switch(def.kind){
+    case "linesTotal": return save.totalLines||0;
+    case "bestScore": return save.highScore||0;
+    case "bestCombo": return save.bestCombo||0;
+    case "quads": return save.quads||0;
+    case "games": return save.gamesPlayed||0;
+    case "streak": return save.dailyStreak||0;
+    case "playerLevel": return save.playerLevel||1;
+    case "shiniesHeld": return save.shinies||0;
+    case "shiniesEarned": return save.shiniesEarned||0;
+    case "skinsOwned": return (save.unlockedSkins||[]).length;
+    case "bgsOwned": return (save.unlockedBgs||[]).length;
+    case "hardDrops": return save.hardDropTotal||0;
+    case "spins": return save.spins||0;
+    case "continues": return save.continues||0;
+    case "pbBeats": return save.pbBeats||0;
+    case "weeklies": return save.weekliesDone||0;
+    default: return 0;
+  }
+}
+let _checkingAchievements=false;
+function checkAchievements(){
+  if (_checkingAchievements) return;
+  _checkingAchievements=true;
+  try{
+    if (!save.achievements) save.achievements={};
+    let unlocked=0;
+    for (const def of ACHIEVEMENTS){
+      if (save.achievements[def.id]) continue;
+      const p = achievementProgress(def);
+      if (p >= def.goal){
+        save.achievements[def.id] = { at: Date.now() };
+        save.shinies += def.reward;
+        save.shiniesEarned = (save.shiniesEarned||0) + def.reward;
+        toast("Achievement: "+def.name+"  ·  +"+def.reward+" ✦");
+        SFX.prize(); vibe(24);
+        unlocked++;
+      }
+    }
+    if (unlocked) persist();
+  } finally { _checkingAchievements=false; }
+}
+function addBattlePassXP(n){
+  if (!n) return;
+  save.battlePass.xp = (save.battlePass.xp||0) + n;
+  persist();
+  claimBattlePassReady();
+}
+function bpTierUnlocked(){
+  return Math.min(10, 1 + Math.floor((save.battlePass.xp||0)/100));
+}
+function grantBPReward(reward){
+  if (reward.shinies) addShinies(reward.shinies);
+  if (reward.skin && !save.unlockedSkins.includes(reward.skin)){ save.unlockedSkins.push(reward.skin); }
+  if (reward.bg && !save.unlockedBgs.includes(reward.bg)){ save.unlockedBgs.push(reward.bg); }
+  if (reward.trail && !save.unlockedTrails.includes(reward.trail)){ save.unlockedTrails.push(reward.trail); }
+}
+function claimBattlePassReady(){
+  const tier = bpTierUnlocked();
+  let got=false;
+  for (const row of BP_FREE){
+    if (row.at <= tier && !(save.battlePass.claimedFree||[]).includes(row.at)){
+      save.battlePass.claimedFree.push(row.at);
+      grantBPReward(row.reward);
+      got=true;
+    }
+  }
+  if (save.premiumPass){
+    for (const row of BP_PREMIUM){
+      if (row.at <= tier && !(save.battlePass.claimedPremium||[]).includes(row.at)){
+        save.battlePass.claimedPremium.push(row.at);
+        grantBPReward(row.reward);
+        got=true;
+      }
+    }
+  }
+  if (got){ persist(); toast("Night Pass reward!"); }
+}
+function bumpWeekly(kind, amount){
+  if (!save.weekly || !save.weekly.items) return;
+  for (const ch of save.weekly.items){
+    if (ch.claimed) continue;
+    if (ch.kind==="linesWeek" && kind==="lines") ch.progress = Math.min(ch.goal, ch.progress+amount);
+    if (ch.kind==="gamesWeek" && kind==="games") ch.progress = Math.min(ch.goal, ch.progress+amount);
+    if (ch.kind==="quadWeek" && kind==="quad") ch.progress = Math.min(ch.goal, ch.progress+amount);
+    if (ch.kind==="scoreWeekBest" && kind==="score") ch.progress = Math.max(ch.progress, amount);
+    if (ch.kind==="comboWeek" && kind==="combo") ch.progress = Math.max(ch.progress, amount);
+    if (ch.progress>=ch.goal && !ch.claimed){
+      ch.claimed=true; ch.progress=ch.goal;
+      addShinies(ch.reward);
+      save.weekliesDone = (save.weekliesDone||0)+1;
+      toast("Weekly done! +"+ch.reward+" Shinies");
+      checkAchievements();
+    }
+  }
+  persist();
 }
 
 // ---------- game state ----------
@@ -759,6 +1055,9 @@ function nextPiece(){
   drawPreviews();
 }
 
+let continuedThisRun=false;
+let pendingGameOver=false;
+let lastRunShinies=0;
 function resetRun(){
   board = emptyBoard();
   bag=[]; queue=[];
@@ -768,8 +1067,12 @@ function resetRun(){
   gravityAcc=0; locking=false; lockT=0; clearT=0; clearing=null;
   hardDrops=0; particles.length=0; shake=0; flashA=0;
   keys={}; dasDir=0;
+  continuedThisRun=false; pendingGameOver=false;
+  save.runShinies=0; lastRunShinies=0;
   nextPiece();
   syncGameUI();
+  const bridge = TN();
+  if (bridge && bridge.noteRunStarted) bridge.noteRunStarted();
 }
 
 function ghostY(){
@@ -879,13 +1182,19 @@ function juiceClear(n){
   level = newLv;
 
   const sh = LINE_SHINY[n] + Math.max(0, combo-1) + (difficult && b2b ? 5 : 0) + (leveled?10:0);
-  addShinies(sh);
+  addShinies(sh, "run");
   addXP(n*12 + combo*4 + (n===4?20:0));
 
   bumpChallenge("lines", n);
   bumpChallenge("score", score);
   bumpChallenge("combo", combo);
-  if (n===4) bumpChallenge("quad", 1);
+  if (n===4){ bumpChallenge("quad", 1); save.quads=(save.quads||0)+1; bumpWeekly("quad",1); }
+  bumpWeekly("lines", n);
+  bumpWeekly("score", score);
+  bumpWeekly("combo", combo);
+  if (combo > (save.bestCombo||0)) save.bestCombo = combo;
+  addBattlePassXP(n*2 + Math.min(8, combo));
+  checkAchievements();
 
   const wrap = document.getElementById("boardWrap").getBoundingClientRect();
   const midY = (clearing[0] ? rowToY(clearing[0]) : wrap.height/2);
@@ -946,6 +1255,7 @@ function hardDrop(){
   while (valid(cur.type,cur.rot,cur.x,cur.y+1)){ cur.y++; d++; }
   score += d*2;
   hardDrops++;
+  save.hardDropTotal = (save.hardDropTotal||0)+1;
   bumpChallenge("hard", 1);
   SFX.drop(); vibe(16);
   const wrap = document.getElementById("boardWrap").getBoundingClientRect();
@@ -964,15 +1274,61 @@ function softDropOnce(){
 }
 
 function gameOver(){
+  if (over || pendingGameOver) return;
+  // Near-miss continue: once per run via rewarded ad
+  if (!continuedThisRun && started){
+    pendingGameOver = true;
+    paused = true;
+    document.getElementById("continueOv").classList.remove("hidden");
+    return;
+  }
+  finalizeGameOver();
+}
+async function reviveFromAd(){
+  const bridge = TN();
+  let ok = false;
+  if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("revive");
+  else ok = true; // web stub
+  document.getElementById("continueOv").classList.add("hidden");
+  if (!ok){ pendingGameOver=false; finalizeGameOver(); return; }
+  continuedThisRun = true;
+  save.continues = (save.continues||0)+1;
+  pendingGameOver = false;
+  over=false; started=true; paused=false;
+  // Clear top clutter so the player can breathe
+  for (let y=0;y<HID+2;y++) for (let x=0;x<COLS;x++) board[y][x]=0;
+  nextPiece();
+  persist(); checkAchievements();
+  toast("Revived — one more chance!");
+  SFX.level();
+}
+function skipContinue(){
+  document.getElementById("continueOv").classList.add("hidden");
+  pendingGameOver=false;
+  finalizeGameOver();
+}
+function finalizeGameOver(){
   if (over) return;
-  over=true; started=false; cur=null;
+  over=true; started=false; cur=null; paused=false;
   SFX.over(); vibe([40,40,80]);
   save.gamesPlayed++; save.dayGames++; save.totalLines += lines;
   bumpChallenge("games", 1);
+  bumpWeekly("games", 1);
   let best=false;
-  if (score > save.highScore){ save.highScore=score; best=true; persist(); }
+  if (score > save.highScore){
+    save.highScore=score; best=true;
+    save.pbBeats = (save.pbBeats||0)+1;
+  }
+  // Local leaderboard (top 10)
+  save.localScores = (save.localScores||[]);
+  save.localScores.push({ score, lines, at: Date.now() });
+  save.localScores.sort((a,b)=>b.score-a.score);
+  save.localScores = save.localScores.slice(0,10);
+  lastRunShinies = save.runShinies||0;
   addXP(Math.floor(score/80)+5);
+  addBattlePassXP(Math.floor(lines/2)+5);
   persist();
+  checkAchievements();
   const ov = document.getElementById("overOv");
   document.getElementById("overTitle").textContent = best ? "NEW BEST" : "STACKED OUT";
   document.getElementById("overScore").textContent = "Score "+score.toLocaleString()+"   ·   "+lines+" lines";
@@ -980,6 +1336,34 @@ function gameOver(){
   document.getElementById("nearMiss").innerHTML = nearMissHTML();
   ov.classList.remove("hidden");
   syncMetaUI();
+  // Offer double Shinies if we earned some this run
+  if (lastRunShinies > 0 && !save.adsRemoved){
+    document.getElementById("doubleHint").textContent = "Double the "+lastRunShinies+" Shinies from this run with a rewarded ad.";
+    document.getElementById("doubleOv").classList.remove("hidden");
+  } else {
+    maybeInterstitialBetweenRuns();
+  }
+}
+async function maybeInterstitialBetweenRuns(){
+  const bridge = TN();
+  if (!bridge || !bridge.maybeShowInterstitial) return;
+  try{ await bridge.maybeShowInterstitial({ adsRemoved: !!save.adsRemoved }); }catch(e){}
+}
+async function doubleShiniesFromAd(){
+  const bridge = TN();
+  let ok=false;
+  if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("double");
+  else ok = true;
+  document.getElementById("doubleOv").classList.add("hidden");
+  if (ok && lastRunShinies>0){
+    addShinies(lastRunShinies);
+    toast("Doubled! +"+lastRunShinies+" Shinies");
+  }
+  maybeInterstitialBetweenRuns();
+}
+function skipDouble(){
+  document.getElementById("doubleOv").classList.add("hidden");
+  maybeInterstitialBetweenRuns();
 }
 
 function nearMissHTML(){
@@ -1280,10 +1664,15 @@ function updateComboUI(){
 }
 function renderChallenges(){
   const host=document.getElementById("chList");
-  host.innerHTML = save.challenges.items.map(ch=>{
+  const daily = (save.challenges.items||[]).map(ch=>{
     const p=Math.min(100, Math.floor(ch.progress/ch.goal*100));
     return `<div class="ch ${ch.claimed?"done":""}"><span style="flex:0 0 18px">${ch.claimed?"✓":"○"}</span><div style="flex:1"><div>${ch.name}  <span class="gold">+${ch.reward}✦</span></div><div class="bar"><div class="fill" style="width:${p}%"></div></div></div><span style="font-size:11px;color:var(--dim)">${Math.min(ch.progress,ch.goal)}/${ch.goal}</span></div>`;
   }).join("");
+  const weekly = (save.weekly && save.weekly.items ? save.weekly.items : []).map(ch=>{
+    const p=Math.min(100, Math.floor(ch.progress/ch.goal*100));
+    return `<div class="ch ${ch.claimed?"done":""}"><span style="flex:0 0 18px">${ch.claimed?"✓":"◎"}</span><div style="flex:1"><div><span style="color:var(--mag)">WEEKLY</span> ${ch.name}  <span class="gold">+${ch.reward}✦</span></div><div class="bar"><div class="fill" style="width:${p}%;background:var(--mag)"></div></div></div><span style="font-size:11px;color:var(--dim)">${Math.min(ch.progress,ch.goal)}/${ch.goal}</span></div>`;
+  }).join("");
+  host.innerHTML = daily + weekly;
 }
 
 function showScreen(name){
@@ -1312,16 +1701,19 @@ function pauseGame(on){
 
 // ---------- shop / spin ----------
 let shopTab="skins";
+function shopCatalog(){
+  if (shopTab==="skins") return { items:SKINS, unlocked:save.unlockedSkins, eq:save.skin, sw:it=>it.sw };
+  if (shopTab==="bgs") return { items:BGS, unlocked:save.unlockedBgs, eq:save.bg, sw:it=>it.sw };
+  return { items:TRAILS, unlocked:save.unlockedTrails||["none"], eq:save.trail||"none", sw:it=>`radial-gradient(circle, ${it.color} 0 40%, #0e1220 42%)` };
+}
 function renderShop(){
   const host=document.getElementById("shopGrid");
-  const items = shopTab==="skins" ? SKINS : BGS;
-  const unlocked = shopTab==="skins" ? save.unlockedSkins : save.unlockedBgs;
-  const eq = shopTab==="skins" ? save.skin : save.bg;
-  host.innerHTML = items.map(it=>{
-    const own=unlocked.includes(it.id);
-    const equipped = eq===it.id;
+  const cat = shopCatalog();
+  host.innerHTML = cat.items.map(it=>{
+    const own=cat.unlocked.includes(it.id);
+    const equipped = cat.eq===it.id;
     return `<div class="shop-item ${own?"owned":""} ${equipped?"eq":""}" data-id="${it.id}">
-      <div class="swatch" style="background:${it.sw}"></div>
+      <div class="swatch" style="background:${cat.sw(it)}"></div>
       <b>${it.name}</b>
       <div class="gold">${own?(equipped?"Equipped":"Owned"):(it.price+" ✦")}</div>
     </div>`;
@@ -1329,18 +1721,19 @@ function renderShop(){
   host.querySelectorAll(".shop-item").forEach(el=>{
     el.addEventListener("click", ()=>{
       const id=el.getAttribute("data-id");
-      const list = shopTab==="skins"?SKINS:BGS;
-      const it=list.find(x=>x.id===id);
-      const arr = shopTab==="skins"?save.unlockedSkins:save.unlockedBgs;
-      if (!arr.includes(id)){
+      const cat = shopCatalog();
+      const it=cat.items.find(x=>x.id===id);
+      if (!cat.unlocked.includes(id)){
         if (save.shinies < it.price){ toast("Need "+(it.price-save.shinies)+" more Shinies"); vibe(20); return; }
         save.shinies -= it.price;
-        arr.push(id);
+        cat.unlocked.push(id);
         toast("Unlocked "+it.name+"!");
         SFX.prize();
       }
-      if (shopTab==="skins") save.skin=id; else save.bg=id;
-      persist(); syncMetaUI(); renderShop();
+      if (shopTab==="skins") save.skin=id;
+      else if (shopTab==="bgs") save.bg=id;
+      else save.trail=id;
+      persist(); syncMetaUI(); renderShop(); checkAchievements();
     });
   });
 }
@@ -1367,9 +1760,26 @@ let spinning=false, wheelAng=0;
 function canSpin(){ return save.lastSpinDate !== todayKey(); }
 function openSpin(){
   document.getElementById("spinOv").classList.remove("hidden");
-  document.getElementById("spinHint").textContent = canSpin() ? "Free once a day. Cosmetics and Shinies only." : "Already spun today. Come back tomorrow.";
+  document.getElementById("spinHint").textContent = canSpin() ? "Free once a day. Cosmetics and Shinies only." : "Already spun today — or watch an ad for one extra spin.";
   document.getElementById("spinGo").disabled = !canSpin() || spinning;
+  const adBtn = document.getElementById("spinAdBtn");
+  adBtn.style.display = (!canSpin() && !save.adsRemoved) ? "block" : "none";
+  adBtn.disabled = spinning;
+  document.getElementById("spinOdds").innerHTML = "<b>Odds</b> (equal slices): "+WHEEL_ODDS.map(o=>o.label+" "+o.pct+"%").join(" · ");
   drawWheel(wheelAng);
+}
+async function spinFromAd(){
+  if (spinning || canSpin()) return;
+  const bridge = TN();
+  let ok=false;
+  if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("spin");
+  else ok = true;
+  if (!ok){ toast("Ad unavailable — try later"); return; }
+  // Temporarily allow one spin without consuming the free daily if already used
+  save.lastSpinDate = ""; // re-open free path for this rewarded spin
+  persist();
+  openSpin();
+  doSpin(true);
 }
 function grantPrize(p){
   if (p.kind==="shinies"){
@@ -1393,11 +1803,13 @@ function grantPrize(p){
   }
   SFX.prize(); vibe([20,40,20,40,40]);
 }
-function doSpin(){
+function doSpin(fromAd){
   if (!canSpin() || spinning) return;
   ensureAudio();
   spinning=true;
   document.getElementById("spinGo").disabled=true;
+  const adBtn=document.getElementById("spinAdBtn");
+  if (adBtn) adBtn.disabled=true;
   const idx = Math.floor(Math.random()*WHEEL.length);
   const n=WHEEL.length, slice=Math.PI*2/n;
   // nub is at top; segment i is centered at i*slice + slice/2 from starting -PI/2 after rotate?
@@ -1419,12 +1831,63 @@ function doSpin(){
       requestAnimationFrame(anim);
     } else {
       spinning=false;
-      save.lastSpinDate = todayKey(); persist();
+      save.lastSpinDate = todayKey();
+      save.spins = (save.spins||0)+1;
+      persist();
       grantPrize(WHEEL[idx]);
-      document.getElementById("spinHint").textContent = "Won "+WHEEL[idx].label+" — next spin tomorrow.";
+      checkAchievements();
+      document.getElementById("spinHint").textContent = "Won "+WHEEL[idx].label+(fromAd?" (ad spin)":"")+" — next free spin tomorrow.";
+      openSpin();
     }
   }
   requestAnimationFrame(anim);
+}
+
+function renderAchievements(){
+  const host=document.getElementById("achList");
+  let done=0;
+  host.innerHTML = ACHIEVEMENTS.map(def=>{
+    const on=!!(save.achievements&&save.achievements[def.id]);
+    if (on) done++;
+    const p=Math.min(def.goal, achievementProgress(def));
+    return `<div class="ach-row ${on?"on":""}"><div class="ach-ico">${on?"✓":"○"}</div><div style="flex:1"><b>${def.name}</b><div style="color:var(--dim)">${def.desc}</div></div><div class="gold">${on?("+"+def.reward+"✦"):(p+"/"+def.goal)}</div></div>`;
+  }).join("");
+  document.getElementById("achProgress").textContent = done+" / "+ACHIEVEMENTS.length+" unlocked";
+}
+function renderLeaderboard(){
+  const host=document.getElementById("lbList");
+  const rows = (save.localScores||[]);
+  if (!rows.length){ host.innerHTML = `<div class="lb-row">No runs yet — set a personal best tonight.</div>`; return; }
+  host.innerHTML = rows.map((r,i)=>`<div class="lb-row"><b>#${i+1}</b><div style="flex:1">${r.score.toLocaleString()} · ${r.lines} lines</div><span style="color:var(--dim);font-size:11px">${new Date(r.at).toLocaleDateString()}</span></div>`).join("");
+}
+function renderBattlePass(){
+  const tier = bpTierUnlocked();
+  document.getElementById("bpFill").style.width = Math.min(100, ((save.battlePass.xp||0)%100))+"%";
+  const host=document.getElementById("bpList");
+  host.innerHTML = BP_FREE.map((row,i)=>{
+    const prem = BP_PREMIUM[i];
+    const freeClaimed = (save.battlePass.claimedFree||[]).includes(row.at);
+    const premClaimed = (save.battlePass.claimedPremium||[]).includes(row.at);
+    const unlocked = row.at <= tier;
+    return `<div class="bp-row"><b>T${row.at}</b><div style="flex:1">Free: ${freeClaimed?"claimed":unlocked?"ready":"locked"} · Premium: ${save.premiumPass?(premClaimed?"claimed":unlocked?"ready":"locked"):"stub"}</div></div>`;
+  }).join("");
+}
+function renderCalendar(){
+  const host=document.getElementById("calGrid");
+  const days=[];
+  const now=new Date();
+  for (let i=27;i>=0;i--){
+    const d=new Date(now); d.setDate(now.getDate()-i);
+    const key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    days.push(key);
+  }
+  host.innerHTML = days.map(key=>{
+    const on=(save.loginHistory||[]).includes(key);
+    const today=key===todayKey();
+    return `<div class="cal-day ${on?"on":""} ${today?"today":""}" title="${key}">${key.slice(-2)}</div>`;
+  }).join("");
+  document.getElementById("calHint").textContent = "Current streak: Day "+(save.dailyStreak||0)+" · next login bonus grows each day (cap 120 Shinies).";
+  document.getElementById("calOdds").textContent = "Streak bonus = min(120, 5×day + 20×floor(day/7)). No paid loot — login rewards are fixed.";
 }
 
 // ---------- input ----------
@@ -1550,12 +2013,31 @@ document.getElementById("muteTitle").addEventListener("click", ()=>{ ensureAudio
 document.getElementById("muteGame").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
 document.getElementById("passBtn").addEventListener("click", (ev)=>{
   ev.preventDefault();
-  toast("Premium Pass (coming soon) — not available in 1.0.");
+  toast("Premium Pass (coming soon) — StoreKit/Play Billing TODO.");
+});
+document.getElementById("removeAdsBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  // TODO: StoreKit / Play Billing one-time Remove Ads product
+  toast("Remove Ads (coming soon) — no charge yet.");
 });
 document.getElementById("lvlClose").addEventListener("click", ()=>{
   document.getElementById("lvlOv").classList.add("hidden");
   if (screen==="game" && !over) pauseGame(false);
 });
+document.getElementById("continueAdBtn").addEventListener("click", ()=>{ ensureAudio(); reviveFromAd(); });
+document.getElementById("continueSkipBtn").addEventListener("click", skipContinue);
+document.getElementById("doubleAdBtn").addEventListener("click", ()=>{ ensureAudio(); doubleShiniesFromAd(); });
+document.getElementById("doubleSkipBtn").addEventListener("click", skipDouble);
+document.getElementById("spinAdBtn").addEventListener("click", ()=>{ ensureAudio(); spinFromAd(); });
+document.getElementById("achBtn").addEventListener("click", ()=>{ renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); });
+document.getElementById("achClose").addEventListener("click", ()=>document.getElementById("achOv").classList.add("hidden"));
+document.getElementById("lbBtn").addEventListener("click", ()=>{ renderLeaderboard(); document.getElementById("lbOv").classList.remove("hidden"); });
+document.getElementById("lbClose").addEventListener("click", ()=>document.getElementById("lbOv").classList.add("hidden"));
+document.getElementById("bpBtn").addEventListener("click", ()=>{ renderBattlePass(); document.getElementById("bpOv").classList.remove("hidden"); });
+document.getElementById("bpClose").addEventListener("click", ()=>document.getElementById("bpOv").classList.add("hidden"));
+document.getElementById("bpPremiumBtn").addEventListener("click", (ev)=>{ ev.preventDefault(); toast("Premium Night Pass lane is stubbed — coming soon."); });
+document.getElementById("calBtn").addEventListener("click", ()=>{ renderCalendar(); document.getElementById("calOv").classList.remove("hidden"); });
+document.getElementById("calClose").addEventListener("click", ()=>document.getElementById("calOv").classList.add("hidden"));
 
 document.addEventListener("pointerdown", ensureAudio, {once:false});
 
@@ -1600,7 +2082,8 @@ window.__TS = {
     return window.__TS.state();
   },
   hardDrop, tryMove, tryRot, doHold,
-  save, SKINS, BGS,
+  save, SKINS, BGS, TRAILS, ACHIEVEMENTS,
+  renderAchievements, renderBattlePass, renderCalendar, renderLeaderboard,
   layout(){
     resizeBoard();
     const wrap=document.getElementById("boardWrap");
@@ -1647,8 +2130,13 @@ async function boot(){
   }
   await load();
   if (!save.welcomed){ save.welcomed=true; persist(); }
+  // ATT + UMP consent + AdMob init (test units by default)
+  if (bridge && bridge.initAds){
+    try{ await bridge.initAds(); }catch(e){}
+  }
   syncMetaUI();
   checkDailyStreak();
+  checkAchievements();
   syncMetaUI();
   drawWheel(0);
   requestAnimationFrame(frame);

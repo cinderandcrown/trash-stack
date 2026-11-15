@@ -24,7 +24,7 @@ Web: https://trash-stack.pages.dev/
 
 Trash Stack is a neon night-city falling-block puzzle from Cinder and Crown. Stack glowing pieces in the docks, clear rows, chain combos, and chase Shinies under neon rain.
 
-Play offline on night shift. Unlock raccoon-mask skins and city backgrounds with in-game Shinies — no ads, no accounts, and no real-money shop in 1.0.
+Free to play with optional rewarded ads. Unlock raccoon-mask skins, trails, and city backgrounds with in-game Shinies — no accounts, no paid loot boxes, and no real-money gambling.
 
 - Portrait, one-hand friendly controls (tap, swipe, pads)
 - Daily spin and tonight’s hustle challenges
@@ -61,17 +61,23 @@ Answer **No** / none for:
 
 This is a casual abstract puzzle with neon cosmetics. Expected rating: **4+**.
 
-### Privacy nutrition label
+### Privacy nutrition label (App Store)
 
-**Data Not Collected.**
+With AdMob (free + ads):
 
-- No tracking
-- No analytics SDKs
-- No account
-- No ads
-- Progress stays on-device (UserDefaults / Preferences)
+| Data type | Linked to identity | Used for tracking | Purpose |
+|-----------|--------------------|-------------------|---------|
+| Device ID | No | Yes (if ATT allowed) | Third-party advertising |
+| Advertising Data | No | Yes (if ATT allowed) | Third-party advertising |
 
-`ITSAppUsesNonExemptEncryption` = **false** (no custom encryption; no networking for gameplay).
+- Progress / scores stay on-device (UserDefaults / Preferences) — not collected by Cinder and Crown
+- ATT prompt + UMP consent on iOS / GDPR regions
+- `PrivacyInfo.xcprivacy` declares UserDefaults (CA92.1) + advertising/device ID for AdMob
+- `ITSAppUsesNonExemptEncryption` = **false**
+
+### Play Data safety (Android)
+
+Declare AdMob advertising ID / ad interaction as collected by Google for advertising. App does not share data with other third parties beyond the ad SDK. No account data.
 
 ### Screenshot plan
 
@@ -150,6 +156,11 @@ If legal review asks for further distance: add a asymmetric “junk” piece set
 
 ---
 
-## Monetization (1.0)
+## Monetization (free + ads)
 
-Out of scope. UI shows a disabled **Premium Pass (coming soon)** button only — no StoreKit / Play Billing.
+- **Rewarded video (opt-in):** revive once per run, double Shinies after a run, extra daily spin
+- **Interstitials:** between runs only; never first 2 runs of a session; at most one every 3 game overs; **no banners during play**
+- **Remove Ads** — one-time IAP stub (disabled; StoreKit/Play Billing TODO, no product IDs yet)
+- **Premium Pass / Night Pass premium lane** — stub only
+- Ad units default to **Google official TEST IDs**; real IDs via `web/ad-config.js` + native app ID strings
+- No real-money gambling / paid loot boxes; spin odds shown in-app

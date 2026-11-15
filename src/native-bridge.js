@@ -4,6 +4,13 @@ import { Preferences } from '@capacitor/preferences';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { SplashScreen } from '@capacitor/splash-screen';
 import { App } from '@capacitor/app';
+import {
+  initAds,
+  noteRunStarted,
+  maybeShowInterstitial,
+  showRewarded,
+  getAdDebugInfo,
+} from './ads.js';
 
 const native = Capacitor.isNativePlatform();
 
@@ -27,11 +34,8 @@ async function hideSplash() {
   } catch (_) {}
 }
 
-/**
- * Map legacy vibrate durations to Capacitor haptics.
- * Short ticks → Light, medium → Medium, long clears → Heavy.
- */
 async function haptic(ms) {
+  const duration = Array.isArray(ms) ? ms.reduce((a, b) => a + b, 0) / ms.length : ms;
   if (!native) {
     try {
       if (navigator.vibrate) navigator.vibrate(ms);
@@ -39,9 +43,9 @@ async function haptic(ms) {
     return;
   }
   try {
-    if (ms >= 80) {
+    if (duration >= 80) {
       await Haptics.impact({ style: ImpactStyle.Heavy });
-    } else if (ms >= 30) {
+    } else if (duration >= 30) {
       await Haptics.impact({ style: ImpactStyle.Medium });
     } else {
       await Haptics.impact({ style: ImpactStyle.Light });
@@ -68,7 +72,6 @@ async function getPref(key) {
 async function setPref(key, value) {
   if (native) {
     await Preferences.set({ key, value });
-    // Keep a localStorage mirror so web tooling / migrations stay consistent.
     try {
       localStorage.setItem(key, value);
     } catch (_) {}
@@ -79,10 +82,6 @@ async function setPref(key, value) {
   } catch (_) {}
 }
 
-/**
- * Prefer Capacitor Preferences on native. One-time migrate from localStorage
- * when Preferences is empty but localStorage still has progress.
- */
 async function loadProgress(key) {
   let value = await getPref(key);
   if (value == null) {
@@ -104,7 +103,6 @@ async function saveProgress(key, value) {
 }
 
 async function consumeShotMode() {
-  // CI sets Preferences key "trashStack.shot" = "game" before launch for screenshots.
   try {
     const { value } = await Preferences.get({ key: 'trashStack.shot' });
     if (value) {
@@ -128,6 +126,11 @@ window.TrashNative = {
   loadProgress,
   saveProgress,
   consumeShotMode,
+  initAds,
+  noteRunStarted,
+  maybeShowInterstitial,
+  showRewarded,
+  getAdDebugInfo,
   App,
 };
 

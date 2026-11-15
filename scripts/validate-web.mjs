@@ -31,6 +31,14 @@ if (!/TrashNative/.test(html) && !/native\.js/.test(html)) {
 if (!/passBtn/.test(html) || !/disabled/.test(html)) {
   fail('Premium Pass button should be present and disabled');
 }
+if (!/removeAdsBtn/.test(html)) {
+  fail('Remove Ads stub button missing');
+}
+if (!/ad-config\.js/.test(html)) {
+  fail('ad-config.js should be loaded');
+}
+if (!fs.existsSync(path.join(web, 'ad-config.js'))) fail('web/ad-config.js missing');
+if ((html.match(/ACHIEVEMENTS/g) || []).length < 1) fail('Achievements system missing');
 
 if (errors.length) {
   console.error('validate-web FAILED:\n' + errors.map((e) => ' - ' + e).join('\n'));

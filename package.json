@@ -14,6 +14,7 @@
     "assets:native": "npx capacitor-assets generate --ios --android --iconBackgroundColor '#07070f' --iconBackgroundColorDark '#07070f' --splashBackgroundColor '#07070f' --splashBackgroundColorDark '#07070f' --assetPath resources"
   },
   "dependencies": {
+    "@capacitor-community/admob": "8.3.0",
     "@capacitor/android": "8.6.2",
     "@capacitor/app": "8.1.2",
     "@capacitor/core": "8.6.2",
