@@ -19,7 +19,7 @@ struct GameContainerView: View {
     @State private var hudLevel = 1
     @State private var raccoonMood: CompactorScene.RaccoonMood = .idle
     @State private var showPause = false
-    @State private var scoreTick: Timer?
+    @State private var scoreAnimTask: Task<Void, Never>?
 
     var body: some View {
         // No SwiftUI AlleyBackdrop here — SpriteKit owns the playfield wash.
@@ -59,7 +59,7 @@ struct GameContainerView: View {
         }
         .background(Color(red: 0.02, green: 0.02, blue: 0.06).ignoresSafeArea())
         .onAppear(perform: bootstrap)
-        .onDisappear { scoreTick?.invalidate(); scoreTick = nil }
+        .onDisappear { scoreAnimTask?.cancel(); scoreAnimTask = nil }
         .onChange(of: hudScore) { _, newValue in
             animateScore(to: newValue)
         }
@@ -231,21 +231,20 @@ struct GameContainerView: View {
     }
 
     private func animateScore(to target: Int) {
-        scoreTick?.invalidate()
+        scoreAnimTask?.cancel()
         let start = displayScore
         let delta = target - start
         guard delta != 0 else { return }
         let steps = min(24, max(8, abs(delta) / 40))
-        var step = 0
-        scoreTick = Timer.scheduledTimer(withTimeInterval: 0.03, repeats: true) { timer in
-            step += 1
-            let t = Double(step) / Double(steps)
-            let eased = 1 - pow(1 - t, 3)
-            displayScore = start + Int(Double(delta) * eased)
-            if step >= steps {
-                displayScore = target
-                timer.invalidate()
+        scoreAnimTask = Task { @MainActor in
+            for step in 1...steps {
+                try? await Task.sleep(nanoseconds: 30_000_000)
+                if Task.isCancelled { return }
+                let t = Double(step) / Double(steps)
+                let eased = 1 - pow(1 - t, 3)
+                displayScore = start + Int(Double(delta) * eased)
             }
+            displayScore = target
         }
     }
 
@@ -303,17 +302,17 @@ struct GameContainerView: View {
                 scene.applyShot(shot)
                 if shot == "demo" || shot == "autoplay" {
                     scene.autoplay = true
-                    scene.startDemoChoreography { [weak scene] in
+                    let playScene = scene
+                    playScene.startDemoChoreography {
                         Task { @MainActor in
                             raccoonMood = .panic
                             showContinue = true
                             // Auto-revive for CI video beat, then keep playing briefly.
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) {
-                                showContinue = false
-                                continued = true
-                                scene?.revive()
-                                AudioService.shared.playSFX("levelup")
-                            }
+                            try? await Task.sleep(nanoseconds: 2_200_000_000)
+                            showContinue = false
+                            continued = true
+                            playScene.revive()
+                            AudioService.shared.playSFX("levelup")
                         }
                     }
                 }
