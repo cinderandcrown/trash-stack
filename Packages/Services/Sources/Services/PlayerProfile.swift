@@ -20,6 +20,8 @@ public final class PlayerProfile: ObservableObject {
     @Published public var adsRemoved: Bool = false
     @Published public var premiumPass: Bool = false
     @Published public var battlePassXP: Int = 0
+    @Published public var tutorialDone: Bool = false
+    @Published public var classicButtons: Bool = false
     @Published public var baseLevels: [String: Int] = [
         "recycler": 1, "compactor": 1, "neonSign": 1, "stashVault": 1,
     ]
@@ -47,6 +49,8 @@ public final class PlayerProfile: ObservableObject {
         adsRemoved = defaults.bool(forKey: "adsRemoved")
         premiumPass = defaults.bool(forKey: "premiumPass")
         battlePassXP = defaults.integer(forKey: "battlePassXP")
+        tutorialDone = defaults.bool(forKey: "tutorialDone")
+        classicButtons = defaults.bool(forKey: "classicButtons")
     }
 
     public func persist() {
@@ -61,6 +65,8 @@ public final class PlayerProfile: ObservableObject {
         defaults.set(adsRemoved, forKey: "adsRemoved")
         defaults.set(premiumPass, forKey: "premiumPass")
         defaults.set(battlePassXP, forKey: "battlePassXP")
+        defaults.set(tutorialDone, forKey: "tutorialDone")
+        defaults.set(classicButtons, forKey: "classicButtons")
     }
 
     public func addScrap(_ n: Int) {

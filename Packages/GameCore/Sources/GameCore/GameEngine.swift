@@ -255,4 +255,72 @@ public struct GameEngine: Sendable {
         if Bool.random() { _ = tryMove(dx: Bool.random() ? 1 : -1, dy: 0) }
         hardDrop()
     }
+
+    public mutating func drainEvents() -> [GameEvent] {
+        let e = events
+        events.removeAll()
+        return e
+    }
+
+    /// Seed boards for App Store evidence shots so each screenshot is visually distinct.
+    public mutating func applyShotScenario(_ shot: String) {
+        state = GameState(config: state.board.config)
+        events = []
+        bag = RNGBag(seed: 0x5C01)
+        fillQueue()
+        let rows = state.board.config.rows
+        let cols = state.board.config.cols
+        let hid = state.board.config.hiddenRows
+
+        switch shot {
+        case "recycle":
+            // Three metal cans in a row → recycle group ready to read.
+            for x in 2..<5 {
+                state.board[x, rows - 1] = Cell(piece: .can, material: .metal)
+            }
+            for x in 1..<4 {
+                state.board[x, rows - 2] = Cell(piece: .pipe, material: .metal)
+            }
+            state.score = 2400
+            state.combo = 3
+            state.magnetCharge = 2
+            state.active = ActivePiece(id: .scrap, x: 3, y: hid + 2)
+        case "compactor":
+            // Nearly full bottom rows ready for a hydraulic crush.
+            for y in (rows - 3)..<rows {
+                for x in 0..<cols where !(y == rows - 1 && x == 3) {
+                    let ids: [JunkID] = [.box, .bag, .tire, .crate]
+                    let id = ids[(x + y) % ids.count]
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            state.score = 5100
+            state.level = 4
+            state.active = ActivePiece(id: .tube, x: 3, y: hid + 1)
+        case "revive", "game-over":
+            // Topped-out dumpster + game over flag for revive sheet.
+            for y in hid..<(hid + 8) {
+                for x in 0..<cols {
+                    let id: JunkID = (x + y) % 2 == 0 ? .bag : .box
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            state.score = 8800
+            state.over = true
+            state.active = nil
+            events.append(.gameOver)
+        case "game", "gameplay", "demo", "autoplay":
+            for y in (rows - 4)..<rows {
+                for x in 0..<cols where (x + y) % 3 != 0 {
+                    let id: JunkID = [.can, .tire, .scrap, .pipe][(x + y) % 4]
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            state.score = 1200
+            state.magnetCharge = 1
+            spawn()
+        default:
+            spawn()
+        }
+    }
 }

@@ -91,4 +91,16 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(EconomyMath.gemsForSpeedup(remainingMs: 0, speedup: eco.speedup), 0)
         XCTAssertEqual(EconomyMath.gemsForSpeedup(remainingMs: 1000, speedup: eco.speedup), 1)
     }
+
+    func testShotScenariosAreDistinct() {
+        var recycle = GameEngine(seed: 1)
+        recycle.applyShotScenario("recycle")
+        var revive = GameEngine(seed: 1)
+        revive.applyShotScenario("revive")
+        XCTAssertFalse(recycle.state.over)
+        XCTAssertTrue(revive.state.over)
+        XCTAssertNotEqual(recycle.state.score, revive.state.score)
+        let recycleFilled = (0..<recycle.state.board.config.cols).filter { recycle.state.board[$0, recycle.state.board.config.rows - 1] != nil }.count
+        XCTAssertGreaterThanOrEqual(recycleFilled, 3)
+    }
 }
