@@ -13,7 +13,14 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
+<script type="module" src="native.js"></script>
 <style>
+/* Capacitor / native WebView: kill bounce + overscroll chrome */
+html.native-app, html.native-app body{
+  position:fixed; inset:0; width:100%; height:100%; overflow:hidden;
+  overscroll-behavior:none; -webkit-overflow-scrolling:auto;
+}
+html.native-app #app{padding-top:max(calc(var(--safe-t) + 6px), 6px);}
 :root{
   --bg:#07070f;--cyan:#00f5ff;--mag:#ff2bd6;--gold:#ffd166;--lime:#7dff6b;
   --text:#eef3ff;--dim:#8b93b3;--panel:rgba(14,16,32,.92);--danger:#ff4d6d;
@@ -213,8 +220,8 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
       <button class="btn ghost small" id="howBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">How to play</button>
       <button class="btn ghost small" id="muteTitle" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">Sound on</button>
     </div>
-    <button class="btn gold wide" id="passBtn" type="button" style="margin-top:12px;opacity:.9;font-size:13px;padding:12px">Premium Pass — Coming Soon</button>
-    <p id="premiumNote">No real-money buys. Shinies and cosmetics only.</p>
+    <button class="btn gold wide" id="passBtn" type="button" disabled aria-disabled="true" style="margin-top:12px;opacity:.55;font-size:13px;padding:12px">Premium Pass (coming soon)</button>
+    <p id="premiumNote">No real-money buys in 1.0. Shinies and cosmetics only. Premium Pass is not available yet.</p>
   </section>
 
   <section id="gameScreen" class="screen hidden">
@@ -472,15 +479,26 @@ function defaultSave(){
   };
 }
 let save = defaultSave();
-function load(){
+function TN(){ return window.TrashNative || null; }
+async function load(){
   try{
-    const raw = localStorage.getItem(KEY);
+    let raw = null;
+    if (TN() && TN().loadProgress){
+      raw = await TN().loadProgress(KEY);
+    } else {
+      raw = localStorage.getItem(KEY);
+    }
     if (raw) save = Object.assign(defaultSave(), JSON.parse(raw));
   }catch(e){}
   rollDaily();
 }
 function persist(){
-  try{ localStorage.setItem(KEY, JSON.stringify(save)); }catch(e){}
+  const payload = JSON.stringify(save);
+  try{ localStorage.setItem(KEY, payload); }catch(e){}
+  const bridge = TN();
+  if (bridge && bridge.saveProgress){
+    Promise.resolve(bridge.saveProgress(KEY, payload)).catch(()=>{});
+  }
 }
 function rollDaily(){
   const t = todayKey();
@@ -550,6 +568,11 @@ const SFX = {
 };
 
 function vibe(ms){
+  const bridge = TN();
+  if (bridge && bridge.haptic){
+    Promise.resolve(bridge.haptic(ms)).catch(()=>{});
+    return;
+  }
   try{ if (navigator.vibrate) navigator.vibrate(ms); }catch(e){}
 }
 
@@ -1525,7 +1548,10 @@ document.getElementById("howBtn").addEventListener("click", ()=>document.getElem
 document.getElementById("howClose").addEventListener("click", ()=>{ document.getElementById("howOv").classList.add("hidden"); save.sawHow=true; persist(); });
 document.getElementById("muteTitle").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
 document.getElementById("muteGame").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
-document.getElementById("passBtn").addEventListener("click", ()=>toast("Premium Pass coming soon — no purchases yet."));
+document.getElementById("passBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  toast("Premium Pass (coming soon) — not available in 1.0.");
+});
 document.getElementById("lvlClose").addEventListener("click", ()=>{
   document.getElementById("lvlOv").classList.add("hidden");
   if (screen==="game" && !over) pauseGame(false);
@@ -1601,17 +1627,50 @@ window.__TS = {
 };
 
 // ---------- boot ----------
-load();
-if (!save.welcomed){ save.welcomed=true; persist(); }
-syncMetaUI();
-checkDailyStreak();
-syncMetaUI();
-drawWheel(0);
-requestAnimationFrame(frame);
-window.addEventListener("resize", ()=>{ if(screen==="game"){ resizeBoard(); render(); } });
-if (!save.sawHow){
-  // don't auto-open how-to; first play button is enough
+async function waitForNativeBridge(timeoutMs){
+  if (window.TrashNative) return window.TrashNative;
+  const started = performance.now();
+  return new Promise((resolve)=>{
+    const tick = ()=>{
+      if (window.TrashNative){ resolve(window.TrashNative); return; }
+      if (performance.now() - started > (timeoutMs||1500)){ resolve(null); return; }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
 }
+
+async function boot(){
+  const bridge = await waitForNativeBridge(2000);
+  if (bridge && bridge.prepareChrome){
+    try{ await bridge.prepareChrome(); }catch(e){}
+  }
+  await load();
+  if (!save.welcomed){ save.welcomed=true; persist(); }
+  syncMetaUI();
+  checkDailyStreak();
+  syncMetaUI();
+  drawWheel(0);
+  requestAnimationFrame(frame);
+  window.addEventListener("resize", ()=>{ if(screen==="game"){ resizeBoard(); render(); } });
+  if (bridge && bridge.hideSplash){
+    try{ await bridge.hideSplash(); }catch(e){}
+  }
+  // CI / marketing screenshots: Preferences key or #shot=game auto-starts a run.
+  try{
+    let shot = null;
+    if (bridge && bridge.consumeShotMode) shot = await bridge.consumeShotMode();
+    if (!shot){
+      const hash = (location.hash || "").replace(/^#/, "");
+      if (hash.includes("shot=game")) shot = "game";
+    }
+    if (shot === "game"){
+      setTimeout(()=>{ try{ startGame(); }catch(e){} }, 500);
+    }
+  }catch(e){}
+}
+
+boot();
 })();
 </script>
 </body>
