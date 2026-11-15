@@ -219,7 +219,7 @@ launch_shot() {
   exit 1
 }
 
-# Overall watchdog (CI also wraps with `timeout 20m`).
+# Overall watchdog (paired with the GitHub step timeout-minutes).
 SMOKE_START=$SECONDS
 smoke_budget() {
   local elapsed=$((SECONDS - SMOKE_START))
@@ -234,7 +234,7 @@ xcrun simctl bootstatus "$DEVICE" -b || xcrun simctl boot "$DEVICE" || true
 xcrun simctl bootstatus "$DEVICE" -b
 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$DEVICE" "$APP_PATH"
-smoke_budget()
+smoke_budget
 
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
