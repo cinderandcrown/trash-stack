@@ -1,7 +1,41 @@
 // Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 
 import SwiftUI
+import UIKit
 import Services
+import GameRender
+
+/// Asset-catalog first, then app Resources/UI, then GameRender package textures.
+enum BundleArt {
+    static func uiImage(_ name: String) -> UIImage? {
+        if let img = UIImage(named: name) { return img }
+        for bundle in [Bundle.main] + JunkTextureLoader.candidateBundles() {
+            if let img = UIImage(named: name, in: bundle, compatibleWith: nil) { return img }
+            for sub in ["UI", "Resources/UI", "Junk", "HUD", "Resources/Junk", "Resources/HUD"] {
+                if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
+                   let img = UIImage(contentsOfFile: url.path) {
+                    return img
+                }
+            }
+            if let url = bundle.url(forResource: name, withExtension: "png"),
+               let img = UIImage(contentsOfFile: url.path) {
+                return img
+            }
+        }
+        return JunkTextureLoader.image(named: name)
+    }
+}
+
+struct BundleImage: View {
+    let name: String
+    var body: some View {
+        if let img = BundleArt.uiImage(name) {
+            Image(uiImage: img).resizable()
+        } else {
+            Color.white.opacity(0.08)
+        }
+    }
+}
 
 enum NeonTheme {
     static let bgTop = Color(red: 0.03, green: 0.03, blue: 0.07)
@@ -105,8 +139,7 @@ struct CurrencyChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(kind == .scrap ? "ScrapIcon" : "GemIcon")
-                .resizable()
+            BundleImage(name: kind == .scrap ? "ScrapIcon" : "GemIcon")
                 .frame(width: 18, height: 18)
             Text("\(value)")
                 .font(.system(.subheadline, design: .rounded).monospacedDigit().weight(.bold))
@@ -124,8 +157,7 @@ struct AlleyBackdrop: View {
     var body: some View {
         ZStack {
             NeonTheme.alleyGradient.ignoresSafeArea()
-            Image("AlleyBackground")
-                .resizable()
+            BundleImage(name: "AlleyBackground")
                 .scaledToFill()
                 .ignoresSafeArea()
                 .opacity(0.9)

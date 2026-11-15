@@ -66,8 +66,7 @@ struct JunkyardView: View {
                 MetaChromeHeader(title: "JUNKYARD", trailing: AnyView(CurrencyChip(kind: .scrap, value: profile.scrap))) {
                     screen = .title
                 }
-                Image("JunkyardScene")
-                    .resizable()
+                BundleImage(name: "JunkyardScene")
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                     .overlay(
@@ -248,8 +247,7 @@ struct SeasonPassView: View {
 
     private func rewardThumb(_ reward: SeasonReward?, premium: Bool) -> some View {
         VStack(spacing: 4) {
-            Image(premium ? "RaccoonCheer" : "ScrapIcon")
-                .resizable()
+            BundleImage(name: premium ? "RaccoonCheer" : "ScrapIcon")
                 .scaledToFit()
                 .frame(width: 36, height: 36)
             Text(shortLabel(reward))
@@ -276,8 +274,7 @@ struct SeasonPassView: View {
                         .stroke(NeonTheme.teal.opacity(0.6), lineWidth: 1.5)
                 )
             HStack {
-                Image("RaccoonCheer")
-                    .resizable()
+                BundleImage(name: "RaccoonCheer")
                     .scaledToFit()
                     .frame(width: 72, height: 72)
                 VStack(alignment: .leading) {
@@ -336,8 +333,7 @@ struct ShopView: View {
                     VStack(spacing: 12) {
                         ForEach(packs, id: \.title) { pack in
                             HStack(spacing: 12) {
-                                Image(pack.icon)
-                                    .resizable()
+                                BundleImage(name: pack.icon)
                                     .scaledToFit()
                                     .frame(width: 56, height: 56)
                                 VStack(alignment: .leading, spacing: 4) {

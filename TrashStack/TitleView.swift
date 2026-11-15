@@ -14,8 +14,7 @@ struct TitleView: View {
             AlleyBackdrop()
             VStack(spacing: 14) {
                 Spacer(minLength: 24)
-                Image("RaccoonIdle")
-                    .resizable()
+                BundleImage(name: "RaccoonIdle")
                     .scaledToFit()
                     .frame(width: 140, height: 140)
                     .offset(y: bob ? -6 : 6)

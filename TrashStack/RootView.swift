@@ -121,8 +121,7 @@ struct MarketingShotView: View {
             AlleyBackdrop()
             VStack {
                 Spacer()
-                Image("RaccoonCheer")
-                    .resizable()
+                BundleImage(name: "RaccoonCheer")
                     .scaledToFit()
                     .frame(height: 180)
                 Text("TRASH STACK")

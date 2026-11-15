@@ -39,18 +39,16 @@ targets:
     sources:
       - path: TrashStack
         excludes:
+          # Keep .xcassets discoverable via sources (XcodeGen → asset catalog phase).
+          # Do not exclude Assets.xcassets or Resources — a898af3 smoke relied on this.
           - "**/*.plist"
           - "**/*.xcprivacy"
           - "**/*.storekit"
-          - "**/*.xcassets"
-          - "Resources/**"
     resources:
       - path: TrashStack/Assets.xcassets
       - path: TrashStack/PrivacyInfo.xcprivacy
       - path: TrashStack/Resources
-        type: folder
       - path: Config
-        type: folder
       - path: StoreKit/Configuration.storekit
     settings:
       base:

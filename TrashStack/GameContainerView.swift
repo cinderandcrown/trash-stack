@@ -57,7 +57,7 @@ struct GameContainerView: View {
                 HapticsService.shared.tap()
             } label: {
                 HStack(spacing: 8) {
-                    Image("MagnetIcon").resizable().frame(width: 28, height: 28)
+                    BundleImage(name: "MagnetIcon").frame(width: 28, height: 28)
                     Text("MAGNET \(scene.engine.state.magnetCharge)")
                         .font(.caption.weight(.black))
                         .foregroundStyle(.black)
@@ -79,7 +79,7 @@ struct GameContainerView: View {
                 NeonTheme.bgBottom.ignoresSafeArea()
                 NeonPanel {
                     VStack(spacing: 16) {
-                        Image("RaccoonPanic").resizable().scaledToFit().frame(height: 96)
+                        BundleImage(name: "RaccoonPanic").scaledToFit().frame(height: 96)
                         Text("ONE MORE?").font(.title2.bold()).foregroundStyle(NeonTheme.magenta)
                         Text("Watch a rewarded ad to revive once this run.")
                             .multilineTextAlignment(.center)
