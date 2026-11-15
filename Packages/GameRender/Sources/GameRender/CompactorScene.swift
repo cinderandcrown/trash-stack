@@ -119,7 +119,7 @@ public final class CompactorScene: SKScene {
                 guard let drop, let self else { return }
                 drop.position = CGPoint(x: CGFloat.random(in: 0...self.size.width), y: self.size.height + 20)
             }
-            drop.run(.repeatForever(.sequence([fall, reset])))
+            drop.run(SKAction.repeatForever(SKAction.sequence([fall, reset])))
             drop.alpha = i % 3 == 0 ? 0.45 : 0.22
         }
         // Steam vent puffs — solid soft sprites, not shaders.
@@ -128,10 +128,13 @@ public final class CompactorScene: SKScene {
             steam.position = CGPoint(x: size.width * x, y: size.height * 0.22)
             steam.zPosition = -8
             rainLayer.addChild(steam)
-            steam.run(.repeatForever(.sequence([
-                .group([.fadeAlpha(to: 0.2, duration: 1.2), .moveBy(x: 0, y: 30, duration: 1.2)]),
-                .group([.fadeAlpha(to: 0.05, duration: 1.0), .moveBy(x: 0, y: 20, duration: 1.0)]),
-                .run { steam.position.y = self.size.height * 0.22 }
+            steam.run(SKAction.repeatForever(SKAction.sequence([
+                SKAction.group([SKAction.fadeAlpha(to: 0.2, duration: 1.2), SKAction.moveBy(x: 0, y: 30, duration: 1.2)]),
+                SKAction.group([SKAction.fadeAlpha(to: 0.05, duration: 1.0), SKAction.moveBy(x: 0, y: 20, duration: 1.0)]),
+                SKAction.run { [weak steam, weak self] in
+                    guard let steam, let self else { return }
+                    steam.position.y = self.size.height * 0.22
+                },
             ])))
         }
     }
@@ -236,15 +239,15 @@ public final class CompactorScene: SKScene {
         raccoon.removeAllActions()
         switch raccoonMood {
         case .cheer:
-            raccoon.run(.repeatForever(.sequence([
-                .scale(to: 1.08, duration: 0.15),
-                .scale(to: 1.0, duration: 0.15),
+            raccoon.run(SKAction.repeatForever(SKAction.sequence([
+                SKAction.scale(to: 1.08, duration: 0.15),
+                SKAction.scale(to: 1.0, duration: 0.15),
             ])))
         case .panic:
-            raccoon.run(.repeatForever(.sequence([
-                .moveBy(x: -3, y: 0, duration: 0.05),
-                .moveBy(x: 6, y: 0, duration: 0.1),
-                .moveBy(x: -3, y: 0, duration: 0.05),
+            raccoon.run(SKAction.repeatForever(SKAction.sequence([
+                SKAction.moveBy(x: -3, y: 0, duration: 0.05),
+                SKAction.moveBy(x: 6, y: 0, duration: 0.1),
+                SKAction.moveBy(x: -3, y: 0, duration: 0.05),
             ])))
         case .idle:
             raccoon.setScale(1)
@@ -368,11 +371,11 @@ public final class CompactorScene: SKScene {
         comboLabel.alpha = 1
         comboLabel.setScale(0.6)
         comboLabel.removeAllActions()
-        comboLabel.run(.sequence([
-            .group([.scale(to: 1.15, duration: 0.12), .fadeAlpha(to: 1, duration: 0.08)]),
-            .scale(to: 1.0, duration: 0.08),
-            .wait(forDuration: 0.45),
-            .fadeOut(withDuration: 0.25),
+        comboLabel.run(SKAction.sequence([
+            SKAction.group([SKAction.scale(to: 1.15, duration: 0.12), SKAction.fadeAlpha(to: 1, duration: 0.08)]),
+            SKAction.scale(to: 1.0, duration: 0.08),
+            SKAction.wait(forDuration: 0.45),
+            SKAction.fadeOut(withDuration: 0.25),
         ]))
     }
 
@@ -385,11 +388,11 @@ public final class CompactorScene: SKScene {
         label.zPosition = 60
         label.setScale(0.4)
         fxLayer.addChild(label)
-        label.run(.sequence([
-            .group([.scale(to: 1.2, duration: 0.18), .fadeAlpha(to: 1, duration: 0.1)]),
-            .wait(forDuration: 0.5),
-            .fadeOut(withDuration: 0.25),
-            .removeFromParent(),
+        label.run(SKAction.sequence([
+            SKAction.group([SKAction.scale(to: 1.2, duration: 0.18), SKAction.fadeAlpha(to: 1, duration: 0.1)]),
+            SKAction.wait(forDuration: 0.5),
+            SKAction.fadeOut(withDuration: 0.25),
+            SKAction.removeFromParent(),
         ]))
     }
 
@@ -401,37 +404,41 @@ public final class CompactorScene: SKScene {
         label.position = CGPoint(x: size.width / 2, y: size.height * 0.6)
         label.zPosition = 60
         fxLayer.addChild(label)
-        label.run(.sequence([.fadeIn(withDuration: 0.1), .wait(forDuration: 0.6), .fadeOut(withDuration: 0.3), .removeFromParent()]))
+        label.run(SKAction.sequence([
+            SKAction.fadeIn(withDuration: 0.1),
+            SKAction.wait(forDuration: 0.6),
+            SKAction.fadeOut(withDuration: 0.3),
+            SKAction.removeFromParent(),
+        ]))
     }
 
     private func crushJuice(rows: [Int]) {
         // Hydraulic slam: shake world + press flash (single overlay, not per-cell glow).
-        world.run(.sequence([
-            .moveBy(x: 0, y: -10, duration: 0.04),
-            .moveBy(x: 4, y: 14, duration: 0.05),
-            .moveBy(x: -4, y: -6, duration: 0.05),
-            .moveTo(x: 0, y: 0, duration: 0.06),
+        world.run(SKAction.sequence([
+            SKAction.moveBy(x: 0, y: -10, duration: 0.04),
+            SKAction.moveBy(x: 4, y: 14, duration: 0.05),
+            SKAction.moveBy(x: -4, y: -6, duration: 0.05),
+            SKAction.move(to: .zero, duration: 0.06),
         ]))
         let flash = SKSpriteNode(color: SKColor(red: 1, green: 0.4, blue: 0.9, alpha: 0.35), size: size)
         flash.position = CGPoint(x: size.width / 2, y: size.height / 2)
         flash.zPosition = 55
         fxLayer.addChild(flash)
-        flash.run(.sequence([.fadeOut(withDuration: 0.18), .removeFromParent()]))
+        flash.run(SKAction.sequence([SKAction.fadeOut(withDuration: 0.18), SKAction.removeFromParent()]))
         // Sparks as tiny solid squares (baked, no glow).
         for _ in 0..<min(18, 6 * rows.count) {
             let spark = SKSpriteNode(color: SKColor(red: 1, green: 0.85, blue: 0.2, alpha: 1), size: CGSize(width: 3, height: 3))
             spark.position = CGPoint(x: size.width / 2 + CGFloat.random(in: -80...80), y: size.height * 0.4)
             spark.zPosition = 56
             fxLayer.addChild(spark)
-            spark.run(.sequence([
-                .group([
-                    .moveBy(x: CGFloat.random(in: -60...60), y: CGFloat.random(in: 20...90), duration: 0.35),
-                    .fadeOut(withDuration: 0.35),
+            spark.run(SKAction.sequence([
+                SKAction.group([
+                    SKAction.moveBy(x: CGFloat.random(in: -60...60), y: CGFloat.random(in: 20...90), duration: 0.35),
+                    SKAction.fadeOut(withDuration: 0.35),
                 ]),
-                .removeFromParent(),
+                SKAction.removeFromParent(),
             ]))
         }
-        _ = rows
     }
 
     private func recycleJuice() {
@@ -439,15 +446,18 @@ public final class CompactorScene: SKScene {
         burst.position = CGPoint(x: size.width / 2, y: size.height * 0.42)
         burst.zPosition = 54
         fxLayer.addChild(burst)
-        burst.run(.sequence([
-            .group([.scale(to: 1.6, duration: 0.22), .fadeOut(withDuration: 0.22)]),
-            .removeFromParent(),
+        burst.run(SKAction.sequence([
+            SKAction.group([SKAction.scale(to: 1.6, duration: 0.22), SKAction.fadeOut(withDuration: 0.22)]),
+            SKAction.removeFromParent(),
         ]))
     }
 
     private func pulseActive() {
         for n in activeNodes {
-            n.run(.sequence([.scale(to: 1.12, duration: 0.05), .scale(to: 1.0, duration: 0.08)]))
+            n.run(SKAction.sequence([
+                SKAction.scale(to: 1.12, duration: 0.05),
+                SKAction.scale(to: 1.0, duration: 0.08),
+            ]))
         }
     }
 
