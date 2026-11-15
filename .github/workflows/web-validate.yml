@@ -1,0 +1,30 @@
+name: Web validate
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+      - run: npm run validate:web
+      - name: Trademark scan (user-facing surfaces only)
+        run: |
+          # docs/STORE.md may mention the mark in legal/trade-dress guidance — that is intentional.
+          # Fail if it appears in the shipped game shell, privacy/support pages, or README marketing.
+          if grep -riE '\btetris\b' web/index.html web/privacy.html web/support.html web/manifest.webmanifest README.md NOTICE 2>/dev/null; then
+            echo "Forbidden trademark term found in user-facing files" >&2
+            exit 1
+          fi
+          echo "Trademark scan clean"

@@ -1,0 +1,201 @@
+name: iOS
+
+on:
+  push:
+    branches: [main, 'cursor/**']
+    tags: ['testflight/*']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ios-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUNDLE_ID: com.cinderandcrown.trashstack
+  # App Store Connect app record — listing name "Trash Stack: Neon Junk Puzzle"
+  ASC_APP_APPLE_ID: '6834995780'
+
+jobs:
+  build:
+    name: Build & validate
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install JS deps & sync Capacitor
+        run: |
+          npm ci
+          npm run build
+          npx cap sync ios
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+
+      - name: Resolve Swift packages
+        working-directory: ios/App
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project App.xcodeproj \
+            -scheme App
+
+      - name: Build (Simulator) validate
+        working-directory: ios/App
+        run: |
+          set -euo pipefail
+          # Prefer 16 Pro Max; fall back to any available iPhone simulator (some runners flake).
+          DEST='platform=iOS Simulator,name=iPhone 16 Pro Max'
+          if ! xcrun simctl list devices available | grep -q 'iPhone 16 Pro Max ('; then
+            FALLBACK="$(xcrun simctl list devices available | grep -E 'iPhone .*\(' | head -n 1 | sed -E 's/^\s+//' | sed -E 's/ \([0-9A-F-]+\).*//' || true)"
+            if [ -n "$FALLBACK" ]; then
+              DEST="platform=iOS Simulator,name=$FALLBACK"
+              echo "Using fallback simulator destination: $DEST"
+            else
+              echo "No iPhone simulators available — listing devices/runtimes:" >&2
+              xcrun simctl list devices available >&2 || true
+              xcrun simctl list runtimes >&2 || true
+              exit 1
+            fi
+          fi
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination "$DEST" \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData-sim" \
+            CODE_SIGNING_ALLOWED=NO \
+            MARKETING_VERSION=1.0.0 \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            build
+
+      - name: Capture App Store screenshots + gameplay demo video
+        run: |
+          set -euo pipefail
+          chmod +x scripts/ios-screenshots.sh
+          scripts/ios-screenshots.sh "$RUNNER_TEMP/DerivedData-sim"
+
+      - name: Upload App Store review evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-store-review-evidence
+          path: |
+            artifacts/screenshots/
+            artifacts/video/
+          if-no-files-found: error
+
+      - name: Verify demo video duration band
+        run: |
+          set -euo pipefail
+          VID="artifacts/video/gameplay-demo.mp4"
+          test -f "$VID"
+          # ffprobe may be absent; fall back to file-size sanity
+          if command -v ffprobe >/dev/null 2>&1; then
+            DUR=$(ffprobe -v error -show_entries format=duration -of default=nk=1:nw=1 "$VID" | cut -d. -f1)
+            echo "Demo duration ≈ ${DUR}s"
+            if [ "$DUR" -lt 40 ] || [ "$DUR" -gt 70 ]; then
+              echo "WARNING: demo duration $DUR outside 45–60s target band (still uploading)."
+            fi
+          else
+            BYTES=$(wc -c < "$VID")
+            echo "Demo bytes=$BYTES (ffprobe unavailable)"
+            test "$BYTES" -gt 100000
+          fi
+
+      # Signed archive + TestFlight upload only on testflight/* tags (Fire Fox tags).
+      # PR/branch runs stop after simulator validate + screenshots.
+      - name: Detect ASC secrets (TestFlight tags only)
+        id: asc
+        if: startsWith(github.ref, 'refs/tags/testflight/')
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          ISSUER: ${{ secrets.ASC_ISSUER_ID }}
+          KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          if [ -n "${TEAM:-}" ] && [ -n "${ISSUER:-}" ] && [ -n "${KEY_ID:-}" ] && [ -n "${KEY_P8:-}" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+            KEY_DIR="$HOME/private_keys"
+            mkdir -p "$KEY_DIR"
+            # xcodebuild looks for AuthKey_<KEY_ID>.p8 under ~/private_keys or ./private_keys
+            KEY_PATH="$KEY_DIR/AuthKey_${KEY_ID}.p8"
+            printf '%s\n' "$KEY_P8" > "$KEY_PATH"
+            echo "key_path=$KEY_PATH" >> "$GITHUB_OUTPUT"
+            echo "ASC API key ready for automatic signing (contents not logged)."
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "ASC secrets missing — cannot upload TestFlight build."
+            exit 1
+          fi
+
+      - name: Ensure bundle id + CI device for signing
+        if: startsWith(github.ref, 'refs/tags/testflight/') && steps.asc.outputs.present == 'true'
+        env:
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          BUNDLE_ID: com.cinderandcrown.trashstack
+          BUNDLE_NAME: Trash Stack
+        run: node scripts/ensure-asc-bundle-id.mjs
+
+      - name: Archive (App Store, automatic signing)
+        if: startsWith(github.ref, 'refs/tags/testflight/') && steps.asc.outputs.present == 'true'
+        working-directory: ios/App
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          AUTH_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project App.xcodeproj \
+            -scheme App \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/TrashStack.xcarchive" \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            CODE_SIGN_IDENTITY='Apple Distribution' \
+            MARKETING_VERSION=1.0.0 \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            archive
+
+      - name: Upload to TestFlight
+        if: startsWith(github.ref, 'refs/tags/testflight/') && steps.asc.outputs.present == 'true'
+        env:
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          AUTH_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          EXPORT_PLIST="$RUNNER_TEMP/ExportOptions.plist"
+          /usr/bin/plutil -create xml1 "$EXPORT_PLIST"
+          /usr/bin/plutil -insert method -string app-store-connect "$EXPORT_PLIST"
+          /usr/bin/plutil -insert destination -string upload "$EXPORT_PLIST"
+          /usr/bin/plutil -insert signingStyle -string automatic "$EXPORT_PLIST"
+          /usr/bin/plutil -insert manageAppVersionAndBuildNumber -bool true "$EXPORT_PLIST"
+          /usr/bin/plutil -insert teamID -string "$APPLE_TEAM_ID" "$EXPORT_PLIST"
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/TrashStack.xcarchive" \
+            -exportPath "$RUNNER_TEMP/ipa" \
+            -exportOptionsPlist "$EXPORT_PLIST" \
+            -authenticationKeyPath "$AUTH_KEY_PATH" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            -allowProvisioningUpdates \
+            -allowProvisioningDeviceRegistration
+          echo "Uploaded build to App Store Connect / TestFlight for tag ${{ github.ref_name }} (app $ASC_APP_APPLE_ID)."

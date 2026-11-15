@@ -1,0 +1,39 @@
+{
+  "name": "trash-stack",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Trash Stack — neon junk puzzle by Cinder and Crown LLC",
+  "scripts": {
+    "build:native": "esbuild src/native-bridge.js --bundle --format=esm --outfile=web/native.js --platform=browser --target=es2020",
+    "build:economy": "esbuild src/economy-browser.js --bundle --format=iife --outfile=web/economy.js --platform=browser --target=es2020",
+    "build:assets": "node scripts/generate-assets.mjs",
+    "build": "npm run build:economy && npm run build:native && npm run build:assets",
+    "test": "node --test test/economy.test.mjs",
+    "cap:sync": "npm run build && npx cap sync",
+    "cap:ios": "npx cap open ios",
+    "cap:android": "npx cap open android",
+    "validate:web": "node scripts/validate-web.mjs",
+    "assets:native": "npx capacitor-assets generate --ios --android --iconBackgroundColor '#07070f' --iconBackgroundColorDark '#07070f' --splashBackgroundColor '#07070f' --splashBackgroundColorDark '#07070f' --assetPath resources"
+  },
+  "dependencies": {
+    "@capacitor-community/admob": "8.3.0",
+    "@capacitor/android": "8.6.2",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.6.2",
+    "@capacitor/local-notifications": "^8.0.1",
+    "@capacitor/preferences": "8.0.1",
+    "@capacitor/splash-screen": "8.0.2",
+    "@capacitor/status-bar": "8.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "4.0.0",
+    "@capacitor/cli": "8.6.2",
+    "esbuild": "^0.25.0",
+    "sharp": "^0.35.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

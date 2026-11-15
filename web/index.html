@@ -8,12 +8,21 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Trash Stack">
 <meta name="theme-color" content="#07070f">
-<meta name="description" content="Trash Stack — neon night-city falling-block puzzle. Stack, clear, and chase Shinies.">
+<meta name="description" content="Trash Stack — neon junk puzzle. Crush rows in the compactor, recycle materials, earn Scrap &amp; Gems.">
 <title>Trash Stack</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" href="icon-180.png">
+<script src="ad-config.js"></script>
+<script src="economy.js"></script>
+<script type="module" src="native.js"></script>
 <style>
+/* Capacitor / native WebView: kill bounce + overscroll chrome */
+html.native-app, html.native-app body{
+  position:fixed; inset:0; width:100%; height:100%; overflow:hidden;
+  overscroll-behavior:none; -webkit-overflow-scrolling:auto;
+}
+html.native-app #app{padding-top:max(calc(var(--safe-t) + 6px), 6px);}
 :root{
   --bg:#07070f;--cyan:#00f5ff;--mag:#ff2bd6;--gold:#ffd166;--lime:#7dff6b;
   --text:#eef3ff;--dim:#8b93b3;--panel:rgba(14,16,32,.92);--danger:#ff4d6d;
@@ -172,6 +181,108 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   .btn{padding:12px 16px}
 }
 @media (max-width:340px){aside.rail{width:52px;flex-basis:52px}}
+
+/* META_V2_BEGIN */
+.btn.tiny{padding:8px 10px;font-size:11px;border-radius:10px}
+.panel-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;width:min(360px,92%);margin:8px auto 0}
+.ach-list,.lb-list,.bp-list,.cal-grid{max-height:42vh;overflow:auto;margin:8px 0;text-align:left}
+.ach-row,.lb-row,.bp-row{display:flex;gap:8px;align-items:center;padding:8px;border-radius:10px;background:#0e1220;border:1px solid rgba(255,255,255,.08);margin:6px 0;font-size:12px}
+.ach-row.on{border-color:rgba(125,255,107,.45)}
+.ach-ico{width:28px;height:28px;border-radius:8px;display:grid;place-items:center;background:#16182a;flex:0 0 auto}
+.odds{font-size:11px;color:var(--dim);text-align:left;margin:8px 0;line-height:1.45}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+.cal-day{aspect-ratio:1;border-radius:8px;background:#12162a;border:1px solid rgba(255,255,255,.08);display:grid;place-items:center;font-size:10px;color:var(--dim)}
+.cal-day.on{background:linear-gradient(180deg,#1a3a40,#102028);border-color:var(--cyan);color:var(--cyan);font-weight:800}
+.cal-day.today{box-shadow:0 0 0 1px var(--gold)}
+.bp-track{height:10px;background:#1a1d30;border-radius:99px;overflow:hidden;border:1px solid rgba(255,255,255,.08);margin:6px 0 10px}
+.bp-fill{height:100%;background:linear-gradient(90deg,var(--cyan),var(--mag))}
+.trail-dot{width:10px;height:10px;border-radius:50%;display:inline-block;margin-right:4px}
+#continueOv .card{border-color:rgba(255,43,214,.45)}
+
+/* DISTINCT IDENTITY: dumpster bin + mascot + magnet */
+#boardWrap{border-radius:14px 14px 22px 22px;background:
+  linear-gradient(180deg,rgba(20,10,18,.95),rgba(4,6,14,.92));
+  box-shadow:0 0 0 3px #1a2438,0 0 0 5px rgba(255,43,214,.35),0 0 0 7px rgba(0,245,255,.25),
+  0 18px 40px rgba(0,0,0,.55),inset 0 0 40px rgba(0,0,0,.5);
+  overflow:hidden;position:relative}
+#boardWrap::before{content:"";position:absolute;left:8%;right:8%;top:0;height:10px;z-index:3;pointer-events:none;
+  background:linear-gradient(180deg,#4a5568,#2a303c);border-radius:0 0 6px 6px;
+  box-shadow:0 2px 0 rgba(0,245,255,.35),inset 0 1px 0 rgba(255,255,255,.2)}
+#boardWrap::after{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;
+  background:
+    repeating-linear-gradient(90deg,transparent 0 22px,rgba(0,245,255,.035) 22px 23px),
+    linear-gradient(180deg,rgba(255,43,214,.05),transparent 18%,transparent 82%,rgba(0,0,0,.35));
+  border:1px solid rgba(0,245,255,.12);border-radius:14px 14px 22px 22px;margin:0}
+#binChrome{position:absolute;left:-10px;right:-10px;bottom:-6px;height:18px;z-index:4;pointer-events:none;
+  background:linear-gradient(180deg,#2a3144,#12161f);border-radius:0 0 16px 16px;
+  box-shadow:inset 0 2px 0 rgba(0,245,255,.25),0 4px 0 #070918}
+#pressBar{position:absolute;left:4%;right:4%;top:-8%;height:14px;z-index:6;pointer-events:none;opacity:0;
+  background:linear-gradient(180deg,#cfd6e6,#6a7388 40%,#3a4254);border-radius:4px;
+  box-shadow:0 0 12px rgba(0,245,255,.5),0 6px 0 rgba(0,0,0,.45);transition:none}
+#pressBar.on{opacity:1}
+#mascot{position:absolute;right:2px;bottom:8px;width:54px;height:54px;z-index:7;pointer-events:none;
+  filter:drop-shadow(0 0 8px rgba(255,43,214,.45));transition:transform .2s}
+#mascot svg{width:100%;height:100%}
+#mascot.cheer{animation:mascotCheer .55s ease}
+#mascot.sad{animation:mascotSad .6s ease}
+@keyframes mascotCheer{0%{transform:translateY(0) rotate(0)}40%{transform:translateY(-8px) rotate(-8deg)}100%{transform:translateY(0)}}
+@keyframes mascotSad{0%{transform:translateY(0)}50%{transform:translateY(4px) scale(.96)}100%{transform:translateY(0)}}
+#magnetChip{position:absolute;left:6px;bottom:10px;z-index:7;font-size:10px;font-weight:800;letter-spacing:.08em;
+  background:rgba(10,14,28,.88);border:1px solid rgba(0,245,255,.4);color:var(--cyan);padding:4px 8px;border-radius:999px}
+#controls{grid-template-columns:1fr 1fr 1fr 1fr 1fr;grid-template-areas:"stash left rot right mag" "soft soft hard hard hard"}
+.pad.hold,.pad.stash{grid-area:stash}
+.pad.mag{grid-area:mag;background:linear-gradient(180deg,#183040,#0c1824);border-color:rgba(0,245,255,.45);color:#9ef6ff;font-size:11px}
+.mini.stash{border-color:rgba(255,43,214,.35);background:linear-gradient(180deg,#1a1020,#0e1220)}
+.mini.stash label{color:var(--mag)}
+.mini.next label{color:var(--cyan)}
+
+
+/* F2P meta: junkyard, chests, gems */
+.chip.gem{border-color:rgba(160,120,255,.45);color:#d6b6ff}
+#baseMap{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.bldg{background:#0e1220;border:1px solid rgba(0,245,255,.22);border-radius:12px;padding:10px;text-align:left;font-size:12px}
+.bldg b{display:block;color:var(--cyan);letter-spacing:.06em;margin-bottom:4px}
+.bldg .perk{color:var(--dim);font-size:11px;margin:4px 0 8px}
+.bldg .timers{font-size:11px;color:var(--gold)}
+.chest-row{display:flex;gap:8px;align-items:center;padding:8px;background:#0e1220;border-radius:10px;border:1px solid rgba(255,255,255,.08);margin:6px 0;font-size:12px}
+.gem-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.gem-pack{background:#12102a;border:1px solid rgba(160,120,255,.35);border-radius:12px;padding:10px;text-align:center;font-size:12px}
+.gem-pack .price{color:var(--gold);font-weight:800;margin-top:4px}
+.album-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
+.album-item{background:#0e1220;border-radius:8px;padding:8px 4px;font-size:10px;border:1px solid rgba(255,255,255,.08);text-align:center}
+.album-item.on{border-color:var(--lime);color:var(--lime)}
+#notifPrompt .card{border-color:rgba(0,245,255,.45)}
+#bpOv .card{max-width:min(520px,96vw);max-height:min(92vh,820px);display:flex;flex-direction:column}
+#bpOv .card h2{flex:0 0 auto}
+.bp-head{font-size:12px;color:var(--dim);margin:0 0 8px}
+.bp-preview-wrap{perspective:900px;margin:8px 0 12px;min-height:120px}
+.bp-preview{
+  transform:rotateY(-12deg) rotateX(6deg);transform-style:preserve-3d;
+  background:linear-gradient(145deg,#1a1230,#0e1220 55%,#12182c);
+  border:1px solid rgba(0,245,255,.35);border-radius:16px;padding:16px;
+  box-shadow:12px 16px 0 rgba(0,0,0,.35),0 0 28px rgba(255,43,214,.18);
+  text-align:left;min-height:100px;
+}
+.bp-preview .sw{width:48px;height:48px;border-radius:12px;display:inline-block;vertical-align:middle;margin-right:10px;
+  box-shadow:0 8px 0 rgba(0,0,0,.35),0 0 16px rgba(0,245,255,.25);transform:translateZ(20px)}
+.bp-preview b{display:block;color:var(--cyan);letter-spacing:.06em;margin-bottom:4px}
+.bp-preview .sub{font-size:11px;color:var(--dim)}
+.bp-scroll{overflow:auto;max-height:42vh;margin:8px 0;padding-bottom:6px;-webkit-overflow-scrolling:touch}
+.bp-rail{display:flex;gap:8px;min-width:max-content;padding:4px 2px 10px}
+.bp-tier{
+  width:88px;flex:0 0 auto;background:#0e1220;border:1px solid rgba(255,255,255,.1);
+  border-radius:12px;padding:8px 6px;font-size:10px;text-align:center;cursor:pointer;
+}
+.bp-tier.on{border-color:var(--cyan);box-shadow:0 0 0 1px rgba(0,245,255,.35)}
+.bp-tier .t{font-weight:800;color:var(--gold);margin-bottom:4px}
+.bp-tier .free,.bp-tier .prem{display:block;line-height:1.25;margin-top:3px}
+.bp-tier .prem{color:#d6b6ff}
+.bp-tier.locked{opacity:.55}
+.bp-actions{display:grid;gap:8px;margin-top:8px}
+
+
+/* META_V2_END */
+
 </style>
 </head>
 <body>
@@ -189,10 +300,11 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
       </svg>
       <h1>TRASH STACK</h1>
     </div>
-    <div class="tag">Neon docks · night shift</div>
+    <div class="tag">Neon junk · compactor shift</div>
     <div class="meta-row">
       <div class="chip"><span class="k">BEST</span> <span id="hiChip">0</span></div>
-      <div class="chip gold"><span class="k">SHINIES</span> <span id="shChip">0</span></div>
+      <div class="chip gold"><span class="k">SCRAP</span> <span id="shChip">0</span></div>
+      <div class="chip gem"><span class="k">GEMS</span> <span id="gemChip">0</span></div>
       <div class="chip"><span class="k">LVL</span> <span id="lvChip">1</span></div>
       <div class="chip streak" id="streakChip">🔥 DAY 1</div>
     </div>
@@ -211,10 +323,26 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     </div>
     <div class="rowbtns" style="margin-top:14px">
       <button class="btn ghost small" id="howBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">How to play</button>
+      <button class="btn ghost small" id="settingsBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">Settings</button>
+    </div>
+    <div class="rowbtns" style="margin-top:8px">
       <button class="btn ghost small" id="muteTitle" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.12) inset,0 5px 0 #0a0c16">Sound on</button>
     </div>
-    <button class="btn gold wide" id="passBtn" type="button" style="margin-top:12px;opacity:.9;font-size:13px;padding:12px">Premium Pass — Coming Soon</button>
-    <p id="premiumNote">No real-money buys. Shinies and cosmetics only.</p>
+    
+    <div class="panel-grid">
+      <button class="btn ghost small" id="baseBtn" type="button">Junkyard</button>
+      <button class="btn ghost small" id="chestBtn" type="button">Crates</button>
+      <button class="btn ghost small" id="achBtn" type="button">Achievements</button>
+      <button class="btn ghost small" id="lbBtn" type="button">Records</button>
+      <button class="btn ghost small" id="bpBtn" type="button">Season Pass</button>
+      <button class="btn ghost small" id="calBtn" type="button">Streak</button>
+      <button class="btn ghost small" id="albumBtn" type="button">Collection</button>
+      <button class="btn ghost small" id="gemShopBtn" type="button">Gem Shop</button>
+    </div>
+
+    <button class="btn mag wide" id="removeAdsBtn" type="button" disabled aria-disabled="true" style="margin-top:10px;opacity:.55;font-size:13px;padding:12px">Remove Ads (coming soon)</button>
+    <button class="btn gold wide" id="passBtn" type="button" disabled aria-disabled="true" style="margin-top:12px;opacity:.55;font-size:13px;padding:12px">Premium Pass (coming soon)</button>
+    <p id="premiumNote">Free to play with ads + optional IAP (Gems, Season Pass, Remove Ads). Odds shown for spins &amp; crates. No real-money gambling.</p>
   </section>
 
   <section id="gameScreen" class="screen hidden">
@@ -223,7 +351,7 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
         <svg viewBox="0 0 64 40"><path d="M4 22c2-14 16-20 28-20s26 6 28 20c-6-4-12-6-28-6S10 18 4 22z" fill="#1a1020" stroke="#00f5ff" stroke-width="2"/><ellipse cx="22" cy="22" rx="9" ry="8" fill="#111" stroke="#ff2bd6" stroke-width="1.5"/><ellipse cx="42" cy="22" rx="9" ry="8" fill="#111" stroke="#ff2bd6" stroke-width="1.5"/><circle cx="24" cy="22" r="3" fill="#00f5ff"/><circle cx="40" cy="22" r="3" fill="#00f5ff"/></svg>
         TRASH STACK
       </div>
-      <div class="chip gold" style="padding:4px 8px;font-size:12px">✦ <span id="shInGame">0</span></div>
+      <div class="chip gold" style="padding:4px 8px;font-size:12px">⚙ <span id="shInGame">0</span></div><div class="chip gem" style="padding:4px 8px;font-size:12px">◆ <span id="gemInGame">0</span></div>
       <button class="icon-btn" id="muteGame" type="button" aria-label="Mute">🔊</button>
       <button class="icon-btn" id="pauseBtn" type="button" aria-label="Pause">❚❚</button>
     </div>
@@ -236,23 +364,41 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
     <div id="stage">
       <div id="stageRow">
       <aside class="rail">
-        <div class="mini"><label>Hold</label><canvas id="holdC" width="72" height="72"></canvas></div>
+        <div class="mini stash"><label>Stash bin</label><canvas id="holdC" width="72" height="72"></canvas></div>
       </aside>
       <div id="boardWrap">
         <canvas id="c"></canvas>
+        <div id="pressBar"></div>
+        <div id="binChrome"></div>
+        <div id="magnetChip">MAG 0</div>
+        <div id="mascot" aria-hidden="true">
+          <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+            <ellipse cx="32" cy="40" rx="18" ry="16" fill="#1a1020" stroke="#00f5ff" stroke-width="2"/>
+            <circle cx="20" cy="22" r="8" fill="#1a1020" stroke="#ff2bd6" stroke-width="1.5"/>
+            <circle cx="44" cy="22" r="8" fill="#1a1020" stroke="#ff2bd6" stroke-width="1.5"/>
+            <ellipse cx="32" cy="36" rx="12" ry="10" fill="#241828"/>
+            <ellipse cx="26" cy="34" rx="4" ry="4.5" fill="#111" stroke="#ff2bd6" stroke-width="1"/>
+            <ellipse cx="38" cy="34" rx="4" ry="4.5" fill="#111" stroke="#ff2bd6" stroke-width="1"/>
+            <circle cx="27" cy="34" r="1.6" fill="#00f5ff"/>
+            <circle cx="37" cy="34" r="1.6" fill="#00f5ff"/>
+            <path d="M28 42c2 3 6 3 8 0" fill="none" stroke="#ffd166" stroke-width="1.5" stroke-linecap="round"/>
+            <text x="32" y="58" text-anchor="middle" fill="#ff2bd6" font-size="6" font-family="sans-serif" font-weight="700">TP</text>
+          </svg>
+        </div>
         <div id="announce"></div>
         <div id="fxNums"></div>
       </div>
       <aside class="rail">
-        <div class="mini"><label>Next</label><canvas id="nextC" width="72" height="216"></canvas></div>
+        <div class="mini next"><label>Conveyor</label><canvas id="nextC" width="72" height="216"></canvas></div>
       </aside>
       </div>
     </div>
     <div id="controls">
-      <button class="pad hold" type="button" data-act="hold">Hold</button>
+      <button class="pad stash" type="button" data-act="hold">Stash</button>
       <button class="pad left" type="button" data-act="left">◀</button>
       <button class="pad rot" type="button" data-act="rot">↻</button>
       <button class="pad right" type="button" data-act="right">▶</button>
+      <button class="pad mag" type="button" data-act="magnet">Magnet</button>
       <button class="pad soft" type="button" data-act="soft">Soft ▼</button>
       <button class="pad hard" type="button" data-act="hard">Hard drop</button>
     </div>
@@ -277,15 +423,17 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 
 <div id="shopOv" class="overlay hidden"><div class="card">
   <h2>SHOP</h2>
-  <p>Spend Shinies on looks. Nothing for sale with real money.</p>
-  <div class="tabby"><button type="button" class="on" data-tab="skins">Skins</button><button type="button" data-tab="bgs">Backgrounds</button></div>
+  <p>Spend Scrap on looks. Neon Gems are premium (IAP stubs). No paid random boxes.</p>
+  <div class="tabby"><button type="button" class="on" data-tab="skins">Skins</button><button type="button" data-tab="bgs">Backgrounds</button><button type="button" data-tab="trails">Trails</button></div>
   <div id="shopGrid" class="shop-grid"></div>
   <button class="btn ghost wide" id="shopClose" type="button">Close</button>
 </div></div>
 
 <div id="spinOv" class="overlay hidden"><div class="card">
   <h2>DAILY SPIN</h2>
-  <p id="spinHint">Free once a day. Cosmetics and Shinies only.</p>
+  <p id="spinHint">Free once a day. Cosmetics and Scrap only. Odds shown.</p>
+  <div class="odds" id="spinOdds"></div>
+  <button class="btn mag small smag" id="spinAdBtn" type="button" style="width:100%;margin:6px 0;display:none">Extra spin (rewarded ad)</button>
   <div id="wheelWrap"><div id="wheelNub"></div><canvas id="wheel" width="260" height="260"></canvas></div>
   <button class="btn wide pulse" id="spinGo" type="button">Spin</button>
   <button class="btn ghost wide" id="spinClose" type="button" style="margin-top:10px">Close</button>
@@ -294,11 +442,12 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
 <div id="howOv" class="overlay hidden"><div class="card" id="how">
   <h2>HOW TO PLAY</h2>
   <ol>
-    <li>Move falling stacks to fill rows. Full rows vanish.</li>
-    <li>Tap the well to rotate. Swipe left or right to move.</li>
-    <li>Swipe down to soft drop. Flick down to hard drop.</li>
-    <li>Hold a piece for later. Chain clears for combos.</li>
-    <li>Earn Shinies, level up, and unlock looks. No real-money shop.</li>
+    <li>Drop junk into the <b>compactor bin</b> (8×15). Full rows get crushed by the hydraulic press for scrap points.</li>
+    <li>Match <b>3+ same-material</b> tiles (metal, plastic, paper, glass) for a recycle pop bonus.</li>
+    <li>Tap the bin to rotate. Swipe to move. Soft / hard drop as usual. DAS + lock delay kept snappy.</li>
+    <li>Stash one piece in the stash bin. Spend a <b>Magnet</b> charge (Trash Panda’s trick) to yank the falling junk into stash.</li>
+    <li>Junk looks like cans, boxes, tires, bags, pipes, and tubes — not plain bricks.</li>
+    <li>Earn Scrap, build your Junkyard, level up, unlock looks. Rewarded ads optional (revive / double / spin / crate speed). Odds shown for spins &amp; crates.</li>
   </ol>
   <button class="btn wide" id="howClose" type="button" style="margin-top:8px">Got it</button>
 </div></div>
@@ -309,87 +458,200 @@ aside.rail{width:64px;flex:0 0 64px;display:flex;flex-direction:column;gap:6px}
   <button class="btn wide" id="lvlClose" type="button" style="margin-top:8px">Let’s go</button>
 </div></div>
 
+
+<div id="continueOv" class="overlay hidden"><div class="card">
+  <h2>ONE MORE?</h2>
+  <p>Watch a short rewarded ad to revive once this run.</p>
+  <button class="btn wide pulse" id="continueAdBtn" type="button">Revive (ad)</button>
+  <button class="btn ghost wide" id="continueSkipBtn" type="button" style="margin-top:10px">Stack out</button>
+</div></div>
+
+<div id="doubleOv" class="overlay hidden"><div class="card">
+  <h2>DOUBLE SCRAP?</h2>
+  <p id="doubleHint">Watch a rewarded ad to double Scrap earned this run.</p>
+  <button class="btn wide gold" id="doubleAdBtn" type="button" style="box-shadow:0 0 0 1px rgba(255,255,255,.25) inset,0 8px 0 #9a7010">Double (ad)</button>
+  <button class="btn ghost wide" id="doubleSkipBtn" type="button" style="margin-top:10px">Keep as-is</button>
+</div></div>
+
+<div id="achOv" class="overlay hidden"><div class="card">
+  <h2>ACHIEVEMENTS</h2>
+  <p id="achProgress">0 / 0</p>
+  <div id="achList" class="ach-list"></div>
+  <button class="btn ghost wide" id="achClose" type="button">Close</button>
+</div></div>
+
+<div id="lbOv" class="overlay hidden"><div class="card">
+  <h2>LOCAL RECORDS</h2>
+  <p>Personal best chase — saved on this device only.</p>
+  <div id="lbList" class="lb-list"></div>
+  <button class="btn ghost wide" id="lbClose" type="button">Close</button>
+</div></div>
+
+<div id="bpOv" class="overlay hidden"><div class="card">
+  <h2 id="bpTitle">SEASON PASS</h2>
+  <p class="bp-head" id="bpSub">Themed free + premium tracks. Scroll rewards · preview each tier.</p>
+  <div class="bp-track"><div class="bp-fill" id="bpFill"></div></div>
+  <div class="bp-preview-wrap"><div class="bp-preview" id="bpPreview"><b>Select a tier</b><div class="sub">3D-ish reward preview</div></div></div>
+  <div class="bp-scroll"><div class="bp-rail" id="bpList"></div></div>
+  <div class="bp-actions">
+    <button class="btn gold wide" id="bpPremiumBtn" type="button" disabled style="opacity:.55">Premium Pass ~$9.99 (stub)</button>
+    <button class="btn mag wide" id="bpBundleBtn" type="button" disabled style="opacity:.55">Pass + 25 tiers (stub)</button>
+    <button class="btn ghost wide" id="bpBuyTierBtn" type="button">Buy 1 tier with Gems (optional)</button>
+  </div>
+  <button class="btn ghost wide" id="bpClose" type="button" style="margin-top:10px">Close</button>
+</div></div>
+
+<div id="calOv" class="overlay hidden"><div class="card">
+  <h2>STREAK CALENDAR</h2>
+  <p id="calHint">Login streak rewards escalate each day.</p>
+  <div id="calGrid" class="cal-grid"></div>
+  <div class="odds" id="calOdds"></div>
+  <button class="btn ghost wide" id="calClose" type="button">Close</button>
+</div></div>
+
+
+<div id="baseOv" class="overlay hidden"><div class="card">
+  <h2>JUNKYARD</h2>
+  <p>Build your raccoon hideout with Scrap. Timers are real-time — Gems speed up. Perks help runs, never buy leaderboard score.</p>
+  <p id="builderHint" class="gold" style="font-size:12px"></p>
+  <div id="baseMap"></div>
+  <button class="btn ghost wide" id="baseClose" type="button">Close</button>
+</div></div>
+
+<div id="chestOv" class="overlay hidden"><div class="card">
+  <h2>CRATES</h2>
+  <p>Earned from runs. Unlock timers. Odds always shown. Speed up with Gems or a rewarded ad.</p>
+  <div id="chestOdds" class="odds"></div>
+  <div id="chestList"></div>
+  <button class="btn ghost wide" id="chestClose" type="button">Close</button>
+</div></div>
+
+<div id="gemShopOv" class="overlay hidden"><div class="card">
+  <h2>GEM SHOP</h2>
+  <p>Neon Gems — IAP stubs (no product IDs yet). Starter pack is one-time.</p>
+  <div id="gemPacks" class="gem-grid"></div>
+  <button class="btn gold wide" id="starterPackBtn" type="button" disabled style="opacity:.55;margin-top:8px">Starter Pack $2.99 (coming soon)</button>
+  <button class="btn ghost wide" id="gemShopClose" type="button" style="margin-top:10px">Close</button>
+</div></div>
+
+<div id="albumOv" class="overlay hidden"><div class="card">
+  <h2>COLLECTION</h2>
+  <p>Trash cosmetics, skins, trails, boards, raccoon looks.</p>
+  <div id="albumGrid" class="album-grid"></div>
+  <button class="btn ghost wide" id="albumClose" type="button">Close</button>
+</div></div>
+
+<div id="notifPrompt" class="overlay hidden"><div class="card">
+  <h2>STAY IN THE LOOP?</h2>
+  <p>Local reminders when upgrades finish, crates unlock, daily rewards wait, or your streak is at risk. Never more than ~2/day. Quiet hours 9pm–8am. You can change this in Settings.</p>
+  <button class="btn wide pulse" id="notifAllowBtn" type="button">Enable reminders</button>
+  <button class="btn ghost wide" id="notifSkipBtn" type="button" style="margin-top:10px">Not now</button>
+</div></div>
+
+<div id="settingsOv" class="overlay hidden"><div class="card">
+  <h2>SETTINGS</h2>
+  <p>Trash Stack by Cinder and Crown — neon junk puzzle. Cross-promotes Trash Panda.</p>
+  <button class="btn wide" id="settingsMute" type="button" style="margin-top:8px">Sound on</button>
+  <button class="btn ghost wide" id="settingsHow" type="button" style="margin-top:10px">How to play</button>
+  <button class="btn ghost wide" id="settingsPrivacy" type="button" style="margin-top:10px">Privacy</button>
+  <button class="btn ghost wide" id="settingsSupport" type="button" style="margin-top:10px">Support</button>
+  <div id="notifToggles" style="text-align:left;font-size:12px;margin:10px 0">
+    <label><input type="checkbox" id="ntUpgrade" checked> Upgrade done</label><br>
+    <label><input type="checkbox" id="ntChest" checked> Crate ready</label><br>
+    <label><input type="checkbox" id="ntDaily" checked> Daily reward</label><br>
+    <label><input type="checkbox" id="ntStreak" checked> Streak at risk</label><br>
+    <label><input type="checkbox" id="ntSeason" checked> New season</label><br>
+    <label><input type="checkbox" id="ntQuiet" checked> Quiet hours 9pm–8am</label>
+  </div>
+  <p style="margin-top:12px;font-size:11px">Ads use Google AdMob (test IDs in builds). ATT + UMP consent on iOS. Remove Ads / Premium Pass coming soon — stubs only.</p>
+  <button class="btn ghost wide" id="settingsClose" type="button" style="margin-top:10px">Close</button>
+</div></div>
+
 <div id="flash"></div>
 <div id="toast"></div>
 <script>
 (() => {
 "use strict";
 
-const COLS = 10, VIS = 20, HID = 2, ROWS = VIS + HID;
-const LOCK_MS = 520, LOCK_RESETS = 15, CLEAR_MS = 420;
+const COLS = 8, VIS = 15, HID = 2, ROWS = VIS + HID; // 8×15 compactor bin (not a 10×20 well)
+const LOCK_MS = 520, LOCK_RESETS = 15, CLEAR_MS = 560;
 const DAS = 160, ARR = 36, SOFT_MS = 42;
-const KEY = "trashStack.v1";
+const KEY = "trashStack.v3"; // bump: scrap/gems + junkyard F2P
+const SAVE_MIGRATE_FROM = "trashStack.v2";
+const SAVE_MIGRATE_FROM_V1 = "trashStack.v1";
+const EC = () => window.TrashEconomyConfig || {};
+const EM = () => window.TrashEconomy || {};
 
-const COLORS = {
-  I: "#3dffff", O: "#ffd84a", T: "#e85cff",
-  S: "#5dff6a", Z: "#ff4b6b", J: "#4a7dff", L: "#ff9a3c"
+// Materials for recycle matching (3+ adjacent same material)
+const MATERIALS = ["metal","plastic","paper","glass"];
+const MATERIAL_COLOR = {
+  metal: "#9eb6c8",
+  plastic: "#ff2bd6",
+  paper: "#c4a574",
+  glass: "#00f5ff"
 };
 
-const MATS = {
-  I: [
-    [[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
-    [[0,0,1,0],[0,0,1,0],[0,0,1,0],[0,0,1,0]],
-    [[0,0,0,0],[0,0,0,0],[1,1,1,1],[0,0,0,0]],
-    [[0,1,0,0],[0,1,0,0],[0,1,0,0],[0,1,0,0]]
-  ],
-  O: [
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]],
-    [[0,1,1,0],[0,1,1,0],[0,0,0,0],[0,0,0,0]]
-  ],
-  T: [
-    [[0,1,0],[1,1,1],[0,0,0]],
-    [[0,1,0],[0,1,1],[0,1,0]],
-    [[0,0,0],[1,1,1],[0,1,0]],
-    [[0,1,0],[1,1,0],[0,1,0]]
-  ],
-  S: [
-    [[0,1,1],[1,1,0],[0,0,0]],
-    [[0,1,0],[0,1,1],[0,0,1]],
-    [[0,0,0],[0,1,1],[1,1,0]],
-    [[1,0,0],[1,1,0],[0,1,0]]
-  ],
-  Z: [
-    [[1,1,0],[0,1,1],[0,0,0]],
-    [[0,0,1],[0,1,1],[0,1,0]],
-    [[0,0,0],[1,1,0],[0,1,1]],
-    [[0,1,0],[1,1,0],[1,0,0]]
-  ],
-  J: [
-    [[1,0,0],[1,1,1],[0,0,0]],
-    [[0,1,1],[0,1,0],[0,1,0]],
-    [[0,0,0],[1,1,1],[0,0,1]],
-    [[0,1,0],[0,1,0],[1,1,0]]
-  ],
-  L: [
-    [[0,0,1],[1,1,1],[0,0,0]],
-    [[0,1,0],[0,1,0],[0,1,1]],
-    [[0,0,0],[1,1,1],[1,0,0]],
-    [[1,1,0],[0,1,0],[0,1,0]]
-  ]
-};
+// Junk catalog: tromino + pentomino heavy (avoid the classic 7 one-sided polyomino set as the core identity).
+// Each cell is drawn as a trash object, not a uniform brick.
+function rot90(m){
+  const R=m.length, C=m[0].length, out=[];
+  for(let c=0;c<C;c++){ const row=[]; for(let r=R-1;r>=0;r--) row.push(m[r][c]); out.push(row); }
+  return out;
+}
+function rots(seed){
+  const out=[seed];
+  for(let i=0;i<3;i++) out.push(rot90(out[i]));
+  return out;
+}
 
-// SRS kicks: (x, yUp). Applied as (x, -yUp) because y grows down.
-const KICKS_JLSTZ = {
-  "0|1": [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
-  "1|0": [[0,0],[1,0],[1,-1],[0,2],[1,2]],
-  "1|2": [[0,0],[1,0],[1,-1],[0,2],[1,2]],
-  "2|1": [[0,0],[-1,0],[-1,1],[0,-2],[-1,-2]],
-  "2|3": [[0,0],[1,0],[1,1],[0,-2],[1,-2]],
-  "3|2": [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
-  "3|0": [[0,0],[-1,0],[-1,-1],[0,2],[-1,2]],
-  "0|3": [[0,0],[1,0],[1,1],[0,-2],[1,-2]]
+const JUNK = {
+  CAN: {
+    name:"Crushed Can", material:"metal", color:"#b8c8d4",
+    mats: rots([[1,1,1]])
+  },
+  BOX: {
+    name:"Pizza Box", material:"paper", color:"#d2a86a",
+    mats: rots([[1,0],[1,1]])
+  },
+  TUBE: {
+    name:"Neon Tube", material:"glass", color:"#5cffef",
+    mats: rots([[1,0],[1,1]]) // triomino L — 3 cells
+  },
+  BAG: {
+    name:"Trash Bag", material:"plastic", color:"#ff2bd6",
+    mats: rots([[1,1,1],[1,0,1]]) // U pentomino
+  },
+  PIPE: {
+    name:"Pipe Section", material:"metal", color:"#00c8b4",
+    mats: rots([[0,1,0],[1,1,1],[0,1,0]]) // + / X-ish pentomino
+  },
+  TIRE: {
+    name:"Tire Scrap", material:"plastic", color:"#3a3a48",
+    mats: rots([[0,1,1],[1,1,0],[1,0,0]]) // F/N-like pentomino
+  },
+  CRATE: {
+    name:"Crate Lid", material:"paper", color:"#c98a3c",
+    mats: rots([[1,1],[1,1],[1,0]]) // P pentomino
+  },
+  BOTTLE: {
+    name:"Bottle Nest", material:"glass", color:"#7dffd4",
+    mats: rots([[1,0,0],[1,1,1],[0,0,1]]) // asymmetric 5 — not a classic polyomino
+  }
 };
-const KICKS_I = {
-  "0|1": [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
-  "1|0": [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
-  "1|2": [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
-  "2|1": [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
-  "2|3": [[0,0],[2,0],[-1,0],[2,1],[-1,-2]],
-  "3|2": [[0,0],[-2,0],[1,0],[-2,-1],[1,2]],
-  "3|0": [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
-  "0|3": [[0,0],[-1,0],[2,0],[-1,2],[2,-1]]
+const PIECE_IDS = Object.keys(JUNK);
+const COLORS = Object.fromEntries(PIECE_IDS.map(id => [id, JUNK[id].color]));
+const MATS = Object.fromEntries(PIECE_IDS.map(id => [id, JUNK[id].mats]));
+
+// Generic wall-kick table (no SRS / no I-piece special casing)
+const KICKS_GENERIC = {
+  "0|1": [[0,0],[-1,0],[1,0],[0,-1],[-1,-1],[1,-1],[-2,0],[2,0],[0,1]],
+  "1|0": [[0,0],[1,0],[-1,0],[0,1],[1,1],[-1,1],[2,0],[-2,0],[0,-1]],
+  "1|2": [[0,0],[1,0],[-1,0],[0,-1],[1,-1],[-1,-1],[2,0],[-2,0],[0,1]],
+  "2|1": [[0,0],[-1,0],[1,0],[0,1],[-1,1],[1,1],[-2,0],[2,0],[0,-1]],
+  "2|3": [[0,0],[1,0],[-1,0],[0,-1],[1,-1],[-1,-1],[2,0],[-2,0],[0,1]],
+  "3|2": [[0,0],[-1,0],[1,0],[0,1],[-1,1],[1,1],[-2,0],[2,0],[0,-1]],
+  "3|0": [[0,0],[-1,0],[1,0],[0,-1],[-1,-1],[1,-1],[-2,0],[2,0],[0,1]],
+  "0|3": [[0,0],[1,0],[-1,0],[0,1],[1,1],[-1,1],[2,0],[-2,0],[0,-1]]
 };
 
 const SKINS = [
@@ -399,7 +661,7 @@ const SKINS = [
   {id:"glass", name:"Rain Glass", price:500, sw:"linear-gradient(135deg,#9ee7ff,#265a80)"},
   {id:"circuit", name:"Circuit Junk", price:800, sw:"linear-gradient(135deg,#0a2,#0f0 40%,#030)"},
   {id:"sticker", name:"Sticker Bomb", price:1000, sw:"linear-gradient(90deg,#ff4b6b,#ffd84a,#5dff6a,#4a7dff)"},
-  {id:"ghost", name:"Ghost Run", price:700, sw:"linear-gradient(135deg,#cfd8ff,#667)"}
+  {id:"haze", name:"Haze Run", price:700, sw:"linear-gradient(135deg,#cfd8ff,#667)"}
 ];
 const BGS = [
   {id:"docks", name:"Night Docks", price:0, sw:"linear-gradient(#0a0b16,#1a1030)"},
@@ -413,7 +675,7 @@ const CH_POOL = [
   {id:"lines20", name:"Clear 20 lines", goal:20, kind:"lines", reward:40},
   {id:"score5k", name:"Score 5,000 in one run", goal:5000, kind:"scoreRun", reward:50},
   {id:"combo3", name:"Hit a x3 combo", goal:1, kind:"combo3", reward:35},
-  {id:"quad1", name:"Land a 4-line sweep", goal:1, kind:"quad", reward:45},
+  {id:"quad1", name:"Crush a 3-row compact", goal:1, kind:"quad", reward:45},
   {id:"lines40", name:"Clear 40 lines today", goal:40, kind:"linesDay", reward:60},
   {id:"combo5", name:"Hit a x5 combo", goal:1, kind:"combo5", reward:70},
   {id:"games3", name:"Play 3 games today", goal:3, kind:"games", reward:30},
@@ -421,23 +683,115 @@ const CH_POOL = [
 ];
 
 const WHEEL = [
-  {label:"25 ✦", kind:"shinies", n:25, color:"#1a3a4a"},
-  {label:"40 ✦", kind:"shinies", n:40, color:"#2a1a4a"},
-  {label:"15 ✦", kind:"shinies", n:15, color:"#1a3a4a"},
-  {label:"75 ✦", kind:"shinies", n:75, color:"#3a3010"},
-  {label:"25 ✦", kind:"shinies", n:25, color:"#1a3a4a"},
+  {label:"25 ⚙", kind:"shinies", n:25, color:"#1a3a4a"},
+  {label:"40 ⚙", kind:"shinies", n:40, color:"#2a1a4a"},
+  {label:"15 ⚙", kind:"shinies", n:15, color:"#1a3a4a"},
+  {label:"75 ⚙", kind:"shinies", n:75, color:"#3a3010"},
+  {label:"25 ⚙", kind:"shinies", n:25, color:"#1a3a4a"},
   {label:"LOOK", kind:"cosmetic", n:0, color:"#4a1a3a"},
-  {label:"50 ✦", kind:"shinies", n:50, color:"#1a3a30"},
-  {label:"100 ✦", kind:"shinies", n:100, color:"#4a3a10"}
+  {label:"50 ⚙", kind:"shinies", n:50, color:"#1a3a30"},
+  {label:"100 ⚙", kind:"shinies", n:100, color:"#4a3a10"}
 ];
 
+
+/* META_JS_V2_BEGIN */
+const TRAILS = [
+  {id:"none", name:"No Trail", price:0, color:"transparent"},
+  {id:"cyan", name:"Cyan Sparks", price:250, color:"#00f5ff"},
+  {id:"mag", name:"Magenta Dust", price:350, color:"#ff2bd6"},
+  {id:"gold", name:"Gold Embers", price:450, color:"#ffd166"},
+  {id:"lime", name:"Lime Static", price:550, color:"#7dff6b"}
+];
+const ACHIEVEMENTS = [
+  {id:"first_clear", name:"First Clear", desc:"Clear any line", goal:1, kind:"linesTotal", reward:20},
+  {id:"lines_50", name:"Dock Sweeper", desc:"Clear 50 lines total", goal:50, kind:"linesTotal", reward:40},
+  {id:"lines_200", name:"Night Janitor", desc:"Clear 200 lines total", goal:200, kind:"linesTotal", reward:80},
+  {id:"lines_500", name:"City Recycler", desc:"Clear 500 lines total", goal:500, kind:"linesTotal", reward:150},
+  {id:"score_1k", name:"Warm Up", desc:"Score 1,000 in a run", goal:1000, kind:"bestScore", reward:25},
+  {id:"score_5k", name:"Neon Climber", desc:"Score 5,000 in a run", goal:5000, kind:"bestScore", reward:50},
+  {id:"score_10k", name:"Skyline", desc:"Score 10,000 in a run", goal:10000, kind:"bestScore", reward:90},
+  {id:"score_25k", name:"Overdrive", desc:"Score 25,000 in a run", goal:25000, kind:"bestScore", reward:160},
+  {id:"combo_3", name:"Triple Threat", desc:"Hit a x3 combo", goal:3, kind:"bestCombo", reward:30},
+  {id:"combo_5", name:"On Fire", desc:"Hit a x5 combo", goal:5, kind:"bestCombo", reward:60},
+  {id:"combo_8", name:"Inferno", desc:"Hit a x8 combo", goal:8, kind:"bestCombo", reward:120},
+  {id:"quad_1", name:"Full Crush", desc:"Land a 3-row compact", goal:1, kind:"quads", reward:40},
+  {id:"quad_10", name:"Press Operator", desc:"Land 10 three-row compacts", goal:10, kind:"quads", reward:100},
+  {id:"games_5", name:"Shift Starter", desc:"Play 5 runs", goal:5, kind:"games", reward:25},
+  {id:"games_25", name:"Night Shift", desc:"Play 25 runs", goal:25, kind:"games", reward:70},
+  {id:"games_100", name:"Dock Lifer", desc:"Play 100 runs", goal:100, kind:"games", reward:200},
+  {id:"streak_3", name:"Three Nights", desc:"3-day login streak", goal:3, kind:"streak", reward:40},
+  {id:"streak_7", name:"Week on the Docks", desc:"7-day login streak", goal:7, kind:"streak", reward:100},
+  {id:"streak_14", name:"Fortnight Neon", desc:"14-day login streak", goal:14, kind:"streak", reward:180},
+  {id:"level_5", name:"Rising Raccoon", desc:"Reach player level 5", goal:5, kind:"playerLevel", reward:50},
+  {id:"level_10", name:"Mask Veteran", desc:"Reach player level 10", goal:10, kind:"playerLevel", reward:100},
+  {id:"level_20", name:"Boss of Trash", desc:"Reach player level 20", goal:20, kind:"playerLevel", reward:220},
+  {id:"shinies_500", name:"Shiny Pockets", desc:"Hold 500 Shinies at once", goal:500, kind:"shiniesHeld", reward:40},
+  {id:"shinies_earned", name:"Hoarder", desc:"Earn 1,000 Shinies lifetime", goal:1000, kind:"shiniesEarned", reward:80},
+  {id:"skins_3", name:"Wardrobe", desc:"Own 3 skins", goal:3, kind:"skinsOwned", reward:35},
+  {id:"skins_all", name:"Full Closet", desc:"Own every skin", goal:SKINS.length, kind:"skinsOwned", reward:150},
+  {id:"bgs_3", name:"Scenic", desc:"Own 3 backgrounds", goal:3, kind:"bgsOwned", reward:35},
+  {id:"hard_50", name:"Drop Machine", desc:"Hard-drop 50 times", goal:50, kind:"hardDrops", reward:40},
+  {id:"spin_1", name:"Lucky Night", desc:"Spin the daily wheel", goal:1, kind:"spins", reward:20},
+  {id:"spin_7", name:"Wheel Regular", desc:"Spin 7 times", goal:7, kind:"spins", reward:70},
+  {id:"continue_1", name:"Second Chance", desc:"Revive once via rewarded ad", goal:1, kind:"continues", reward:30},
+  {id:"pb_chase", name:"Chaser", desc:"Beat your personal best", goal:1, kind:"pbBeats", reward:45},
+  {id:"week_clear", name:"Weekly Hero", desc:"Complete a weekly challenge", goal:1, kind:"weeklies", reward:60},
+  {id:"recycle_1", name:"Sort It", desc:"Trigger a recycle pop", goal:1, kind:"recycles", reward:25},
+  {id:"recycle_25", name:"Sorting Pro", desc:"Trigger 25 recycle pops", goal:25, kind:"recycles", reward:80},
+  {id:"magnet_1", name:"Scrap Magnet", desc:"Use Magnet once", goal:1, kind:"magnets", reward:30}
+];
+const WEEKLY_POOL = [
+  {id:"w_lines100", name:"Clear 100 lines this week", goal:100, kind:"linesWeek", reward:120},
+  {id:"w_score20k", name:"Best run score 20,000", goal:20000, kind:"scoreWeekBest", reward:140},
+  {id:"w_quads5", name:"Land 5 three-row compacts", goal:5, kind:"quadWeek", reward:110},
+  {id:"w_games10", name:"Play 10 runs this week", goal:10, kind:"gamesWeek", reward:90},
+  {id:"w_combo6", name:"Hit a x6 combo", goal:6, kind:"comboWeek", reward:130}
+];
+function seasonRows(lane){
+  const sp = (EC().SEASON_PASS) || { free:[], premium:[], tiers:100 };
+  const rows = lane==="premium" ? (sp.premium||[]) : (sp.free||[]);
+  return rows.map(r=>{
+    const reward = {};
+    if (r.scrap) reward.shinies = r.scrap;
+    if (r.gems) reward.gems = r.gems;
+    if (r.skin) reward.skin = r.skin;
+    if (r.skinSet) reward.skinSet = r.skinSet;
+    if (r.bg) reward.bg = r.bg;
+    if (r.trail) reward.trail = r.trail;
+    if (r.outfit) reward.outfit = r.outfit;
+    if (r.emote) reward.emote = r.emote;
+    if (r.banner) reward.banner = r.banner;
+    if (r.crushFx) reward.crushFx = r.crushFx;
+    if (r.legendary) reward.legendary = true;
+    if (r.legendaryStyle) reward.legendaryStyle = r.legendaryStyle;
+    if (r.animated) reward.animated = true;
+    return { at:r.at, reward, preview:r.preview, scrap:r.scrap, gems:r.gems, outfit:r.outfit, skin:r.skin, skinSet:r.skinSet, bg:r.bg, trail:r.trail, emote:r.emote, banner:r.banner, crushFx:r.crushFx, legendary:r.legendary };
+  });
+}
+function BP_FREE(){ return seasonRows("free"); }
+function BP_PREMIUM(){ return seasonRows("premium"); }
+const OUTFITS = [
+  {id:"default", name:"Classic Mask"},
+  {id:"hoodie", name:"Neon Hoodie"},
+  {id:"hardhat", name:"Dock Hardhat"},
+  {id:"visor", name:"Night Visor"}
+];
+const WHEEL_ODDS = WHEEL.map(w => ({ label:w.label, pct: Math.round(100/WHEEL.length) }));
+/* META_JS_V2_END */
+
+
+if (!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect = function(x,y,w,h,r){
+    r=Math.min(r||0,w/2,h/2); this.moveTo(x+r,y); this.arcTo(x+w,y,x+w,y+h,r); this.arcTo(x+w,y+h,x,y+h,r); this.arcTo(x,y+h,x,y,r); this.arcTo(x,y,x+w,y,r); this.closePath();
+  };
+}
 const LINE_SCORE = [0,100,300,500,800];
 const LINE_SHINY = [0,1,3,6,12];
 const ANNOUNCE = {
   1: ["NICE"],
   2: ["NICE","GREAT"],
   3: ["GREAT","SAVAGE"],
-  4: ["INSANE","FULL SWEEP","CITY SWEEP"]
+  4: ["INSANE","COMPACTOR","CITY CRUSH"]
 };
 
 function gravityMs(level){
@@ -461,30 +815,78 @@ function hashStr(s){
 }
 
 function defaultSave(){
+  const softStart = (EC().SOFT && EC().SOFT.startAmount) || 80;
+  const gemStart = (EC().PREMIUM && EC().PREMIUM.startAmount) || 20;
   return {
-    highScore:0, shinies:50, xp:0, playerLevel:1,
-    unlockedSkins:["neon"], unlockedBgs:["docks"],
-    skin:"neon", bg:"docks", muted:false,
-    dailyStreak:0, lastPlayDate:"", lastSpinDate:"",
-    welcomed:false, sawHow:false,
+    highScore:0, scrap:softStart, shinies:softStart, gems:gemStart, xp:0, playerLevel:1,
+    unlockedSkins:["neon"], unlockedBgs:["docks"], unlockedTrails:["none"], unlockedOutfits:["default"],
+    skin:"neon", bg:"docks", trail:"none", outfit:"default", muted:false,
+    dailyStreak:0, lastPlayDate:"", lastSpinDate:"", lastLoginClaim:"", streakFreeze:0,
+    loginHistory:[], welcomed:false, sawHow:false, adsRemoved:false, premiumPass:false,
     challenges:{date:"", items:[]},
-    gamesPlayed:0, totalLines:0, dayLines:0, dayGames:0, dayDate:""
+    weekly:{week:"", items:[]},
+    achievements:{},
+    gamesPlayed:0, totalLines:0, dayLines:0, dayGames:0, dayDate:"",
+    shiniesEarned:softStart, scrapEarned:softStart, quads:0, hardDropTotal:0, bestCombo:0, spins:0, continues:0, pbBeats:0, weekliesDone:0, recycles:0, magnets:0,
+    runShinies:0, runScrap:0, localScores:[], firstWin:false,
+    battlePass:{ season:1, xp:0, claimedFree:[], claimedPremium:[], premium:false },
+    base:{ levels:{recycler:1,compactor:1,neonSign:1,stashVault:1}, queue:[], builderSlots:2 },
+    chests:[],
+    collection:{ skins:["neon"], trails:["none"], bgs:["docks"], outfits:["default"] },
+    notif:{ permission:"default", asked:false, enabled:{upgrade_done:true,chest_ready:true,daily_reward:true,streak_risk:true,new_season:true}, quietHours:true, sentToday:0, sentDate:"" },
+    // IAP stubs — TODO: StoreKit / Play Billing product IDs
+    iap:{ removeAdsProductId:"", premiumPassProductId:"", starterBought:false, gemPackProductIds:{} }
   };
 }
 let save = defaultSave();
-function load(){
+function TN(){ return window.TrashNative || null; }
+async function load(){
   try{
-    const raw = localStorage.getItem(KEY);
-    if (raw) save = Object.assign(defaultSave(), JSON.parse(raw));
+    let raw = null;
+    async function readKey(k){
+      if (TN() && TN().loadProgress) return await TN().loadProgress(k);
+      return localStorage.getItem(k);
+    }
+    raw = await readKey(KEY);
+    if (!raw) raw = await readKey(SAVE_MIGRATE_FROM);
+    if (!raw) raw = await readKey(SAVE_MIGRATE_FROM_V1);
+    if (raw){
+      save = Object.assign(defaultSave(), JSON.parse(raw));
+      if (save.skin==="ghost") save.skin="haze";
+      if (Array.isArray(save.unlockedSkins)){
+        save.unlockedSkins = save.unlockedSkins.map(s=>s==="ghost"?"haze":s);
+      }
+      if (EM().migrateLegacySave) save = Object.assign(defaultSave(), EM().migrateLegacySave(save));
+      // Keep scrap/shinies mirrored for transitional UI
+      if (save.scrap == null) save.scrap = save.shinies || 0;
+      save.shinies = save.scrap;
+    }
   }catch(e){}
   rollDaily();
+  tickMetaTimers();
 }
 function persist(){
-  try{ localStorage.setItem(KEY, JSON.stringify(save)); }catch(e){}
+  const payload = JSON.stringify(save);
+  try{ localStorage.setItem(KEY, payload); }catch(e){}
+  const bridge = TN();
+  if (bridge && bridge.saveProgress){
+    Promise.resolve(bridge.saveProgress(KEY, payload)).catch(()=>{});
+  }
+}
+function weekKey(){
+  const d=new Date();
+  const onejan=new Date(d.getFullYear(),0,1);
+  const week=Math.ceil((((d-onejan)/86400000)+onejan.getDay()+1)/7);
+  return d.getFullYear()+"-W"+String(week).padStart(2,"0");
 }
 function rollDaily(){
   const t = todayKey();
   if (save.dayDate !== t){ save.dayLines = 0; save.dayGames = 0; save.dayDate = t; }
+  if (!save.unlockedTrails) save.unlockedTrails=["none"];
+  if (!save.achievements) save.achievements={};
+  if (!save.localScores) save.localScores=[];
+  if (!save.battlePass) save.battlePass={ season:1, xp:0, claimedFree:[], claimedPremium:[] };
+  if (!save.loginHistory) save.loginHistory=[];
   if (save.challenges.date !== t){
     const rng = hashStr(t + "hustle");
     const pool = CH_POOL.slice();
@@ -495,6 +897,18 @@ function rollDaily(){
       items.push({id:ch.id, name:ch.name, goal:ch.goal, kind:ch.kind, reward:ch.reward, progress:0, claimed:false});
     }
     save.challenges = {date:t, items};
+  }
+  const wk = weekKey();
+  if (!save.weekly || save.weekly.week !== wk){
+    const rng = hashStr(wk + "week");
+    const pool = WEEKLY_POOL.slice();
+    const items=[];
+    for (let i=0;i<2;i++){
+      const idx = (rng + i*13) % pool.length;
+      const ch = pool.splice(idx % pool.length, 1)[0];
+      items.push({id:ch.id, name:ch.name, goal:ch.goal, kind:ch.kind, reward:ch.reward, progress:0, claimed:false});
+    }
+    save.weekly = {week:wk, items};
   }
 }
 
@@ -550,6 +964,11 @@ const SFX = {
 };
 
 function vibe(ms){
+  const bridge = TN();
+  if (bridge && bridge.haptic){
+    Promise.resolve(bridge.haptic(ms)).catch(()=>{});
+    return;
+  }
   try{ if (navigator.vibrate) navigator.vibrate(ms); }catch(e){}
 }
 
@@ -613,15 +1032,83 @@ function toast(msg){
 }
 
 // ---------- progression ----------
+
+function livePerks(){
+  if (EM().aggregatePerks) return EM().aggregatePerks(save.base && save.base.levels);
+  return {};
+}
+function addGems(n){
+  save.gems = (save.gems||0) + Math.max(0,n|0);
+  persist(); syncMetaUI();
+}
+function tickMetaTimers(){
+  if (!EM().completeReadyUpgrades) return;
+  const now = Date.now();
+  const res = EM().completeReadyUpgrades(save, now);
+  if (res.completed && res.completed.length){
+    save = res.state;
+    for (const q of res.completed){
+      toast((EC().BUILDINGS[q.buildingId]?.name||q.buildingId)+" upgraded!");
+      scheduleNotifKind("upgrade_done", "Upgrade complete", (EC().BUILDINGS[q.buildingId]?.name||"Building")+" is ready in the Junkyard.");
+    }
+    persist(); syncMetaUI();
+  }
+  // Chest ready toasts
+  for (const c of (save.chests||[])){
+    if (!c.opened && c.readyAt <= now && !c._toasted){
+      c._toasted = true;
+      toast("Crate ready to open!");
+      scheduleNotifKind("chest_ready", "Crate ready", "A junk crate finished unlocking.");
+    }
+  }
+}
+function inQuietHours(){
+  const q = EC().NOTIFICATIONS?.quietHours || {start:21,end:8};
+  const h = new Date().getHours();
+  if (q.start > q.end) return h >= q.start || h < q.end;
+  return h >= q.start && h < q.end;
+}
+async function scheduleNotifKind(kind, title, body, atMs){
+  if (!save.notif || !save.notif.enabled || !save.notif.enabled[kind]) return;
+  if (save.notif.quietHours && inQuietHours()) return;
+  const day = todayKey();
+  if (save.notif.sentDate !== day){ save.notif.sentToday=0; save.notif.sentDate=day; }
+  const max = EC().NOTIFICATIONS?.maxPerDay || 2;
+  if ((save.notif.sentToday||0) >= max) return;
+  const bridge = TN();
+  if (bridge && bridge.scheduleLocalNotification){
+    const ok = await bridge.scheduleLocalNotification({ title, body, atMs: atMs||Date.now()+2000 });
+    if (ok){ save.notif.sentToday++; persist(); }
+  }
+}
+async function maybeAskNotifications(){
+  if (!save.firstWin || save.notif?.asked) return;
+  document.getElementById("notifPrompt").classList.remove("hidden");
+}
+
 function addShinies(n, why){
   if (!n) return;
-  save.shinies += n;
+  const perks = livePerks();
+  let gain = n;
+  const src = (why==="run" || !why) ? null : why;
+  if (EM().applyScrapGain) gain = EM().applyScrapGain(n, perks, src) || n;
+  save.scrap = (save.scrap||0) + gain;
+  save.shinies = save.scrap;
+  save.shiniesEarned = (save.shiniesEarned||0) + Math.max(0,gain);
+  save.scrapEarned = (save.scrapEarned||0) + Math.max(0,gain);
+  if (why==="run" || why==="clear" || why==="recycle" || !why){
+    save.runScrap = (save.runScrap||0) + Math.max(0,gain);
+    save.runShinies = save.runScrap;
+  }
   persist();
   syncMetaUI();
   SFX.coin();
+  checkAchievements();
 }
 function addXP(n){
   if (n<=0) return;
+  const perks = livePerks();
+  if (EM().applyXpGain) n = EM().applyXpGain(n, perks) || n;
   save.xp += n;
   let ups = 0;
   while (save.xp >= xpNeeded(save.playerLevel)){
@@ -636,7 +1123,7 @@ function addXP(n){
     SFX.level();
     vibe([30,40,30]);
     const ov = document.getElementById("lvlOv");
-    document.getElementById("lvlFanfare").textContent = "Player level "+save.playerLevel+"  ·  +"+ (25*ups) +" Shinies";
+    document.getElementById("lvlFanfare").textContent = "Player level "+save.playerLevel+"  ·  +"+ (25*ups) +" Scrap";
     ov.classList.remove("hidden");
     if (screen==="game" && !over) pauseGame(true);
     document.getElementById("pauseOv").classList.add("hidden");
@@ -657,7 +1144,7 @@ function bumpChallenge(kind, amount){
     if (ch.progress>=ch.goal && !ch.claimed){
       ch.claimed = true; ch.progress = ch.goal;
       addShinies(ch.reward);
-      toast("Hustle done! +"+ch.reward+" Shinies");
+      toast("Hustle done! +"+ch.reward+" Scrap");
       got=true;
     }
   }
@@ -668,13 +1155,150 @@ function bumpChallenge(kind, amount){
 function checkDailyStreak(){
   const t = todayKey();
   if (save.lastPlayDate === t) return;
-  if (save.lastPlayDate === yesterdayKey()) save.dailyStreak += 1;
+  // Streak about to break: schedule reminder if returning after gap risk
+  if (save.lastPlayDate && save.lastPlayDate !== yesterdayKey() && (save.streakFreeze||0)>0){
+    save.streakFreeze--;
+    save.dailyStreak = Math.max(1, save.dailyStreak);
+    toast("Streak freeze used — streak saved!");
+  } else if (save.lastPlayDate === yesterdayKey()) save.dailyStreak += 1;
   else save.dailyStreak = 1;
   save.lastPlayDate = t;
-  const bonus = Math.min(50, 5*save.dailyStreak);
-  addShinies(bonus);
+  if (!save.loginHistory.includes(t)) save.loginHistory.push(t);
+  while (save.loginHistory.length>42) save.loginHistory.shift();
+  const bonus = EM().loginStreakScrap ? EM().loginStreakScrap(save.dailyStreak) : Math.min(120, 5*save.dailyStreak + Math.floor(save.dailyStreak/7)*20);
+  if (save.lastLoginClaim !== t){
+    save.lastLoginClaim = t;
+    addShinies(bonus);
+    addBattlePassXP(8 + Math.min(20, save.dailyStreak));
+    toast("Day "+save.dailyStreak+" streak  ·  +"+bonus+" Scrap");
+    scheduleNotifKind("daily_reward", "Daily reward waiting", "Your Junkyard stash has Scrap ready — claim your streak.", Date.now()+20*60*60*1000);
+  }
+  // Tomorrow streak risk reminder (~20h)
+  scheduleNotifKind("streak_risk", "Streak at risk", "Log in soon so your Day "+(save.dailyStreak+1)+" streak doesn't break.", Date.now()+20*60*60*1000);
   persist();
-  toast("Day "+save.dailyStreak+" streak  ·  +"+bonus+" Shinies");
+  checkAchievements();
+}
+
+function achievementProgress(def){
+  switch(def.kind){
+    case "linesTotal": return save.totalLines||0;
+    case "bestScore": return save.highScore||0;
+    case "bestCombo": return save.bestCombo||0;
+    case "quads": return save.quads||0;
+    case "games": return save.gamesPlayed||0;
+    case "streak": return save.dailyStreak||0;
+    case "playerLevel": return save.playerLevel||1;
+    case "shiniesHeld": return save.shinies||0;
+    case "shiniesEarned": return save.shiniesEarned||0;
+    case "skinsOwned": return (save.unlockedSkins||[]).length;
+    case "bgsOwned": return (save.unlockedBgs||[]).length;
+    case "hardDrops": return save.hardDropTotal||0;
+    case "spins": return save.spins||0;
+    case "continues": return save.continues||0;
+    case "pbBeats": return save.pbBeats||0;
+    case "weeklies": return save.weekliesDone||0;
+    case "recycles": return save.recycles||0;
+    case "magnets": return save.magnets||0;
+    default: return 0;
+  }
+}
+let _checkingAchievements=false;
+function checkAchievements(){
+  if (_checkingAchievements) return;
+  _checkingAchievements=true;
+  try{
+    if (!save.achievements) save.achievements={};
+    let unlocked=0;
+    for (const def of ACHIEVEMENTS){
+      if (save.achievements[def.id]) continue;
+      const p = achievementProgress(def);
+      if (p >= def.goal){
+        save.achievements[def.id] = { at: Date.now() };
+        save.scrap = (save.scrap||0) + def.reward;
+        save.shinies = save.scrap;
+        save.shiniesEarned = (save.shiniesEarned||0) + def.reward;
+        save.scrapEarned = (save.scrapEarned||0) + def.reward;
+        toast("Achievement: "+def.name+"  ·  +"+def.reward+" Scrap");
+        SFX.prize(); vibe(24);
+        unlocked++;
+      }
+    }
+    if (unlocked) persist();
+  } finally { _checkingAchievements=false; }
+}
+function addBattlePassXP(n){
+  if (!n) return;
+  save.battlePass.xp = (save.battlePass.xp||0) + n;
+  persist();
+  claimBattlePassReady();
+}
+function bpTierUnlocked(){
+  const sp = EC().SEASON_PASS || { tiers:30, xpPerTier:100 };
+  if (EM().seasonTierUnlocked) return EM().seasonTierUnlocked(save.battlePass.xp||0, sp.xpPerTier, sp.tiers);
+  return Math.min(sp.tiers||30, Math.floor((save.battlePass.xp||0)/(sp.xpPerTier||100)));
+}
+function grantBPReward(reward){
+  if (!reward) return;
+  if (reward.shinies) addShinies(reward.shinies);
+  if (reward.gems) addGems(reward.gems);
+  if (reward.skin && !save.unlockedSkins.includes(reward.skin)){ save.unlockedSkins.push(reward.skin); albumUnlock("skins", reward.skin); }
+  if (reward.skinSet) albumUnlock("skins", reward.skinSet);
+  if (reward.bg && !save.unlockedBgs.includes(reward.bg)){ save.unlockedBgs.push(reward.bg); albumUnlock("bgs", reward.bg); }
+  if (reward.trail && !save.unlockedTrails.includes(reward.trail)){ save.unlockedTrails.push(reward.trail); albumUnlock("trails", reward.trail); }
+  if (reward.outfit && !(save.unlockedOutfits||[]).includes(reward.outfit)){
+    save.unlockedOutfits = save.unlockedOutfits||["default"];
+    save.unlockedOutfits.push(reward.outfit);
+    albumUnlock("outfits", reward.outfit);
+  }
+  if (reward.emote){ save.unlockedEmotes = save.unlockedEmotes||[]; if (!save.unlockedEmotes.includes(reward.emote)) save.unlockedEmotes.push(reward.emote); }
+  if (reward.banner){ save.unlockedBanners = save.unlockedBanners||[]; if (!save.unlockedBanners.includes(reward.banner)) save.unlockedBanners.push(reward.banner); }
+  if (reward.crushFx){ save.unlockedCrushFx = save.unlockedCrushFx||[]; if (!save.unlockedCrushFx.includes(reward.crushFx)) save.unlockedCrushFx.push(reward.crushFx); }
+  if (reward.legendaryStyle){ save.legendaryStyles = save.legendaryStyles||[]; if (!save.legendaryStyles.includes(reward.legendaryStyle)) save.legendaryStyles.push(reward.legendaryStyle); }
+}
+function claimBattlePassReady(){
+  const tier = bpTierUnlocked();
+  let got=false;
+  for (const row of BP_FREE()){
+    if (row.at <= tier && !(save.battlePass.claimedFree||[]).includes(row.at)){
+      save.battlePass.claimedFree.push(row.at);
+      grantBPReward(row.reward);
+      got=true;
+    }
+  }
+  if (save.premiumPass || save.battlePass.premium){
+    for (const row of BP_PREMIUM()){
+      if (row.at <= tier && !(save.battlePass.claimedPremium||[]).includes(row.at)){
+        save.battlePass.claimedPremium.push(row.at);
+        grantBPReward(row.reward);
+        got=true;
+      }
+    }
+  }
+  if (got){ persist(); toast("Season Pass reward!"); }
+}
+function albumUnlock(kind, id){
+  if (!save.collection) save.collection={ skins:[], trails:[], bgs:[], outfits:[] };
+  const list = save.collection[kind] || (save.collection[kind]=[]);
+  if (!list.includes(id)) list.push(id);
+}
+function bumpWeekly(kind, amount){
+  if (!save.weekly || !save.weekly.items) return;
+  for (const ch of save.weekly.items){
+    if (ch.claimed) continue;
+    if (ch.kind==="linesWeek" && kind==="lines") ch.progress = Math.min(ch.goal, ch.progress+amount);
+    if (ch.kind==="gamesWeek" && kind==="games") ch.progress = Math.min(ch.goal, ch.progress+amount);
+    if (ch.kind==="quadWeek" && kind==="quad") ch.progress = Math.min(ch.goal, ch.progress+amount);
+    if (ch.kind==="scoreWeekBest" && kind==="score") ch.progress = Math.max(ch.progress, amount);
+    if (ch.kind==="comboWeek" && kind==="combo") ch.progress = Math.max(ch.progress, amount);
+    if (ch.progress>=ch.goal && !ch.claimed){
+      ch.claimed=true; ch.progress=ch.goal;
+      addShinies(ch.reward);
+      save.weekliesDone = (save.weekliesDone||0)+1;
+      toast("Weekly done! +"+ch.reward+" Scrap");
+      checkAchievements();
+    }
+  }
+  persist();
 }
 
 // ---------- game state ----------
@@ -695,15 +1319,19 @@ function emptyBoard(){
   return b;
 }
 function refillBag(){
-  const p = ["I","O","T","S","Z","J","L"];
+  const p = PIECE_IDS.slice();
   for (let i=p.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [p[i],p[j]]=[p[j],p[i]]; }
   bag.push(...p);
 }
 function takeBag(){
-  if (bag.length<7) refillBag();
+  if (bag.length < PIECE_IDS.length) refillBag();
   return bag.shift();
 }
-function spawnX(type){ return type==="O"?4:3; }
+function spawnX(type){
+  const m = MATS[type][0];
+  const w = m[0].length;
+  return Math.max(0, Math.floor((COLS - w) / 2));
+}
 function cellsOf(type, rot, x, y){
   const m = MATS[type][rot];
   const out=[];
@@ -736,6 +1364,9 @@ function nextPiece(){
   drawPreviews();
 }
 
+let continuedThisRun=false;
+let pendingGameOver=false;
+let lastRunShinies=0;
 function resetRun(){
   board = emptyBoard();
   bag=[]; queue=[];
@@ -745,8 +1376,14 @@ function resetRun(){
   gravityAcc=0; locking=false; lockT=0; clearT=0; clearing=null;
   hardDrops=0; particles.length=0; shake=0; flashA=0;
   keys={}; dasDir=0;
+  continuedThisRun=false; pendingGameOver=false;
+  save.runShinies=0; lastRunShinies=0;
+  recyclePending=null; magnetCharge=1; // start with one magnet
+  syncMagnetUI();
   nextPiece();
   syncGameUI();
+  const bridge = TN();
+  if (bridge && bridge.noteRunStarted) bridge.noteRunStarted();
 }
 
 function ghostY(){
@@ -771,11 +1408,9 @@ function tryMove(dx,dy){
 
 function tryRot(dir){
   if (!cur || clearing || over || paused) return false;
-  if (cur.type==="O"){ SFX.rot(); lastRot=true; return true; }
   const from = cur.rot;
   const to = (cur.rot + dir + 4) % 4;
-  const table = cur.type==="I" ? KICKS_I : KICKS_JLSTZ;
-  const kicks = table[from+"|"+to] || [[0,0]];
+  const kicks = KICKS_GENERIC[from+"|"+to] || [[0,0]];
   for (let i=0;i<kicks.length;i++){
     const [kx, yup] = kicks[i];
     const nx = cur.x + kx;
@@ -804,27 +1439,93 @@ function doHold(){
   drawPreviews();
 }
 
-function detectTSpin(){
-  if (!cur || cur.type!=="T" || !lastRot) return false;
-  const cx = cur.x+1, cy = cur.y+1;
-  const corners = [[0,0],[2,0],[0,2],[2,2]];
-  let filled=0;
-  for (const [dx,dy] of corners){
-    const xx=cur.x+dx, yy=cur.y+dy;
-    if (xx<0||xx>=COLS||yy>=ROWS|| (yy>=0 && board[yy][xx])) filled++;
+function cellMaterial(v){
+  if (!v) return null;
+  return (JUNK[v] && JUNK[v].material) || null;
+}
+
+function findRecycleGroups(){
+  const seen = Array.from({length:ROWS},()=>Array(COLS).fill(false));
+  const groups=[];
+  const dirs=[[1,0],[-1,0],[0,1],[0,-1]];
+  for (let y=0;y<ROWS;y++) for (let x=0;x<COLS;x++){
+    if (seen[y][x] || !board[y][x]) continue;
+    const mat = cellMaterial(board[y][x]);
+    if (!mat) continue;
+    const stack=[[x,y]], cells=[];
+    seen[y][x]=true;
+    while (stack.length){
+      const [cx,cy]=stack.pop();
+      cells.push({x:cx,y:cy});
+      for (const [dx,dy] of dirs){
+        const nx=cx+dx, ny=cy+dy;
+        if (nx<0||nx>=COLS||ny<0||ny>=ROWS||seen[ny][nx]) continue;
+        if (cellMaterial(board[ny][nx])!==mat) continue;
+        seen[ny][nx]=true; stack.push([nx,ny]);
+      }
+    }
+    if (cells.length>=3) groups.push({mat, cells});
   }
-  return filled>=3;
+  return groups;
+}
+
+function applyGravity(){
+  const next=[];
+  for (let y=0;y<ROWS;y++) next[y]=new Array(COLS).fill(0);
+  for (let x=0;x<COLS;x++){
+    let w=ROWS-1;
+    for (let y=ROWS-1;y>=0;y--){
+      if (board[y][x]){ next[w][x]=board[y][x]; w--; }
+    }
+  }
+  board=next;
+}
+
+let recyclePending=null;
+let magnetCharge=0;
+function syncMagnetUI(){
+  const el=document.getElementById("magnetChip");
+  if (el) el.textContent = "MAG "+magnetCharge;
+  const btn=document.querySelector('.pad.mag');
+  if (btn) btn.disabled = magnetCharge<=0;
+}
+
+function mascotReact(kind){
+  const m=document.getElementById("mascot");
+  if (!m) return;
+  m.classList.remove("cheer","sad");
+  void m.offsetWidth;
+  m.classList.add(kind==="sad"?"sad":"cheer");
+}
+
+function doMagnet(){
+  if (!cur || clearing || over || paused || magnetCharge<=0) return;
+  magnetCharge--;
+  syncMagnetUI();
+  // Steal falling junk into stash (Trash Panda magnet)
+  const t = cur.type;
+  if (hold){ const sw=hold; hold=t; spawn(sw); }
+  else { hold=t; nextPiece(); }
+  holdUsed=false; // magnet gift — stash still usable
+  save.magnets=(save.magnets||0)+1;
+  SFX.hold(); vibe([12,20,12]);
+  mascotReact("cheer");
+  announce("MAGNET!", "#00f5ff");
+  toast("Trash Panda yanked it!");
+  persist(); checkAchievements();
+  drawPreviews(); syncMagnetUI();
 }
 
 function lockPiece(){
   if (!cur) return;
-  tspin = detectTSpin();
+  tspin = false;
   const cells = cellsOf(cur.type, cur.rot, cur.x, cur.y);
   for (const c of cells){
     if (c.y<0){ gameOver(); return; }
     if (c.y<ROWS) board[c.y][c.x] = cur.type;
   }
   SFX.lock();
+  // 1) Compactor: full rows
   const full=[];
   for (let y=0;y<ROWS;y++){
     if (board[y].every(v=>v)) full.push(y);
@@ -833,21 +1534,63 @@ function lockPiece(){
     clearing = full;
     clearT = CLEAR_MS;
     juiceClear(full.length);
-  } else {
-    combo = 0;
-    cur=null;
-    nextPiece();
-    updateComboUI();
+    // press animation
+    const press=document.getElementById("pressBar");
+    if (press){
+      press.classList.add("on");
+      press.style.top = "-8%";
+      requestAnimationFrame(()=>{ press.style.transition="top .45s cubic-bezier(.2,.8,.2,1)"; press.style.top="92%"; });
+      setTimeout(()=>{ press.classList.remove("on"); press.style.transition="none"; press.style.top="-8%"; }, CLEAR_MS);
+    }
+    return;
   }
+  // 2) Recycle match if no full rows
+  const groups = findRecycleGroups();
+  if (groups.length){
+    recyclePending = groups;
+    clearing = groups.flatMap(g=>g.cells.map(c=>c.y)); // for timing reuse
+    clearT = Math.floor(CLEAR_MS*0.75);
+    juiceRecycle(groups);
+    return;
+  }
+  combo = 0;
+  cur=null;
+  nextPiece();
+  updateComboUI();
+}
+
+function juiceRecycle(groups){
+  let popped=0;
+  for (const g of groups){
+    popped += g.cells.length;
+  }
+  // cells stay until finishClear so the recycle flash is visible
+  const gained = popped*40*level + groups.length*60;
+  score += gained;
+  combo++;
+  magnetCharge = Math.min(3, magnetCharge + (groups.length>=2?1:0) + (popped>=6?1:0));
+  if (magnetCharge===0 && popped>=5) magnetCharge=1;
+  addShinies(2+groups.length*2, "recycle");
+  addXP(popped*6);
+  save.recycles=(save.recycles||0)+groups.length;
+  bumpChallenge("combo", combo);
+  checkAchievements();
+  shake = 6+popped; flashA=0.35;
+  SFX.clear(Math.min(4, groups.length+1), combo);
+  vibe([18,24,18]);
+  mascotReact("cheer");
+  announce("RECYCLE x"+groups.length, MATERIAL_COLOR[groups[0].mat]||"#7dff6b");
+  const wrap = document.getElementById("boardWrap").getBoundingClientRect();
+  floatNum("+"+gained, wrap.width/2, wrap.height/2, "#7dff6b");
+  syncMagnetUI(); syncGameUI(); updateComboUI();
 }
 
 function juiceClear(n){
-  const difficult = n===4 || tspin;
+  const difficult = n>=3;
   if (combo>0) score += 50*combo*level;
   combo++;
-  const base = LINE_SCORE[n]*level;
-  const spinBonus = tspin ? (n===0?400:n===1?800:n===2?1200:1600)*level : 0;
-  let gained = base + spinBonus;
+  const base = (LINE_SCORE[Math.min(4,n)]|| (100*n*n))*level;
+  let gained = base + n*80*level;
   if (difficult && b2b) gained = Math.floor(gained*1.5);
   score += gained;
   lines += n;
@@ -855,14 +1598,20 @@ function juiceClear(n){
   const leveled = newLv>level;
   level = newLv;
 
-  const sh = LINE_SHINY[n] + Math.max(0, combo-1) + (difficult && b2b ? 5 : 0) + (leveled?10:0);
-  addShinies(sh);
-  addXP(n*12 + combo*4 + (n===4?20:0));
+  const sh = (LINE_SHINY[Math.min(4,n)]||n) + Math.max(0, combo-1) + (difficult && b2b ? 5 : 0) + (leveled?10:0);
+  addShinies(sh, "clear");
+  addXP(n*12 + combo*4 + (n>=3?20:0));
 
   bumpChallenge("lines", n);
   bumpChallenge("score", score);
   bumpChallenge("combo", combo);
-  if (n===4) bumpChallenge("quad", 1);
+  if (n>=3){ bumpChallenge("quad", 1); save.quads=(save.quads||0)+1; bumpWeekly("quad",1); }
+  bumpWeekly("lines", n);
+  bumpWeekly("score", score);
+  bumpWeekly("combo", combo);
+  if (combo > (save.bestCombo||0)) save.bestCombo = combo;
+  addBattlePassXP(n*2 + Math.min(8, combo));
+  checkAchievements();
 
   const wrap = document.getElementById("boardWrap").getBoundingClientRect();
   const midY = (clearing[0] ? rowToY(clearing[0]) : wrap.height/2);
@@ -870,23 +1619,23 @@ function juiceClear(n){
   for (const ry of clearing){
     burst(wrap.width/2, rowToY(ry), "#fff", 10+n*3, 3.5, "spark");
   }
-  shake = 4 + n*5 + (combo>3?6:0) + (n===4?8:0);
+  shake = 4 + n*5 + (combo>3?6:0) + (n>=3?8:0);
   flashA = n>=3 ? 0.55 : n===2 ? 0.28 : 0.16;
   if (difficult && b2b) flashA += 0.15;
-  SFX.clear(n, combo);
-  vibe(n>=4 ? [20,30,40,30,20] : n>=2 ? [15,30,15] : 18);
+  SFX.clear(Math.min(4,n), combo);
+  vibe(n>=3 ? [20,30,40,30,20] : n>=2 ? [15,30,15] : 18);
+  mascotReact("cheer");
 
   let words = [];
-  if (tspin) words.push("TWIST");
-  if (difficult && b2b) words.push("BACK TO BACK");
-  if (n===4) words.push(ANNOUNCE[4][Math.floor(Math.random()*ANNOUNCE[4].length)]);
-  else if (n===3) words.push("GREAT");
-  else if (n===2) words.push("NICE");
+  if (difficult && b2b) words.push("DOUBLE PRESS");
+  if (n>=3) words.push("COMPACTOR!");
+  else if (n===2) words.push("CRUSH");
+  else words.push("SCRAP");
   if (combo>=6) words.push("INSANE x"+combo);
   else if (combo>=4) words.push("ON FIRE x"+combo);
   else if (combo>=2) words.push("COMBO x"+combo);
   if (leveled) words.push("SPEED UP");
-  const col = n>=4 || combo>=4 ? "#ff2bd6" : n>=3 ? "#ffd166" : "#00f5ff";
+  const col = n>=3 || combo>=4 ? "#ff2bd6" : n>=2 ? "#ffd166" : "#00f5ff";
   if (words.length) announce(words[0], col);
   if (words[1]) setTimeout(()=>announce(words[1], "#ffd166"), 380);
   floatNum("+"+gained, wrap.width/2, midY, "#fff");
@@ -898,6 +1647,30 @@ function juiceClear(n){
 }
 
 function finishClear(){
+  if (recyclePending){
+    for (const g of recyclePending){
+      for (const c of g.cells) board[c.y][c.x]=0;
+    }
+    applyGravity();
+    recyclePending=null;
+    clearing=null; clearT=0;
+    // chain: more recycles or rows?
+    const full=[];
+    for (let y=0;y<ROWS;y++) if (board[y].every(v=>v)) full.push(y);
+    if (full.length){
+      clearing=full; clearT=CLEAR_MS; juiceClear(full.length);
+      return;
+    }
+    const groups=findRecycleGroups();
+    if (groups.length){
+      recyclePending=groups;
+      clearing=groups.flatMap(g=>g.cells.map(c=>c.y));
+      clearT=Math.floor(CLEAR_MS*0.7);
+      juiceRecycle(groups);
+      return;
+    }
+    cur=null; nextPiece(); return;
+  }
   const drop = new Set(clearing);
   const next = [];
   for (let y=0;y<ROWS;y++) next[y] = new Array(COLS).fill(0);
@@ -907,6 +1680,17 @@ function finishClear(){
   }
   board = next;
   clearing=null; clearT=0;
+  // After compact, award magnet + check recycle chains
+  magnetCharge = Math.min(3, magnetCharge + 1);
+  syncMagnetUI();
+  const groups=findRecycleGroups();
+  if (groups.length){
+    recyclePending=groups;
+    clearing=groups.flatMap(g=>g.cells.map(c=>c.y));
+    clearT=Math.floor(CLEAR_MS*0.7);
+    juiceRecycle(groups);
+    return;
+  }
   cur=null;
   nextPiece();
 }
@@ -923,10 +1707,11 @@ function hardDrop(){
   while (valid(cur.type,cur.rot,cur.x,cur.y+1)){ cur.y++; d++; }
   score += d*2;
   hardDrops++;
+  save.hardDropTotal = (save.hardDropTotal||0)+1;
   bumpChallenge("hard", 1);
   SFX.drop(); vibe(16);
   const wrap = document.getElementById("boardWrap").getBoundingClientRect();
-  burst(colToX(cur.x+1), rowToY(cur.y+1), COLORS[cur.type], 12, 3, "spark");
+  burst(colToX(cur.x+1), rowToY(cur.y+1), COLORS[cur.type]||"#00f5ff", 12, 3, "spark");
   lockPiece();
   syncGameUI();
 }
@@ -941,15 +1726,75 @@ function softDropOnce(){
 }
 
 function gameOver(){
+  if (over || pendingGameOver) return;
+  // Near-miss continue: once per run via rewarded ad
+  if (!continuedThisRun && started){
+    pendingGameOver = true;
+    paused = true;
+    document.getElementById("continueOv").classList.remove("hidden");
+    return;
+  }
+  finalizeGameOver();
+}
+async function reviveFromAd(){
+  const bridge = TN();
+  let ok = false;
+  if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("revive");
+  else ok = true; // web stub
+  document.getElementById("continueOv").classList.add("hidden");
+  if (!ok){ pendingGameOver=false; finalizeGameOver(); return; }
+  continuedThisRun = true;
+  save.continues = (save.continues||0)+1;
+  pendingGameOver = false;
+  over=false; started=true; paused=false;
+  // Clear top clutter so the player can breathe
+  for (let y=0;y<HID+2;y++) for (let x=0;x<COLS;x++) board[y][x]=0;
+  nextPiece();
+  persist(); checkAchievements();
+  toast("Revived — one more chance!");
+  SFX.level();
+}
+function skipContinue(){
+  document.getElementById("continueOv").classList.add("hidden");
+  pendingGameOver=false;
+  finalizeGameOver();
+}
+function finalizeGameOver(){
   if (over) return;
-  over=true; started=false; cur=null;
+  over=true; started=false; cur=null; paused=false;
+  mascotReact("sad");
   SFX.over(); vibe([40,40,80]);
   save.gamesPlayed++; save.dayGames++; save.totalLines += lines;
   bumpChallenge("games", 1);
+  bumpWeekly("games", 1);
   let best=false;
-  if (score > save.highScore){ save.highScore=score; best=true; persist(); }
+  if (score > save.highScore){
+    save.highScore=score; best=true;
+    save.pbBeats = (save.pbBeats||0)+1;
+  }
+  // Local leaderboard (top 10)
+  save.localScores = (save.localScores||[]);
+  save.localScores.push({ score, lines, at: Date.now() });
+  save.localScores.sort((a,b)=>b.score-a.score);
+  save.localScores = save.localScores.slice(0,10);
+  lastRunShinies = save.runScrap||save.runShinies||0;
   addXP(Math.floor(score/80)+5);
+  addBattlePassXP(Math.floor(lines/2)+5);
+  // Rare gem drip (cap from config)
+  const gemCap = (EC().PREMIUM && EC().PREMIUM.rareEarnPerRunCap) || 2;
+  if (lines >= 4 && Math.random() < 0.25){
+    const g = Math.min(gemCap, 1 + (lines>=12?1:0));
+    addGems(g);
+    toast("Found "+g+" Neon Gem"+(g>1?"s":"")+"!");
+  }
+  awardRunChest();
+  if (score > 0 && !save.firstWin){
+    save.firstWin = true;
+    persist();
+    setTimeout(()=>maybeAskNotifications(), 900);
+  }
   persist();
+  checkAchievements();
   const ov = document.getElementById("overOv");
   document.getElementById("overTitle").textContent = best ? "NEW BEST" : "STACKED OUT";
   document.getElementById("overScore").textContent = "Score "+score.toLocaleString()+"   ·   "+lines+" lines";
@@ -957,6 +1802,33 @@ function gameOver(){
   document.getElementById("nearMiss").innerHTML = nearMissHTML();
   ov.classList.remove("hidden");
   syncMetaUI();
+  if (lastRunShinies > 0 && !save.adsRemoved){
+    document.getElementById("doubleHint").textContent = "Double the "+lastRunShinies+" Scrap from this run with a rewarded ad.";
+    document.getElementById("doubleOv").classList.remove("hidden");
+  } else {
+    maybeInterstitialBetweenRuns();
+  }
+}
+async function maybeInterstitialBetweenRuns(){
+  const bridge = TN();
+  if (!bridge || !bridge.maybeShowInterstitial) return;
+  try{ await bridge.maybeShowInterstitial({ adsRemoved: !!save.adsRemoved }); }catch(e){}
+}
+async function doubleShiniesFromAd(){
+  const bridge = TN();
+  let ok=false;
+  if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("double");
+  else ok = true;
+  document.getElementById("doubleOv").classList.add("hidden");
+  if (ok && lastRunShinies>0){
+    addShinies(lastRunShinies);
+    toast("Doubled! +"+lastRunShinies+" Scrap");
+  }
+  maybeInterstitialBetweenRuns();
+}
+function skipDouble(){
+  document.getElementById("doubleOv").classList.add("hidden");
+  maybeInterstitialBetweenRuns();
 }
 
 function nearMissHTML(){
@@ -970,9 +1842,9 @@ function nearMissHTML(){
   ].sort((a,b)=>a.p-b.p);
   if (locked.length){
     const it=locked[0];
-    const left=Math.max(0,it.p-save.shinies);
-    const p=Math.min(100, Math.floor(save.shinies/it.p*100));
-    parts.push(`<div class="near"><div class="lab">${left===0?"You can unlock "+it.n+"!":"Only "+left+" Shinies from "+it.n}</div><div class="bar"><div class="fill" style="width:${p}%"></div></div></div>`);
+    const left=Math.max(0,it.p-(save.scrap||0));
+    const p=Math.min(100, Math.floor((save.scrap||0)/it.p*100));
+    parts.push(`<div class="near"><div class="lab">${left===0?"You can unlock "+it.n+"!":"Only "+left+" Scrap from "+it.n}</div><div class="bar"><div class="fill" style="width:${p}%"></div></div></div>`);
   }
   const ch = save.challenges.items.find(c=>!c.claimed && c.progress>0);
   if (ch){
@@ -1064,7 +1936,7 @@ function blockSprite(color, skin, size){
   cv.width=size; cv.height=size;
   const g = cv.getContext("2d");
   const inset = Math.max(1, size*0.06);
-  if (skin==="ghost"){
+  if (skin==="haze"){
     g.globalAlpha=0.55;
     g.fillStyle=color; g.fillRect(inset,inset,size-inset*2,size-inset*2);
     g.globalAlpha=0.9; g.strokeStyle="#fff"; g.lineWidth=Math.max(1,size*0.06);
@@ -1113,18 +1985,75 @@ function drawBlock(g, x, y, size, color, skin, alpha){
   g.restore();
 }
 
-function drawMatrix(g, type, rot, ox, oy, cell, ghost){
+function drawTrashCell(g, px, py, cell, type, alpha){
+  const info = JUNK[type] || {color:"#888", material:"metal", name:"?"};
+  const mat = info.material;
+  g.save();
+  if (alpha!=null) g.globalAlpha = alpha;
+  const inset = Math.max(1, cell*0.08);
+  // object silhouette by material / type — never a flat uniform brick
+  if (type==="CAN"){
+    g.fillStyle = info.color;
+    g.beginPath(); g.roundRect(px+inset, py+inset*1.2, cell-inset*2, cell-inset*2.4, cell*0.2); g.fill();
+    g.fillStyle="rgba(255,255,255,.35)"; g.fillRect(px+cell*0.2, py+cell*0.25, cell*0.15, cell*0.45);
+    g.strokeStyle="#6a7a88"; g.lineWidth=Math.max(1,cell*0.06);
+    g.beginPath(); g.moveTo(px+cell*0.25,py+cell*0.35); g.lineTo(px+cell*0.75,py+cell*0.35); g.stroke();
+  } else if (type==="BOX"){
+    g.fillStyle=info.color; g.fillRect(px+inset,py+inset,cell-inset*2,cell-inset*2);
+    g.strokeStyle="#8a6230"; g.lineWidth=Math.max(1,cell*0.07); g.strokeRect(px+inset+0.5,py+inset+0.5,cell-inset*2-1,cell-inset*2-1);
+    g.strokeStyle="rgba(0,0,0,.25)"; g.beginPath(); g.moveTo(px+cell/2,py+inset); g.lineTo(px+cell/2,py+cell-inset); g.stroke();
+  } else if (type==="TUBE"){
+    const grd=g.createLinearGradient(px,py,px+cell,py+cell);
+    grd.addColorStop(0,"#eaffff"); grd.addColorStop(0.5,info.color); grd.addColorStop(1,"#0090a0");
+    g.fillStyle=grd; g.beginPath(); g.roundRect(px+inset, py+cell*0.28, cell-inset*2, cell*0.44, cell*0.2); g.fill();
+    g.globalAlpha=(alpha||1)*0.7; g.strokeStyle="#fff"; g.stroke();
+  } else if (type==="BAG"){
+    g.fillStyle=info.color; g.beginPath();
+    g.moveTo(px+cell*0.2,py+cell*0.2); g.quadraticCurveTo(px+cell*0.5,py+inset,px+cell*0.8,py+cell*0.2);
+    g.lineTo(px+cell*0.85,py+cell*0.85); g.quadraticCurveTo(px+cell*0.5,py+cell*0.95,px+cell*0.15,py+cell*0.85);
+    g.closePath(); g.fill();
+    g.fillStyle="rgba(0,0,0,.2)"; g.fillRect(px+cell*0.4,py+cell*0.15,cell*0.2,cell*0.2);
+  } else if (type==="PIPE"){
+    g.fillStyle=info.color; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.38,0,7); g.fill();
+    g.fillStyle="#071018"; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.16,0,7); g.fill();
+    g.strokeStyle="rgba(255,255,255,.35)"; g.lineWidth=Math.max(1,cell*0.05); g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.38,0,7); g.stroke();
+  } else if (type==="TIRE"){
+    g.fillStyle="#22222c"; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.4,0,7); g.fill();
+    g.strokeStyle=info.color; g.lineWidth=Math.max(2,cell*0.12); g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.28,0,7); g.stroke();
+    g.fillStyle="#111"; g.beginPath(); g.arc(px+cell/2,py+cell/2,cell*0.12,0,7); g.fill();
+  } else if (type==="CRATE"){
+    g.fillStyle=info.color; g.fillRect(px+inset,py+inset,cell-inset*2,cell-inset*2);
+    g.strokeStyle="#6a4a18"; g.lineWidth=Math.max(1,cell*0.08);
+    g.beginPath(); g.moveTo(px+inset,py+cell*0.35); g.lineTo(px+cell-inset,py+cell*0.35);
+    g.moveTo(px+inset,py+cell*0.65); g.lineTo(px+cell-inset,py+cell*0.65); g.stroke();
+  } else if (type==="BOTTLE"){
+    g.fillStyle=info.color+"cc";
+    g.beginPath(); g.roundRect(px+cell*0.28,py+inset,cell*0.44,cell-inset*2,cell*0.15); g.fill();
+    g.fillStyle="#eaffff"; g.globalAlpha=(alpha||1)*0.35; g.fillRect(px+cell*0.34,py+cell*0.2,cell*0.12,cell*0.4);
+  } else {
+    g.fillStyle=info.color; g.fillRect(px+inset,py+inset,cell-inset*2,cell-inset*2);
+  }
+  // tiny material pip
+  g.globalAlpha=(alpha||1)*0.9;
+  g.fillStyle = MATERIAL_COLOR[mat] || "#fff";
+  g.fillRect(px+cell*0.72, py+cell*0.72, cell*0.14, cell*0.14);
+  g.restore();
+}
+
+function drawMatrix(g, type, rot, ox, oy, cell, guide){
   const m = MATS[type][rot];
-  const skin = ghost ? "neon" : save.skin;
   for (let r=0;r<m.length;r++) for (let c=0;c<m[r].length;c++) if (m[r][c]){
-    if (ghost){
+    if (guide){
+      // Restyled drop guide — scrap dust marks, NOT a classic ghost outline
       g.save();
-      g.globalAlpha=0.28;
-      g.strokeStyle=COLORS[type];
-      g.lineWidth=Math.max(1, cell*0.08);
-      g.strokeRect(ox+c*cell+2, oy+r*cell+2, cell-4, cell-4);
+      g.globalAlpha=0.22;
+      g.fillStyle = COLORS[type] || "#fff";
+      const px=ox+c*cell+cell*0.35, py=oy+r*cell+cell*0.35;
+      g.beginPath(); g.arc(px,py,Math.max(1.5,cell*0.12),0,7); g.fill();
       g.restore();
-    } else drawBlock(g, ox+c*cell, oy+r*cell, cell, COLORS[type], skin);
+    } else {
+      drawTrashCell(g, ox+c*cell, oy+r*cell, cell, type);
+    }
   }
 }
 
@@ -1136,30 +2065,45 @@ function render(){
   ctx.clearRect(0,0,w,h);
   ctx.translate(shakeX * (w/canvas.clientWidth||1), shakeY*(w/canvas.clientWidth||1));
 
-  // well bg
-  ctx.fillStyle="#070910";
-  ctx.fillRect(0,0,w,h);
-  ctx.strokeStyle="rgba(0,245,255,0.07)";
+  // dumpster interior
+  const bg = ctx.createLinearGradient(0,0,0,h);
+  bg.addColorStop(0,"#120c16"); bg.addColorStop(1,"#070910");
+  ctx.fillStyle=bg; ctx.fillRect(0,0,w,h);
+  // grate lines
+  ctx.strokeStyle="rgba(0,245,255,0.06)";
   ctx.lineWidth=1;
   for (let x=0;x<=COLS;x++){ ctx.beginPath(); ctx.moveTo(x*cell,0); ctx.lineTo(x*cell,h); ctx.stroke(); }
   for (let y=0;y<=VIS;y++){ ctx.beginPath(); ctx.moveTo(0,y*cell); ctx.lineTo(w,y*cell); ctx.stroke(); }
+  // pipe accents
+  ctx.fillStyle="rgba(255,43,214,.08)";
+  ctx.fillRect(0,0,cell*0.12,h); ctx.fillRect(w-cell*0.12,0,cell*0.12,h);
 
   if (board){
     for (let y=HID;y<ROWS;y++){
-      const clearingRow = clearing && clearing.includes(y);
+      const clearingRow = clearing && !recyclePending && clearing.includes(y);
       for (let x=0;x<COLS;x++){
         const v=board[y][x];
-        if (!v && !clearingRow) continue;
         const py=(y-HID)*cell, px=x*cell;
         if (clearingRow){
           const t = 1 - (clearT/CLEAR_MS);
           const pulse = 0.5 + 0.5*Math.sin(t*20);
-          ctx.fillStyle = `rgba(255,255,255,${0.55+pulse*0.4})`;
+          ctx.fillStyle = `rgba(200,220,255,${0.45+pulse*0.4})`;
           ctx.fillRect(px,py,cell,cell);
-          ctx.fillStyle = `rgba(255,209,102,${0.4+pulse*0.4})`;
-          ctx.fillRect(px+2,py+2,cell-4,cell-4);
+          ctx.fillStyle = `rgba(0,245,255,${0.35+pulse*0.4})`;
+          ctx.fillRect(px+2,py+2,cell-4,cell*Math.max(0.15,1-t));
+        } else if (recyclePending && board[y][x]===0 && clearing && clearing.includes(y)){
+          // recycled cell flash handled by absence
         } else if (v){
-          drawBlock(ctx, px, py, cell, COLORS[v], save.skin);
+          // during recycle, highlight popping cells
+          let popping=false;
+          if (recyclePending){
+            for (const g of recyclePending){ if (g.cells.some(c=>c.x===x&&c.y===y)) popping=true; }
+          }
+          if (popping){
+            ctx.save(); ctx.globalAlpha=0.5+0.5*Math.sin(clearT/30);
+            drawTrashCell(ctx, px, py, cell, v); ctx.restore();
+            ctx.fillStyle="rgba(125,255,107,.35)"; ctx.fillRect(px,py,cell,cell);
+          } else drawTrashCell(ctx, px, py, cell, v);
         }
       }
     }
@@ -1167,7 +2111,25 @@ function render(){
 
   if (cur && !over && !clearing){
     const gy = ghostY();
-    if (gy!==cur.y) drawMatrix(ctx, cur.type, cur.rot, cur.x*cell, (gy-HID)*cell, cell, true);
+    // Landing bin-guide: dashed neon line under landing row (not a ghost piece)
+    if (gy!==cur.y){
+      const ly = (gy - HID) * cell;
+      const m = MATS[cur.type][cur.rot];
+      let minC=99,maxC=0;
+      for (let r=0;r<m.length;r++) for (let c=0;c<m[r].length;c++) if (m[r][c]){ minC=Math.min(minC,c); maxC=Math.max(maxC,c); }
+      ctx.save();
+      ctx.strokeStyle="rgba(255,43,214,.45)";
+      ctx.setLineDash([Math.max(3,cell*0.2), Math.max(3,cell*0.15)]);
+      ctx.lineWidth=Math.max(1.5, cell*0.06);
+      const yLine = ly + m.length*cell + 1;
+      ctx.beginPath();
+      ctx.moveTo(cur.x*cell + minC*cell, Math.min(h-2, yLine));
+      ctx.lineTo(cur.x*cell + (maxC+1)*cell, Math.min(h-2, yLine));
+      ctx.stroke();
+      ctx.restore();
+      // scrap dust at landing cells
+      drawMatrix(ctx, cur.type, cur.rot, cur.x*cell, (gy-HID)*cell, cell, true);
+    }
     drawMatrix(ctx, cur.type, cur.rot, cur.x*cell, (cur.y-HID)*cell, cell, false);
     if (locking){
       ctx.fillStyle=`rgba(255,255,255,${0.08+0.08*Math.sin(lockT/40)})`;
@@ -1229,9 +2191,14 @@ function syncMuteUI(){
   g.textContent = save.muted ? "🔇" : "🔊";
 }
 function syncMetaUI(){
+  save.shinies = save.scrap||0;
   document.getElementById("hiChip").textContent = (save.highScore||0).toLocaleString();
-  document.getElementById("shChip").textContent = save.shinies;
-  document.getElementById("shInGame").textContent = save.shinies;
+  document.getElementById("shChip").textContent = save.scrap||0;
+  document.getElementById("shInGame").textContent = save.scrap||0;
+  const gemChip = document.getElementById("gemChip");
+  if (gemChip) gemChip.textContent = save.gems||0;
+  const gemIn = document.getElementById("gemInGame");
+  if (gemIn) gemIn.textContent = save.gems||0;
   document.getElementById("lvChip").textContent = save.playerLevel;
   document.getElementById("streakChip").textContent = "🔥 DAY "+(save.dailyStreak||1);
   const need = xpNeeded(save.playerLevel);
@@ -1240,13 +2207,26 @@ function syncMetaUI(){
   document.getElementById("xpRight").textContent = save.xp+" / "+need;
   document.getElementById("bg").setAttribute("data-bg", save.bg||"docks");
   syncMuteUI();
+  syncNotifToggles();
   renderChallenges();
 }
 function syncGameUI(){
   document.getElementById("scoreEl").textContent = (score||0).toLocaleString();
   document.getElementById("lvlEl").textContent = level||1;
   document.getElementById("linesEl").textContent = lines||0;
-  document.getElementById("shInGame").textContent = save.shinies;
+  document.getElementById("shInGame").textContent = save.scrap||0;
+  const gemIn = document.getElementById("gemInGame");
+  if (gemIn) gemIn.textContent = save.gems||0;
+}
+function syncNotifToggles(){
+  const n = save.notif && save.notif.enabled || {};
+  const map = { ntUpgrade:"upgrade_done", ntChest:"chest_ready", ntDaily:"daily_reward", ntStreak:"streak_risk", ntSeason:"new_season", ntQuiet:"quietHours" };
+  for (const [elId, key] of Object.entries(map)){
+    const el = document.getElementById(elId);
+    if (!el) continue;
+    if (key==="quietHours") el.checked = !!(save.notif && save.notif.quietHours);
+    else el.checked = n[key] !== false;
+  }
 }
 function updateComboUI(){
   const el=document.getElementById("comboFill");
@@ -1257,10 +2237,15 @@ function updateComboUI(){
 }
 function renderChallenges(){
   const host=document.getElementById("chList");
-  host.innerHTML = save.challenges.items.map(ch=>{
+  const daily = (save.challenges.items||[]).map(ch=>{
     const p=Math.min(100, Math.floor(ch.progress/ch.goal*100));
     return `<div class="ch ${ch.claimed?"done":""}"><span style="flex:0 0 18px">${ch.claimed?"✓":"○"}</span><div style="flex:1"><div>${ch.name}  <span class="gold">+${ch.reward}✦</span></div><div class="bar"><div class="fill" style="width:${p}%"></div></div></div><span style="font-size:11px;color:var(--dim)">${Math.min(ch.progress,ch.goal)}/${ch.goal}</span></div>`;
   }).join("");
+  const weekly = (save.weekly && save.weekly.items ? save.weekly.items : []).map(ch=>{
+    const p=Math.min(100, Math.floor(ch.progress/ch.goal*100));
+    return `<div class="ch ${ch.claimed?"done":""}"><span style="flex:0 0 18px">${ch.claimed?"✓":"◎"}</span><div style="flex:1"><div><span style="color:var(--mag)">WEEKLY</span> ${ch.name}  <span class="gold">+${ch.reward}✦</span></div><div class="bar"><div class="fill" style="width:${p}%;background:var(--mag)"></div></div></div><span style="font-size:11px;color:var(--dim)">${Math.min(ch.progress,ch.goal)}/${ch.goal}</span></div>`;
+  }).join("");
+  host.innerHTML = daily + weekly;
 }
 
 function showScreen(name){
@@ -1287,37 +2272,223 @@ function pauseGame(on){
   document.getElementById("pauseOv").classList.toggle("hidden", !on);
 }
 
+
+// ---------- Junkyard / Crates / Gem Shop / Collection ----------
+function fmtRemain(ms){
+  ms = Math.max(0, ms|0);
+  const s = Math.ceil(ms/1000);
+  if (s < 60) return s+"s";
+  const m = Math.floor(s/60), rem = s%60;
+  if (m < 60) return m+"m "+rem+"s";
+  const h = Math.floor(m/60);
+  return h+"h "+(m%60)+"m";
+}
+function renderBase(){
+  tickMetaTimers();
+  const host = document.getElementById("baseMap");
+  const buildings = EC().BUILDINGS || {};
+  const levels = (save.base && save.base.levels) || {};
+  const queue = (save.base && save.base.queue) || [];
+  const slots = (save.base && save.base.builderSlots) || 2;
+  const busy = queue.filter(q => q.readyAt > Date.now());
+  document.getElementById("builderHint").textContent = "Builders "+busy.length+"/"+slots+" · Scrap "+(save.scrap||0)+" · Gems "+(save.gems||0);
+  host.innerHTML = Object.keys(buildings).map(id=>{
+    const b = buildings[id];
+    const lv = levels[id]||1;
+    const q = queue.find(x => x.buildingId===id && x.readyAt > Date.now());
+    const next = EM().upgradeCost ? EM().upgradeCost(id, lv) : null;
+    const perk = EM().buildingPerk ? EM().buildingPerk(id, lv) : {};
+    let action = "";
+    if (q){
+      const gems = EM().gemsForReadyAt ? EM().gemsForReadyAt(q.readyAt) : 1;
+      action = `<div class="timers">Upgrading → Lv ${q.to} · ${fmtRemain(q.readyAt-Date.now())}</div>
+        <button class="btn gold small speedBtn" data-bid="${id}" type="button">Speed ◆${gems}</button>`;
+    } else if (!next){
+      action = `<div class="timers">MAX</div>`;
+    } else {
+      action = `<button class="btn small upBtn" data-bid="${id}" type="button">Upgrade ${next.scrap}⚙ · ${fmtRemain(next.sec*1000)}</button>`;
+    }
+    return `<div class="bldg"><b>${b.name} Lv ${lv}</b><div class="perk">${b.blurb}</div>${action}</div>`;
+  }).join("");
+  host.querySelectorAll(".upBtn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id = btn.getAttribute("data-bid");
+      const res = EM().applyStartUpgrade(save, id);
+      if (!res.ok){
+        toast(res.reason==="scrap"?"Need more Scrap":res.reason==="builders"?"All builders busy":"Max level");
+        return;
+      }
+      save = res.state; save.shinies = save.scrap; persist(); toast("Upgrade started");
+      renderBase(); syncMetaUI();
+    });
+  });
+  host.querySelectorAll(".speedBtn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id = btn.getAttribute("data-bid");
+      const idx = (save.base.queue||[]).findIndex(q => q.buildingId===id && q.readyAt > Date.now());
+      if (idx < 0) return;
+      const res = EM().speedupQueueItem(save, idx);
+      if (!res.ok){ toast("Need "+(res.cost||"?")+" Gems"); return; }
+      save = res.state; save.shinies = save.scrap; persist(); toast("Upgrade finished!");
+      renderBase(); syncMetaUI();
+    });
+  });
+}
+function renderChests(){
+  tickMetaTimers();
+  const chestsCfg = EC().CHESTS || {};
+  const oddsHost = document.getElementById("chestOdds");
+  oddsHost.innerHTML = Object.values(chestsCfg).map(c=>{
+    const line = EM().formatOddsLine ? EM().formatOddsLine(c.odds) : "";
+    return `<div><b>${c.name}</b> — ${line}</div>`;
+  }).join("");
+  const host = document.getElementById("chestList");
+  const list = (save.chests||[]).filter(c=>!c.opened);
+  if (!list.length){ host.innerHTML = `<p style="color:var(--dim);font-size:12px">No crates yet — finish a run to earn one.</p>`; return; }
+  const now = Date.now();
+  host.innerHTML = list.map(c=>{
+    const cfg = chestsCfg[c.chestId] || { name:c.chestId };
+    const ready = c.readyAt <= now;
+    const gems = EM().gemsForReadyAt ? EM().gemsForReadyAt(c.readyAt, now) : 1;
+    return `<div class="chest-row"><div style="flex:1"><b>${cfg.name}</b><div style="color:var(--dim)">${ready?"Ready!":"Unlocks in "+fmtRemain(c.readyAt-now)}</div></div>
+      ${ready?`<button class="btn small openChest" data-id="${c.id}" type="button">Open</button>`:
+        `<button class="btn gold small speedChest" data-id="${c.id}" type="button">◆${gems}</button>
+         <button class="btn mag small adChest" data-id="${c.id}" type="button">Ad</button>`}</div>`;
+  }).join("");
+  host.querySelectorAll(".openChest").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const res = EM().openChestIfReady(save, btn.getAttribute("data-id"));
+      if (!res.ok){ toast("Not ready"); return; }
+      save = res.state; save.shinies = save.scrap;
+      if (res.reward && res.reward.kind==="cosmetic") grantRandomCosmetic();
+      persist(); toast("Opened: "+(res.reward && res.reward.label));
+      renderChests(); syncMetaUI();
+    });
+  });
+  host.querySelectorAll(".speedChest").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const res = EM().speedupChest(save, btn.getAttribute("data-id"));
+      if (!res.ok){ toast("Need "+(res.cost||"?")+" Gems"); return; }
+      save = res.state; persist(); toast("Crate unlocked!");
+      renderChests(); syncMetaUI();
+    });
+  });
+  host.querySelectorAll(".adChest").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const bridge = TN();
+      let ok = true;
+      if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("chest_speed");
+      if (!ok){ toast("Ad not available"); return; }
+      const chests = (save.chests||[]).map(c=>({...c}));
+      const idx = chests.findIndex(c=>c.id===btn.getAttribute("data-id"));
+      if (idx>=0){ chests[idx].readyAt = Date.now(); save.chests = chests; persist(); toast("Crate unlocked via ad!"); renderChests(); }
+    });
+  });
+}
+function grantRandomCosmetic(){
+  const pools = [
+    { kind:"skins", list:SKINS, unlocked:save.unlockedSkins },
+    { kind:"trails", list:TRAILS, unlocked:save.unlockedTrails },
+    { kind:"bgs", list:BGS, unlocked:save.unlockedBgs },
+  ];
+  for (const p of pools){
+    const miss = p.list.filter(x=>!p.unlocked.includes(x.id) && x.id!=="none");
+    if (miss.length){
+      const it = miss[Math.floor(Math.random()*miss.length)];
+      p.unlocked.push(it.id);
+      albumUnlock(p.kind, it.id);
+      toast("Unlocked "+it.name+"!");
+      return;
+    }
+  }
+  addShinies(50);
+}
+function renderGemShop(){
+  const host = document.getElementById("gemPacks");
+  const packs = EC().GEM_PACKS || [];
+  host.innerHTML = packs.map(p=>`<div class="gem-pack"><b>${p.gems} ◆</b>${p.badge?`<div style="color:var(--mag)">${p.badge}</div>`:""}<div class="price">$${p.priceUsd.toFixed(2)}</div><button class="btn ghost small gemBuy" data-id="${p.id}" type="button" disabled style="opacity:.55;margin-top:6px">Coming soon</button></div>`).join("");
+  host.querySelectorAll(".gemBuy").forEach(btn=>{
+    btn.addEventListener("click", ()=>toast("Gem pack IAP stub — StoreKit/Play Billing TODO."));
+  });
+  const starter = document.getElementById("starterPackBtn");
+  if (starter){
+    const bought = !!(save.iap && save.iap.starterBought);
+    starter.disabled = true;
+    starter.style.opacity = ".55";
+    starter.textContent = bought ? "Starter Pack owned" : "Starter Pack $2.99 (coming soon)";
+  }
+}
+function renderAlbum(){
+  const host = document.getElementById("albumGrid");
+  const col = save.collection || {};
+  const sections = [
+    ["Skins", SKINS, col.skins||save.unlockedSkins||[]],
+    ["Trails", TRAILS, col.trails||save.unlockedTrails||[]],
+    ["Boards", BGS, col.bgs||save.unlockedBgs||[]],
+    ["Outfits", OUTFITS, col.outfits||save.unlockedOutfits||["default"]],
+  ];
+  host.innerHTML = sections.map(([title, items, owned])=>{
+    return `<div style="grid-column:1/-1;text-align:left;color:var(--cyan);font-size:11px;margin-top:6px">${title}</div>` +
+      items.map(it=>`<div class="album-item ${owned.includes(it.id)?"on":""}">${it.name}</div>`).join("");
+  }).join("");
+}
+function awardRunChest(){
+  if (!EM().pickWeightedChest || !EM().enqueueChest) return;
+  const perks = livePerks();
+  if (!EM().canEnqueueChest(save, perks)) return;
+  const id = EM().pickWeightedChest();
+  const res = EM().enqueueChest(save, id, Date.now(), perks);
+  if (res.ok){
+    save = res.state;
+    const name = (EC().CHESTS[id]||{}).name || id;
+    toast("Crate earned: "+name);
+  }
+}
+function buyStreakFreeze(){
+  const cost = (EC().LOGIN_STREAK && EC().LOGIN_STREAK.freezeCostGems) || 15;
+  const max = (EC().LOGIN_STREAK && EC().LOGIN_STREAK.freezeMaxOwned) || 2;
+  if ((save.streakFreeze||0) >= max){ toast("Freeze stock full"); return; }
+  if ((save.gems||0) < cost){ toast("Need "+cost+" Gems"); return; }
+  save.gems -= cost;
+  save.streakFreeze = (save.streakFreeze||0)+1;
+  persist(); syncMetaUI(); toast("Streak freeze +1");
+}
+
 // ---------- shop / spin ----------
 let shopTab="skins";
+function shopCatalog(){
+  if (shopTab==="skins") return { items:SKINS, unlocked:save.unlockedSkins, eq:save.skin, sw:it=>it.sw };
+  if (shopTab==="bgs") return { items:BGS, unlocked:save.unlockedBgs, eq:save.bg, sw:it=>it.sw };
+  return { items:TRAILS, unlocked:save.unlockedTrails||["none"], eq:save.trail||"none", sw:it=>`radial-gradient(circle, ${it.color} 0 40%, #0e1220 42%)` };
+}
 function renderShop(){
   const host=document.getElementById("shopGrid");
-  const items = shopTab==="skins" ? SKINS : BGS;
-  const unlocked = shopTab==="skins" ? save.unlockedSkins : save.unlockedBgs;
-  const eq = shopTab==="skins" ? save.skin : save.bg;
-  host.innerHTML = items.map(it=>{
-    const own=unlocked.includes(it.id);
-    const equipped = eq===it.id;
+  const cat = shopCatalog();
+  host.innerHTML = cat.items.map(it=>{
+    const own=cat.unlocked.includes(it.id);
+    const equipped = cat.eq===it.id;
     return `<div class="shop-item ${own?"owned":""} ${equipped?"eq":""}" data-id="${it.id}">
-      <div class="swatch" style="background:${it.sw}"></div>
+      <div class="swatch" style="background:${cat.sw(it)}"></div>
       <b>${it.name}</b>
-      <div class="gold">${own?(equipped?"Equipped":"Owned"):(it.price+" ✦")}</div>
+      <div class="gold">${own?(equipped?"Equipped":"Owned"):(it.price+" ⚙")}</div>
     </div>`;
   }).join("");
   host.querySelectorAll(".shop-item").forEach(el=>{
     el.addEventListener("click", ()=>{
       const id=el.getAttribute("data-id");
-      const list = shopTab==="skins"?SKINS:BGS;
-      const it=list.find(x=>x.id===id);
-      const arr = shopTab==="skins"?save.unlockedSkins:save.unlockedBgs;
-      if (!arr.includes(id)){
-        if (save.shinies < it.price){ toast("Need "+(it.price-save.shinies)+" more Shinies"); vibe(20); return; }
-        save.shinies -= it.price;
-        arr.push(id);
+      const cat = shopCatalog();
+      const it=cat.items.find(x=>x.id===id);
+      if (!cat.unlocked.includes(id)){
+        if ((save.scrap||0) < it.price){ toast("Need "+(it.price-(save.scrap||0))+" more Scrap"); vibe(20); return; }
+        save.scrap -= it.price; save.shinies = save.scrap;
+        cat.unlocked.push(id);
         toast("Unlocked "+it.name+"!");
         SFX.prize();
       }
-      if (shopTab==="skins") save.skin=id; else save.bg=id;
-      persist(); syncMetaUI(); renderShop();
+      if (shopTab==="skins") save.skin=id;
+      else if (shopTab==="bgs") save.bg=id;
+      else save.trail=id;
+      persist(); syncMetaUI(); renderShop(); checkAchievements();
     });
   });
 }
@@ -1344,14 +2515,31 @@ let spinning=false, wheelAng=0;
 function canSpin(){ return save.lastSpinDate !== todayKey(); }
 function openSpin(){
   document.getElementById("spinOv").classList.remove("hidden");
-  document.getElementById("spinHint").textContent = canSpin() ? "Free once a day. Cosmetics and Shinies only." : "Already spun today. Come back tomorrow.";
+  document.getElementById("spinHint").textContent = canSpin() ? "Free once a day. Cosmetics and Scrap only. Odds shown." : "Already spun today — or watch an ad for one extra spin.";
   document.getElementById("spinGo").disabled = !canSpin() || spinning;
+  const adBtn = document.getElementById("spinAdBtn");
+  adBtn.style.display = (!canSpin() && !save.adsRemoved) ? "block" : "none";
+  adBtn.disabled = spinning;
+  document.getElementById("spinOdds").innerHTML = "<b>Odds</b> (equal slices): "+WHEEL_ODDS.map(o=>o.label+" "+o.pct+"%").join(" · ");
   drawWheel(wheelAng);
+}
+async function spinFromAd(){
+  if (spinning || canSpin()) return;
+  const bridge = TN();
+  let ok=false;
+  if (bridge && bridge.showRewarded) ok = await bridge.showRewarded("spin");
+  else ok = true;
+  if (!ok){ toast("Ad unavailable — try later"); return; }
+  // Temporarily allow one spin without consuming the free daily if already used
+  save.lastSpinDate = ""; // re-open free path for this rewarded spin
+  persist();
+  openSpin();
+  doSpin(true);
 }
 function grantPrize(p){
   if (p.kind==="shinies"){
     addShinies(p.n);
-    toast("You won "+p.n+" Shinies!");
+    toast("You won "+p.n+" Scrap!");
   } else {
     const locked = [
       ...SKINS.filter(s=>s.price>0 && !save.unlockedSkins.includes(s.id)),
@@ -1359,7 +2547,7 @@ function grantPrize(p){
     ];
     if (!locked.length){
       addShinies(80);
-      toast("All looks owned — 80 Shinies instead!");
+      toast("All looks owned — 80 Scrap instead!");
     } else {
       const it = locked[Math.floor(Math.random()*locked.length)];
       if (SKINS.some(s=>s.id===it.id)){ save.unlockedSkins.push(it.id); save.skin=it.id; }
@@ -1370,11 +2558,13 @@ function grantPrize(p){
   }
   SFX.prize(); vibe([20,40,20,40,40]);
 }
-function doSpin(){
+function doSpin(fromAd){
   if (!canSpin() || spinning) return;
   ensureAudio();
   spinning=true;
   document.getElementById("spinGo").disabled=true;
+  const adBtn=document.getElementById("spinAdBtn");
+  if (adBtn) adBtn.disabled=true;
   const idx = Math.floor(Math.random()*WHEEL.length);
   const n=WHEEL.length, slice=Math.PI*2/n;
   // nub is at top; segment i is centered at i*slice + slice/2 from starting -PI/2 after rotate?
@@ -1396,12 +2586,134 @@ function doSpin(){
       requestAnimationFrame(anim);
     } else {
       spinning=false;
-      save.lastSpinDate = todayKey(); persist();
+      save.lastSpinDate = todayKey();
+      save.spins = (save.spins||0)+1;
+      persist();
       grantPrize(WHEEL[idx]);
-      document.getElementById("spinHint").textContent = "Won "+WHEEL[idx].label+" — next spin tomorrow.";
+      checkAchievements();
+      document.getElementById("spinHint").textContent = "Won "+WHEEL[idx].label+(fromAd?" (ad spin)":"")+" — next free spin tomorrow.";
+      openSpin();
     }
   }
   requestAnimationFrame(anim);
+}
+
+function renderAchievements(){
+  const host=document.getElementById("achList");
+  let done=0;
+  host.innerHTML = ACHIEVEMENTS.map(def=>{
+    const on=!!(save.achievements&&save.achievements[def.id]);
+    if (on) done++;
+    const p=Math.min(def.goal, achievementProgress(def));
+    return `<div class="ach-row ${on?"on":""}"><div class="ach-ico">${on?"✓":"○"}</div><div style="flex:1"><b>${def.name}</b><div style="color:var(--dim)">${def.desc}</div></div><div class="gold">${on?("+"+def.reward+"✦"):(p+"/"+def.goal)}</div></div>`;
+  }).join("");
+  document.getElementById("achProgress").textContent = done+" / "+ACHIEVEMENTS.length+" unlocked";
+}
+function renderLeaderboard(){
+  const host=document.getElementById("lbList");
+  const rows = (save.localScores||[]);
+  if (!rows.length){ host.innerHTML = `<div class="lb-row">No runs yet — set a personal best tonight.</div>`; return; }
+  host.innerHTML = rows.map((r,i)=>`<div class="lb-row"><b>#${i+1}</b><div style="flex:1">${r.score.toLocaleString()} · ${r.lines} lines</div><span style="color:var(--dim);font-size:11px">${new Date(r.at).toLocaleDateString()}</span></div>`).join("");
+}
+let bpSelectedTier = 1;
+function rewardLabel(row){
+  if (!row) return "—";
+  if (row.preview && row.preview.label) return row.preview.label;
+  if (row.legendary) return "Legendary";
+  if (row.outfit) return "Outfit";
+  if (row.skin || row.skinSet) return "Blocks";
+  if (row.bg) return "Board";
+  if (row.trail) return "Trail";
+  if (row.crushFx) return "Crush FX";
+  if (row.emote) return "Emote";
+  if (row.banner) return "Banner";
+  if (row.gems) return row.gems+" ◆";
+  if (row.shinies || row.scrap) return (row.scrap||row.shinies)+" ⚙";
+  if (row.reward){
+    const r=row.reward;
+    if (r.gems) return r.gems+" ◆";
+    if (r.shinies) return r.shinies+" ⚙";
+    if (r.skin||r.trail||r.bg||r.outfit) return "LOOK";
+  }
+  return "Reward";
+}
+function previewForTier(at){
+  const free = BP_FREE().find(r=>r.at===at);
+  const prem = BP_PREMIUM().find(r=>r.at===at);
+  const raw = (EC().SEASON_PASS && EC().SEASON_PASS.premium || []).find(r=>r.at===at)
+    || (EC().SEASON_PASS && EC().SEASON_PASS.free || []).find(r=>r.at===at);
+  const prev = (raw && raw.preview) || (prem && prem.reward && {label:rewardLabel(prem)}) || {label:rewardLabel(free)};
+  const sw = (raw && raw.preview && raw.preview.swatch) || "#00f5ff";
+  const host = document.getElementById("bpPreview");
+  if (!host) return;
+  host.innerHTML = `<span class="sw" style="background:${sw}"></span><div style="display:inline-block;vertical-align:middle;max-width:70%">
+    <b>Tier ${at} — ${prev.label||"Reward"}</b>
+    <div class="sub">${prev.kind==="legendary"?"Legendary animated skin · styles unlock as you climb":(prev.animated?"Animated cosmetic":"Free + premium rewards · not P2W score")}</div>
+  </div>`;
+}
+function renderBattlePass(){
+  const tier = bpTierUnlocked();
+  const sp = EC().SEASON_PASS || { tiers:100, xpPerTier:100, label:"Season Pass", name:"Season" };
+  const xpPer = sp.xpPerTier || 100;
+  const title = document.getElementById("bpTitle");
+  if (title) title.textContent = (sp.label || ("SEASON — "+(sp.name||""))).toUpperCase();
+  const sub = document.getElementById("bpSub");
+  if (sub){
+    const pay = EM().premiumGemPayback ? EM().premiumGemPayback(sp) : null;
+    sub.textContent = (sp.theme && sp.theme.tagline ? sp.theme.tagline+" " : "")
+      + (sp.tiers||100)+" tiers · Free + Premium · "
+      + (pay ? ("Premium returns "+pay.earned+" ◆ vs "+pay.cost+" ◆ cost. ") : "")
+      + "XP from runs & hustles.";
+  }
+  document.getElementById("bpFill").style.width = Math.min(100, ((save.battlePass.xp||0)%xpPer)/xpPer*100)+"%";
+  const premBtn = document.getElementById("bpPremiumBtn");
+  if (premBtn){
+    const price = (sp.premiumPurchase && sp.premiumPurchase.priceUsd) || sp.premiumPriceUsd || 9.99;
+    premBtn.textContent = "Premium Pass ~$"+Number(price).toFixed(2)+" / "+((sp.premiumPurchase&&sp.premiumPurchase.gemCost)||450)+" ◆ (stub)";
+  }
+  const bundleBtn = document.getElementById("bpBundleBtn");
+  if (bundleBtn && sp.bundle) bundleBtn.textContent = (sp.bundle.label||"Pass + 25 tiers")+" (stub)";
+  const host=document.getElementById("bpList");
+  const free = BP_FREE();
+  const prem = BP_PREMIUM();
+  if (!bpSelectedTier) bpSelectedTier = Math.max(1, tier||1);
+  host.innerHTML = free.map((row,i)=>{
+    const p = prem[i];
+    const unlocked = row.at <= tier;
+    const freeLab = rewardLabel(row);
+    const premLab = rewardLabel(p);
+    return `<div class="bp-tier ${unlocked?"":"locked"} ${row.at===bpSelectedTier?"on":""}" data-tier="${row.at}">
+      <div class="t">T${row.at}</div>
+      <span class="free">Free: ${freeLab}</span>
+      <span class="prem">Prem: ${premLab}</span>
+    </div>`;
+  }).join("");
+  host.querySelectorAll(".bp-tier").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      bpSelectedTier = parseInt(el.getAttribute("data-tier"),10)||1;
+      renderBattlePass();
+      const on = host.querySelector('.bp-tier.on');
+      if (on) on.scrollIntoView({inline:"center", block:"nearest", behavior:"smooth"});
+    });
+  });
+  previewForTier(bpSelectedTier);
+}
+function renderCalendar(){
+  const host=document.getElementById("calGrid");
+  const days=[];
+  const now=new Date();
+  for (let i=27;i>=0;i--){
+    const d=new Date(now); d.setDate(now.getDate()-i);
+    const key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
+    days.push(key);
+  }
+  host.innerHTML = days.map(key=>{
+    const on=(save.loginHistory||[]).includes(key);
+    const today=key===todayKey();
+    return `<div class="cal-day ${on?"on":""} ${today?"today":""}" title="${key}">${key.slice(-2)}</div>`;
+  }).join("");
+  document.getElementById("calHint").textContent = "Current streak: Day "+(save.dailyStreak||0)+" · next login bonus grows each day (cap 120 Scrap). Freeze: "+(save.streakFreeze||0);
+  document.getElementById("calOdds").textContent = "Streak bonus = min(120, 5×day + 20×floor(day/7)). Freeze costs Gems (config). No paid loot — login rewards are fixed.";
 }
 
 // ---------- input ----------
@@ -1419,6 +2731,7 @@ document.querySelectorAll("#controls .pad").forEach(btn=>{
   else if (act==="right") bindPad(btn, ()=>{ dasDir=1; dasT=0; dasFirst=true; tryMove(1,0); }, ()=>{ if(dasDir===1) dasDir=0; });
   else if (act==="rot") bindPad(btn, ()=>tryRot(1));
   else if (act==="hold") bindPad(btn, ()=>doHold());
+  else if (act==="magnet") bindPad(btn, ()=>doMagnet());
   else if (act==="soft") bindPad(btn, ()=>{ softHeld=true; softDropOnce(); }, ()=>{ softHeld=false; });
   else if (act==="hard") bindPad(btn, ()=>hardDrop());
 });
@@ -1523,13 +2836,105 @@ document.getElementById("spinClose").addEventListener("click", ()=>{ if(!spinnin
 document.getElementById("spinGo").addEventListener("click", doSpin);
 document.getElementById("howBtn").addEventListener("click", ()=>document.getElementById("howOv").classList.remove("hidden"));
 document.getElementById("howClose").addEventListener("click", ()=>{ document.getElementById("howOv").classList.add("hidden"); save.sawHow=true; persist(); });
+document.getElementById("settingsBtn").addEventListener("click", ()=>{
+  document.getElementById("settingsMute").textContent = save.muted ? "Sound off" : "Sound on";
+  syncNotifToggles();
+  document.getElementById("settingsOv").classList.remove("hidden");
+});
+document.getElementById("settingsClose").addEventListener("click", ()=>document.getElementById("settingsOv").classList.add("hidden"));
+document.getElementById("settingsMute").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); document.getElementById("settingsMute").textContent = save.muted ? "Sound off" : "Sound on"; });
+document.getElementById("settingsHow").addEventListener("click", ()=>{ document.getElementById("settingsOv").classList.add("hidden"); document.getElementById("howOv").classList.remove("hidden"); });
+document.getElementById("settingsPrivacy").addEventListener("click", ()=>{ location.href = "privacy.html"; });
+document.getElementById("settingsSupport").addEventListener("click", ()=>{ location.href = "support.html"; });
 document.getElementById("muteTitle").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
 document.getElementById("muteGame").addEventListener("click", ()=>{ ensureAudio(); setMuted(!save.muted); });
-document.getElementById("passBtn").addEventListener("click", ()=>toast("Premium Pass coming soon — no purchases yet."));
+document.getElementById("passBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  toast("Premium Pass (coming soon) — StoreKit/Play Billing TODO.");
+});
+document.getElementById("removeAdsBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  // TODO: StoreKit / Play Billing one-time Remove Ads product
+  toast("Remove Ads (coming soon) — no charge yet.");
+});
 document.getElementById("lvlClose").addEventListener("click", ()=>{
   document.getElementById("lvlOv").classList.add("hidden");
   if (screen==="game" && !over) pauseGame(false);
 });
+document.getElementById("continueAdBtn").addEventListener("click", ()=>{ ensureAudio(); reviveFromAd(); });
+document.getElementById("continueSkipBtn").addEventListener("click", skipContinue);
+document.getElementById("doubleAdBtn").addEventListener("click", ()=>{ ensureAudio(); doubleShiniesFromAd(); });
+document.getElementById("doubleSkipBtn").addEventListener("click", skipDouble);
+document.getElementById("spinAdBtn").addEventListener("click", ()=>{ ensureAudio(); spinFromAd(); });
+document.getElementById("achBtn").addEventListener("click", ()=>{ renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); });
+document.getElementById("achClose").addEventListener("click", ()=>document.getElementById("achOv").classList.add("hidden"));
+document.getElementById("lbBtn").addEventListener("click", ()=>{ renderLeaderboard(); document.getElementById("lbOv").classList.remove("hidden"); });
+document.getElementById("lbClose").addEventListener("click", ()=>document.getElementById("lbOv").classList.add("hidden"));
+document.getElementById("bpBtn").addEventListener("click", ()=>{ renderBattlePass(); document.getElementById("bpOv").classList.remove("hidden"); });
+document.getElementById("bpClose").addEventListener("click", ()=>document.getElementById("bpOv").classList.add("hidden"));
+document.getElementById("bpPremiumBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  toast("Premium Pass stub (~$9.99 / Gems) — StoreKit/Play TODO. Never required.");
+});
+document.getElementById("bpBundleBtn").addEventListener("click", (ev)=>{
+  ev.preventDefault();
+  toast("Pass + 25 tiers bundle stub — optional, never pushed.");
+});
+document.getElementById("bpBuyTierBtn").addEventListener("click", ()=>{
+  if (!EM().applyBuyTiers){ toast("Tier buy unavailable"); return; }
+  const res = EM().applyBuyTiers(save, 1);
+  if (!res.ok){ toast(res.reason==="gems"?"Need more Gems":"Can't buy tier"); return; }
+  save = res.state; save.shinies = save.scrap; persist();
+  claimBattlePassReady(); renderBattlePass(); syncMetaUI();
+  toast("Tier skipped for "+res.cost+" Gems (optional).");
+});
+document.getElementById("calBtn").addEventListener("click", ()=>{ renderCalendar(); document.getElementById("calOv").classList.remove("hidden"); });
+document.getElementById("calClose").addEventListener("click", ()=>document.getElementById("calOv").classList.add("hidden"));
+document.getElementById("baseBtn").addEventListener("click", ()=>{ renderBase(); document.getElementById("baseOv").classList.remove("hidden"); });
+document.getElementById("baseClose").addEventListener("click", ()=>document.getElementById("baseOv").classList.add("hidden"));
+document.getElementById("chestBtn").addEventListener("click", ()=>{ renderChests(); document.getElementById("chestOv").classList.remove("hidden"); });
+document.getElementById("chestClose").addEventListener("click", ()=>document.getElementById("chestOv").classList.add("hidden"));
+document.getElementById("gemShopBtn").addEventListener("click", ()=>{ renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden"); });
+document.getElementById("gemShopClose").addEventListener("click", ()=>document.getElementById("gemShopOv").classList.add("hidden"));
+document.getElementById("starterPackBtn").addEventListener("click", ()=>toast("Starter Pack IAP stub — coming soon."));
+document.getElementById("albumBtn").addEventListener("click", ()=>{ renderAlbum(); document.getElementById("albumOv").classList.remove("hidden"); });
+document.getElementById("albumClose").addEventListener("click", ()=>document.getElementById("albumOv").classList.add("hidden"));
+document.getElementById("notifAllowBtn").addEventListener("click", async ()=>{
+  save.notif = save.notif || {};
+  save.notif.asked = true;
+  const bridge = TN();
+  let status = "granted";
+  if (bridge && bridge.requestNotificationPermission) status = await bridge.requestNotificationPermission();
+  save.notif.permission = status;
+  persist();
+  document.getElementById("notifPrompt").classList.add("hidden");
+  toast(status==="granted"||status==="prompt"?"Reminders on":"Reminders unavailable");
+});
+document.getElementById("notifSkipBtn").addEventListener("click", ()=>{
+  save.notif = save.notif || {};
+  save.notif.asked = true;
+  persist();
+  document.getElementById("notifPrompt").classList.add("hidden");
+});
+function bindNotifToggle(elId, key){
+  const el = document.getElementById(elId);
+  if (!el) return;
+  el.addEventListener("change", ()=>{
+    save.notif = save.notif || { enabled:{} };
+    if (key==="quietHours") save.notif.quietHours = !!el.checked;
+    else {
+      save.notif.enabled = save.notif.enabled || {};
+      save.notif.enabled[key] = !!el.checked;
+    }
+    persist();
+  });
+}
+bindNotifToggle("ntUpgrade","upgrade_done");
+bindNotifToggle("ntChest","chest_ready");
+bindNotifToggle("ntDaily","daily_reward");
+bindNotifToggle("ntStreak","streak_risk");
+bindNotifToggle("ntSeason","new_season");
+bindNotifToggle("ntQuiet","quietHours");
 
 document.addEventListener("pointerdown", ensureAudio, {once:false});
 
@@ -1558,23 +2963,49 @@ window.__TS = {
     };
   },
   setupLineClear(n){
-    n = Math.max(1, Math.min(4, n||4));
+    n = Math.max(1, Math.min(4, n||3));
     if (screen!=="game") startGame();
-    paused=false; over=false; clearing=null;
+    paused=false; over=false; clearing=null; recyclePending=null;
     board = emptyBoard();
-    const gap=5;
+    const gap=3;
+    const fill=["CAN","BOX","PIPE","CRATE","TUBE"];
     for (let y=ROWS-n; y<ROWS; y++){
-      for (let x=0;x<COLS;x++) if (x!==gap) board[y][x] = (["J","L","S","Z","T"])[(y+x)%5];
+      for (let x=0;x<COLS;x++) if (x!==gap) board[y][x] = fill[(y+x)%fill.length];
     }
     hold=null;
-    cur = {type:"I", rot:1, x:gap-2, y:HID};
-    if (!valid(cur.type,cur.rot,cur.x,cur.y)) cur.y=0;
+    cur = {type:"CAN", rot:1, x:gap, y:HID};
+    // CAN rot1 is vertical 3 — place so it fills the gap column
+    if (!valid(cur.type,cur.rot,cur.x,cur.y)){ cur.x=gap; cur.y=Math.max(0,ROWS-n-3); }
     locking=false; lockT=0; gravityAcc=0; combo=0;
     drawPreviews(); render();
     return window.__TS.state();
   },
-  hardDrop, tryMove, tryRot, doHold,
-  save, SKINS, BGS,
+  setupRecycle(){
+    if (screen!=="game") startGame();
+    paused=false; over=false; clearing=null; recyclePending=null;
+    board = emptyBoard();
+    // three metal cans touching
+    board[ROWS-1][1]="CAN"; board[ROWS-1][2]="CAN"; board[ROWS-1][3]="PIPE";
+    board[ROWS-2][2]="PIPE"; board[ROWS-2][3]="PIPE";
+    cur = {type:"BOX", rot:0, x:0, y:HID};
+    drawPreviews(); render();
+  },
+  hardDrop, tryMove, tryRot, doHold, doMagnet,
+  save, SKINS, BGS, TRAILS, ACHIEVEMENTS, JUNK, COLS, VIS,
+  renderAchievements, renderBattlePass, renderCalendar, renderLeaderboard,
+  openShop(){ document.getElementById("shopOv").classList.remove("hidden"); renderShop(); },
+  openAch(){ renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); },
+  openSettings(){ syncNotifToggles(); document.getElementById("settingsOv").classList.remove("hidden"); },
+  openChallenges(){ /* challenges live on title */ showScreen("title"); syncMetaUI(); },
+  openBase(){ renderBase(); document.getElementById("baseOv").classList.remove("hidden"); },
+  openChests(){ renderChests(); document.getElementById("chestOv").classList.remove("hidden"); },
+  openGemShop(){ renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden"); },
+  openAlbum(){ renderAlbum(); document.getElementById("albumOv").classList.remove("hidden"); },
+  openNotifPrompt(){ document.getElementById("notifPrompt").classList.remove("hidden"); },
+  economy(){ return { scrap:save.scrap, gems:save.gems, base:save.base, chests:save.chests, pass:save.battlePass }; },
+  triggerContinue(){ continuedThisRun=false; gameOver(); },
+  triggerLevelUp(){ const before=save.playerLevel; addXP(9999); },
+  setMagnet(n){ magnetCharge=n; syncMagnetUI(); },
   layout(){
     resizeBoard();
     const wrap=document.getElementById("boardWrap");
@@ -1600,18 +3031,176 @@ window.__TS = {
   }
 };
 
-// ---------- boot ----------
-load();
-if (!save.welcomed){ save.welcomed=true; persist(); }
-syncMetaUI();
-checkDailyStreak();
-syncMetaUI();
-drawWheel(0);
-requestAnimationFrame(frame);
-window.addEventListener("resize", ()=>{ if(screen==="game"){ resizeBoard(); render(); } });
-if (!save.sawHow){
-  // don't auto-open how-to; first play button is enough
+
+async function runDemoSequence(){
+  // ~50s scripted showcase for CI video evidence
+  try{
+    showScreen("title"); syncMetaUI();
+    await sleep(1200);
+    startGame();
+    await sleep(800);
+    // Compactor clear
+    window.__TS.setupLineClear(3);
+    await sleep(600);
+    hardDrop();
+    await sleep(1400);
+    // Recycle
+    window.__TS.setupRecycle();
+    await sleep(500);
+    // lock a metal into the cluster via board mutate + juice
+    board[ROWS-1][0]="PIPE";
+    const groups=findRecycleGroups();
+    if (groups.length){ recyclePending=groups; clearing=groups.flatMap(g=>g.cells.map(c=>c.y)); clearT=Math.floor(CLEAR_MS*0.75); juiceRecycle(groups); }
+    await sleep(1200);
+    // Magnet
+    magnetCharge=2; syncMagnetUI();
+    if (!cur) nextPiece();
+    await sleep(400);
+    doMagnet();
+    await sleep(1000);
+    // Play a bit
+    for (let i=0;i<8;i++){ tryMove(i%2?1:-1,0); await sleep(180); tryRot(1); await sleep(200); softDropOnce(); await sleep(150); }
+    hardDrop();
+    await sleep(800);
+    // Level-up fanfare
+    addXP(xpNeeded(save.playerLevel)+10);
+    await sleep(1600);
+    document.getElementById("lvlOv").classList.add("hidden");
+    // Shop
+    document.getElementById("shopOv").classList.remove("hidden"); renderShop();
+    await sleep(1800);
+    document.getElementById("shopOv").classList.add("hidden");
+    // Achievements
+    renderAchievements(); document.getElementById("achOv").classList.remove("hidden");
+    await sleep(1400);
+    document.getElementById("achOv").classList.add("hidden");
+    // Junkyard base
+    save.scrap=Math.max(save.scrap||0,600); save.gems=Math.max(save.gems||0,40); save.shinies=save.scrap;
+    if (!save.base) save.base={levels:{recycler:2,compactor:1,neonSign:1,stashVault:1},queue:[],builderSlots:2};
+    renderBase(); document.getElementById("baseOv").classList.remove("hidden");
+    await sleep(1800);
+    document.getElementById("baseOv").classList.add("hidden");
+    // Season pass
+    save.battlePass.xp=Math.max(save.battlePass.xp||0,320); renderBattlePass();
+    document.getElementById("bpOv").classList.remove("hidden");
+    await sleep(1600);
+    document.getElementById("bpOv").classList.add("hidden");
+    // Crates + odds
+    save.chests=[{id:"demo_dock",chestId:"dock_crate",earnedAt:Date.now(),readyAt:Date.now()-1,opened:false}];
+    renderChests(); document.getElementById("chestOv").classList.remove("hidden");
+    await sleep(1600);
+    document.getElementById("chestOv").classList.add("hidden");
+    // Gem shop
+    renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden");
+    await sleep(1400);
+    document.getElementById("gemShopOv").classList.add("hidden");
+    // Notification prompt (after first win moment)
+    save.firstWin=true; document.getElementById("notifPrompt").classList.remove("hidden");
+    await sleep(1400);
+    document.getElementById("notifPrompt").classList.add("hidden");
+    // Game over + revive prompt (test ad path)
+    continuedThisRun=false; started=true; over=false; pendingGameOver=false;
+    gameOver();
+    await sleep(2200);
+    await sleep(1600);
+    skipContinue();
+    await sleep(1000);
+    showScreen("title"); syncMetaUI();
+    await sleep(1200);
+  }catch(e){ console.warn("demo", e); }
 }
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+async function applyShotMode(shot){
+  if (!shot) return;
+  if (shot==="game"){
+    setTimeout(()=>{ try{
+      startGame();
+      window.__TS.setupLineClear(2);
+      for (let y=ROWS-6;y<ROWS-2;y++){
+        for (let x=0;x<COLS;x++) if ((x+y)%3!==0) board[y][x]=PIECE_IDS[(x+y)%PIECE_IDS.length];
+      }
+      magnetCharge=2; syncMagnetUI(); render();
+    }catch(e){} }, 400);
+  } else if (shot==="shop"){
+    setTimeout(()=>{ showScreen("title"); document.getElementById("shopOv").classList.remove("hidden"); renderShop(); }, 400);
+  } else if (shot==="achievements" || shot==="ach"){
+    setTimeout(()=>{ showScreen("title"); renderAchievements(); document.getElementById("achOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="settings"){
+    setTimeout(()=>{ showScreen("title"); syncNotifToggles(); document.getElementById("settingsOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="challenges"){
+    setTimeout(()=>{ showScreen("title"); syncMetaUI(); document.getElementById("challenges").scrollIntoView({block:"center"}); }, 400);
+  } else if (shot==="base" || shot==="junkyard"){
+    setTimeout(()=>{ showScreen("title"); save.scrap=Math.max(save.scrap||0,900); save.gems=Math.max(save.gems||0,80); save.shinies=save.scrap;
+      if (!save.base) save.base={levels:{recycler:2,compactor:2,neonSign:1,stashVault:1},queue:[],builderSlots:2};
+      save.base.levels.recycler=3; save.base.levels.compactor=2;
+      save.base.queue=[{buildingId:"neonSign",from:1,to:2,startedAt:Date.now()-1000,readyAt:Date.now()+120000}];
+      persist(); renderBase(); document.getElementById("baseOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="chest" || shot==="crates"){
+    setTimeout(()=>{ showScreen("title");
+      save.chests=[{id:"shot_dock",chestId:"dock_crate",earnedAt:Date.now()-1000,readyAt:Date.now()-1,opened:false},
+        {id:"shot_neon",chestId:"neon_crate",earnedAt:Date.now(),readyAt:Date.now()+3600000,opened:false}];
+      persist(); renderChests(); document.getElementById("chestOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="gems" || shot==="gemshop"){
+    setTimeout(()=>{ showScreen("title"); renderGemShop(); document.getElementById("gemShopOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="pass" || shot==="season"){
+    setTimeout(()=>{ showScreen("title"); save.battlePass.xp=Math.max(save.battlePass.xp||0,450); persist(); renderBattlePass(); document.getElementById("bpOv").classList.remove("hidden"); }, 400);
+  } else if (shot==="notif" || shot==="notifications"){
+    setTimeout(()=>{ showScreen("title"); save.firstWin=true; document.getElementById("notifPrompt").classList.remove("hidden"); }, 400);
+  } else if (shot==="demo"){
+    setTimeout(()=>{ runDemoSequence(); }, 600);
+  }
+}
+
+// ---------- boot ----------
+async function waitForNativeBridge(timeoutMs){
+  if (window.TrashNative) return window.TrashNative;
+  const started = performance.now();
+  return new Promise((resolve)=>{
+    const tick = ()=>{
+      if (window.TrashNative){ resolve(window.TrashNative); return; }
+      if (performance.now() - started > (timeoutMs||1500)){ resolve(null); return; }
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+}
+
+async function boot(){
+  const bridge = await waitForNativeBridge(2000);
+  if (bridge && bridge.prepareChrome){
+    try{ await bridge.prepareChrome(); }catch(e){}
+  }
+  await load();
+  if (!save.welcomed){ save.welcomed=true; persist(); }
+  // ATT + UMP consent + AdMob init (test units by default)
+  if (bridge && bridge.initAds){
+    try{ await bridge.initAds(); }catch(e){}
+  }
+  syncMetaUI();
+  checkDailyStreak();
+  checkAchievements();
+  syncMetaUI();
+  drawWheel(0);
+  requestAnimationFrame(frame);
+  window.addEventListener("resize", ()=>{ if(screen==="game"){ resizeBoard(); render(); } });
+  if (bridge && bridge.hideSplash){
+    try{ await bridge.hideSplash(); }catch(e){}
+  }
+  // CI / marketing screenshots + demo video: Preferences key or #shot=
+  try{
+    let shot = null;
+    if (bridge && bridge.consumeShotMode) shot = await bridge.consumeShotMode();
+    if (!shot){
+      const hash = (location.hash || "").replace(/^#/, "");
+      const m = hash.match(/shot=([a-zA-Z0-9_-]+)/);
+      if (m) shot = m[1];
+    }
+    await applyShotMode(shot);
+  }catch(e){}
+}
+
+boot();
 })();
 </script>
 </body>
