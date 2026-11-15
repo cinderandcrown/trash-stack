@@ -7,7 +7,8 @@ DEVICE="${1:?simulator UDID}"
 APP_PATH="${2:?path to TrashStack.app}"
 OUT_DIR="${3:-smoke-artifacts}"
 BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
-DISPLAY_ID="${SIMCTL_DISPLAY:-1}"
+# recordVideo accepts only internal|external. Screenshots may also use a numeric Duo id.
+DISPLAY="${SIMCTL_DISPLAY:-internal}"
 
 mkdir -p "$OUT_DIR"
 
@@ -22,7 +23,10 @@ clear_shot() {
 
 shot() {
   local out="$1"
-  if xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY_ID" "$out" 2>/tmp/sim-shot.err; then
+  if xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
+    return 0
+  fi
+  if xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
     return 0
   fi
   xcrun simctl io "$DEVICE" screenshot "$out"
@@ -39,7 +43,7 @@ launch_shot() {
   echo "Wrote $outfile" >&2
 }
 
-echo "Smoke on $DEVICE"
+echo "Smoke on $DEVICE (display=$DISPLAY)"
 xcrun simctl bootstatus "$DEVICE" -b || xcrun simctl boot "$DEVICE" || true
 xcrun simctl bootstatus "$DEVICE" -b
 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
@@ -62,12 +66,19 @@ VIDEO_OUT="$OUT_DIR/gameplay-demo.mp4"
 rm -f "$VIDEO_OUT"
 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 set +e
-xcrun simctl io "$DEVICE" recordVideo --display="$DISPLAY_ID" --codec=h264 --force "$VIDEO_OUT" &
+xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$VIDEO_OUT" &
 REC_PID=$!
-sleep 1
+sleep 2
 if ! kill -0 "$REC_PID" 2>/dev/null; then
+  echo "recordVideo --display=internal failed; retrying without --display" >&2
   xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force "$VIDEO_OUT" &
   REC_PID=$!
+  sleep 2
+fi
+if ! kill -0 "$REC_PID" 2>/dev/null; then
+  echo "recordVideo failed to start" >&2
+  set -e
+  exit 1
 fi
 set -e
 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" --console-pty -autoplay >/dev/null 2>&1 || \
@@ -75,7 +86,7 @@ xcrun simctl launch "$DEVICE" "$BUNDLE_ID" --console-pty -autoplay >/dev/null 2>
 sleep 55
 kill -INT "$REC_PID" 2>/dev/null || true
 wait "$REC_PID" 2>/dev/null || true
-sleep 2
+sleep 3
 
 for f in 01-title.png 02-gameplay.png 03-compactor-clear.png 04-recycle-combo.png \
          05-game-over-revive.png 06-base.png 07-pass.png 08-shop.png 09-notification-prompt.png \
