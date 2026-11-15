@@ -35,6 +35,7 @@ smoke-artifacts/
 *.swp
 TestResults.xcresult
 tmp-smoke-review/
+tmp-verify/
 TrashStack.xcodeproj/
 .vscode/
 web/
