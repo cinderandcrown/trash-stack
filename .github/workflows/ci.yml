@@ -59,7 +59,8 @@ jobs:
 
   build:
     name: Build and test (iPhone)
-    runs-on: macos-15
+    # Magpie pattern: xcode-27 ships the iOS 26 SDK required by App Store Connect.
+    runs-on: xcode-27
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -68,8 +69,10 @@ jobs:
 
       - name: Show toolchain
         run: |
+          echo "Runner labels context: xcode-27"
           xcodebuild -version
           xcrun --sdk iphonesimulator --show-sdk-version
+          echo "ImageOS=${ImageOS:-unknown} RUNNER_NAME=${RUNNER_NAME:-unknown}"
 
       - name: Install XcodeGen
         run: brew install xcodegen

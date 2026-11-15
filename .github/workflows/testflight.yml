@@ -30,7 +30,8 @@ jobs:
   testflight:
     name: Sign, check, and upload
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: macos-15
+    # Magpie pattern: xcode-27 / iOS 26 SDK (ASC rejects older SDKs).
+    runs-on: xcode-27
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
