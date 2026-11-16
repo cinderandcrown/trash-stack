@@ -96,6 +96,27 @@ Move → rotate → clusters (4+ material) → PRESS. Then the juicy vertical sl
 
 - Short GDD: this file. Mobile technical design: `docs/TECHNICAL.md`. Methods: `docs/VIBEGAMEDEV_METHODS.md`.
 
+## Reference games (inspiration only — keep everything original)
+
+Nicholas’s return-loop references: **Clash of Clans** and **Star Trek Fleet Commander**. Feel reference: **Call of Duty** (badass, punchy). Never copy systems, UI, or art — translate into Trash Stack’s junkyard night-shift identity.
+
+### Backlog — after current pass is reviewed
+
+Do **not** implement this section until the in-flight feel / FTUE / retention pass is reviewed. Then prioritize as backlog (no tags).
+
+**Return loop (CoC / STFC → Recycling Yard)**
+
+- **Recycling Yard** home base: upgrades paid with materials you recycled in runs (metal / plastic / glass / paper → yard buildings), not generic soft-currency spam.
+- Upgrades that **finish while you’re away** (real-time timers) — the reason to open the app again.
+- **Daily recycling-order goals** tied to the Yard (distinct from in-run order tickets).
+- **Something to collect every visit** (finished upgrade, free crate, yard scrap pile) — no nagging, no pay-to-win.
+
+**Feel (CoD → night-shift punch)**
+
+- **Heavy, punchy PRESS**: hit-stop, screen shake, big crunch SFX (already aimed; deepen until it feels badass).
+- A **satisfying rank-up** moment (Shift stars / Yard rank / Pass tier — one clear celebration beat).
+- **Badass cosmetics** on the Season Pass (bin skins, chute flares, raccoon gear) — swagger, not power.
+
 ## Evidence (smoke)
 
 Must show: material recycle, chain, press slam, order complete, Snatch, game over, **Daily Dumpster**, **share card**, **streak reward**. Video ≲150 MB with music + SFX. Judge screenshots side-by-side vs the previous build (agent eyes).
