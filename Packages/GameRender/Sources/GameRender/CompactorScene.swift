@@ -861,9 +861,8 @@ public final class CompactorScene: SKScene {
     }
 
     private func layoutActiveNodes() {
-        guard let p = engine.state.active, let root = activeRoot else { return }
-        let base = positionForBoard(x: visualX, y: visualY)
-        root.position = base
+        guard engine.state.active != nil, let root = activeRoot else { return }
+        root.position = positionForBoard(x: visualX, y: visualY)
     }
 
     private func positionForBoard(x: CGFloat, y: CGFloat) -> CGPoint {

@@ -476,6 +476,11 @@ public struct GameEngine: Sendable {
         state.pressMeter = state.pressMeterMax
     }
 
+    /// FTUE / gym helper — set press meter without exposing `state` mutation.
+    public mutating func setPressMeter(_ value: Int) {
+        state.pressMeter = max(0, min(state.pressMeterMax, value))
+    }
+
     public mutating func stash() {
         // Stash kept as optional hold bin — not required for Night Shift loop.
         guard let cur = state.active, !state.holdUsed, !state.over else { return }

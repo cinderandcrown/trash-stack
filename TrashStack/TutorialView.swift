@@ -100,7 +100,7 @@ struct TutorialView: View {
         }
         // applyShot rebuilds + presents juice; leave press nearly ready.
         scene.applyShot("ftue")
-        scene.engine.state.pressMeter = max(0, scene.engine.state.pressMeterMax - 2)
+        scene.engine.setPressMeter(max(0, scene.engine.state.pressMeterMax - 2))
         scene.render(immediate: true)
         bark = "Drag the falling can into the metal — make 4+ to recycle"
         AudioService.shared.playSFX("ui")

@@ -8,10 +8,10 @@ import Services
 
 /// Wires Google Mobile Ads (test IDs), UMP, and ATT.
 /// Must run AFTER first interactive paint — ideally after first win (no launch prompts).
+@MainActor
 enum AdsBootstrap {
     private static var didStart = false
 
-    @MainActor
     static func start() async {
         guard !didStart else { return }
         didStart = true
@@ -29,13 +29,11 @@ enum AdsBootstrap {
     }
 
     /// Call from post-win / shop paths so cold launch stays under ~1.5s.
-    @MainActor
     static func startAfterFirstWinIfNeeded() async {
         await start()
     }
 
     /// UMP 2.x SPM binary still exposes the ObjC-prefixed API surface.
-    @MainActor
     private static func requestUMPConsent() async {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             let params = UMPRequestParameters()
