@@ -74,14 +74,13 @@ jobs:
           xcrun --sdk iphonesimulator --show-sdk-version
           echo "ImageOS=${ImageOS:-unknown} RUNNER_NAME=${RUNNER_NAME:-unknown}"
 
-      - name: Install XcodeGen + ffmpeg + Pillow
+      - name: Install XcodeGen + ffmpeg
         run: |
           brew install xcodegen ffmpeg
           command -v ffmpeg
           ffmpeg -version | head -1
-          # Smoke splash/title asserts prefer Pillow; keep a pip fallback for runners without a brew formula.
-          python3 -m pip install --user pillow >/dev/null 2>&1 || pip3 install --user pillow >/dev/null 2>&1 || true
-          python3 -c "from PIL import Image; print('Pillow', Image.__version__)"
+          # Smoke pixel checks use stdlib PNG decode only (no Pillow / no second Python).
+          python3 -c "import struct, zlib, sys; print('stdlib PNG OK', sys.version.split()[0])"
 
       - name: Generate Xcode project
         run: xcodegen generate
