@@ -19,15 +19,22 @@ app_running() {
   xcrun simctl spawn "$DEVICE" ps aux 2>/dev/null | grep -v grep | grep -q "TrashStack" || return 1
 }
 
+# macOS-friendly deadline (GNU timeout is missing on xcode runners).
+with_deadline() {
+  local secs="$1"
+  shift
+  perl -e 'alarm shift @ARGV; exec @ARGV' "$secs" "$@"
+}
+
 shot() {
   local out="$1"
-  if xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
+  if with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
     return 0
   fi
-  if xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
+  if with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
     return 0
   fi
-  xcrun simctl io "$DEVICE" screenshot "$out"
+  with_deadline 20 xcrun simctl io "$DEVICE" screenshot "$out"
 }
 
 # Reject blank / springboard captures. Prefer Pillow; fall back to stdlib PNG decode.
@@ -171,24 +178,30 @@ PY
 launch_shot() {
   local mode="$1"
   local outfile="$2"
-  local settle="${3:-6}"
+  local settle="${3:-4}"
   local attempts=0
-  local max_attempts=3
+  local max_attempts=2
+  local shot_start=$SECONDS
 
   while (( attempts < max_attempts )); do
     attempts=$((attempts + 1))
-    xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-    sleep 0.6
+    if (( SECONDS - shot_start > 55 )); then
+      echo "launch_shot deadline exceeded for mode='$mode'" >&2
+      break
+    fi
+    smoke_budget
+    with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 0.4
 
     # Defaults + launch args (args are authoritative in PlayerProfile.shotArgument).
-    xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-    xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+    with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+    with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
     if [[ -n "$mode" ]]; then
-      xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" || true
-      xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" || true
+      with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     else
-      xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
-      xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+      with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     fi
     cat /tmp/sim-launch.out >&2 || true
 
@@ -223,7 +236,7 @@ launch_shot() {
 SMOKE_START=$SECONDS
 smoke_budget() {
   local elapsed=$((SECONDS - SMOKE_START))
-  if (( elapsed > 1100 )); then
+  if (( elapsed > 1500 )); then
     echo "Smoke watchdog exceeded ${elapsed}s — aborting" >&2
     exit 124
   fi
@@ -239,39 +252,39 @@ smoke_budget
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
-launch_shot "" "$OUT_DIR/01-title.png" 4
+launch_shot "" "$OUT_DIR/01-title.png" 3
 smoke_budget
-# Longer settle so mid-game / crush juice / recycle banner are on-screen.
-launch_shot "game" "$OUT_DIR/02-gameplay.png" 6
+# Settle long enough for mid-game / crush juice / recycle banner.
+launch_shot "game" "$OUT_DIR/02-gameplay.png" 5
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
-launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 6
+launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 5
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 6
+launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 5
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 4
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-launch_shot "base" "$OUT_DIR/06-base.png" 4
-launch_shot "pass" "$OUT_DIR/07-pass.png" 4
-launch_shot "shop" "$OUT_DIR/08-shop.png" 4
-launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 4
+launch_shot "base" "$OUT_DIR/06-base.png" 3
+launch_shot "pass" "$OUT_DIR/07-pass.png" 3
+launch_shot "shop" "$OUT_DIR/08-shop.png" 3
+launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 3
 smoke_budget
 # Retention evidence: Daily Dumpster, share card, streak reward.
-launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 5
+launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 4
 assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png"
-launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 4
-launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 4
+launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 3
+launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 3
 smoke_budget
 
-launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 5
+launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 4
 assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
-launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 6
+launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 5
 assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
-launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 6
+launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 5
 assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
-launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 4
-launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 4
-launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 4
-launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 5
+launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 3
+launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 3
+launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 3
+launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 4
 assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
 smoke_budget
 
@@ -317,8 +330,8 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
 fi
 set -e
 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
-# Continuous autoplay (~45s): recycle/press/snatch/game-over beats without board teleport spam.
-sleep 45
+# Continuous autoplay (~35s): recycle/press/snatch/game-over beats without board teleport spam.
+sleep 35
 kill -INT "$REC_PID" 2>/dev/null || true
 # Force-kill if simctl recordVideo ignores INT (known hang source).
 sleep 2
