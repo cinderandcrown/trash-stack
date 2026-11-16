@@ -135,7 +135,7 @@ This compares with 0 transparent pixels in 54cf2ce, and the checkerboard is gone
 | Raccoon transparent px | 0 | 146,828–152,559 |
 | Raccoon opaque px (Idle) | 262,144 | 15,445 |
 | Splash hold in demo | 4.75 s | 3.5 s (1.257→4.752) |
-| Tap → first meaningful frame | ~5.7 s | **~3.9 s** |
+| Tap → first meaningful frame | ~5 s (logo 1.8→6.7 s, per 54cf2ce report) | **~3.9 s** |
 | Smoke launch value / gate | n/a / 8 s | 16 s / **45 s** |
 | Demo duration / frames / avg fps | 37.09 s / 2335 / 63.0 | 36.50 s / 2622 / 71.8 |
 | Packet gaps > 50 ms | 33 (max 2173 ms) | 25 total, 19 in play (max 180 ms) |
