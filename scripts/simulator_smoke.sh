@@ -231,13 +231,29 @@ print(f"Not launch splash OK {path} (stdlib; in-app stamp authoritative)")
 PY
 }
 
+# Resolve the live data container and Documents/launch-timing.txt every call
+# (path can lag right after install/launch; never cache a stale container).
+launch_docs_path() {
+  local container
+  container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  if [[ -n "$container" ]]; then
+    printf '%s' "$container/Documents/launch-timing.txt"
+  fi
+}
+
 # Read a key from Documents/launch-timing.txt (preferred) or UserDefaults.
 read_launch_field() {
   local key="$1"
-  local v="" container defkey=""
-  container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
-  if [[ -n "$container" && -f "$container/Documents/launch-timing.txt" ]]; then
-    v="$(grep -E "^${key}=" "$container/Documents/launch-timing.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+  local v="" docs defkey="" body=""
+  docs="$(launch_docs_path)"
+  if [[ -n "$docs" && -f "$docs" ]]; then
+    # Re-read the file each time so host FS sync of the simulator mirror is visible.
+    body="$(cat "$docs" 2>/dev/null || true)"
+    v="$(printf '%s\n' "$body" | grep -E "^${key}=" | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+    # Legacy: plain Documents file that was only the dt string.
+    if [[ -z "$v" && "$key" == "in_app_sec" ]] && ! printf '%s\n' "$body" | grep -q '='; then
+      v="$(printf '%s' "$body" | tr -d '[:space:]')"
+    fi
   fi
   if [[ -z "$v" ]]; then
     case "$key" in
@@ -250,12 +266,6 @@ read_launch_field() {
       v="$(echo "$v" | tr -d '[:space:]' | tr -d '\"')"
     fi
   fi
-  # Legacy: plain Documents file that was only the dt string.
-  if [[ -z "$v" && "$key" == "in_app_sec" && -n "$container" && -f "$container/Documents/launch-timing.txt" ]]; then
-    if ! grep -q '=' "$container/Documents/launch-timing.txt" 2>/dev/null; then
-      v="$(tr -d '[:space:]' < "$container/Documents/launch-timing.txt")"
-    fi
-  fi
   printf '%s' "$v"
 }
 
@@ -266,6 +276,15 @@ read_inapp_launch_sec() {
     v="$(read_launch_field in_app_sec_string)"
   fi
   printf '%s' "$v"
+}
+
+# Seconds elapsed since host launch-PID stamp (wall clock).
+host_since_launch() {
+  python3 - "$HOST_LAUNCH_EPOCH" <<'PY'
+import sys, time
+host = float(sys.argv[1])
+print(f"{time.time() - host:.6f}")
+PY
 }
 
 # Fail if gameplay shots still show SpriteKit's red-X missing-texture tiles.
@@ -436,30 +455,48 @@ with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >
 HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-cold.out >&2 || true
 echo "host_launch_epoch=$HOST_LAUNCH_EPOCH" >&2
-for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  if app_running; then break; fi
-  sleep 0.15
-done
-# Poll only until the in-app stamp appears (budget 8s host wall, not a metric).
-POLL_T0=$SECONDS
-FIRST_OK=0
+# Poll Documents mirror until stamps appear. Window = 8s from launch-PID stamp
+# (not bash $SECONDS / poll-start). Keep shot/asserts out of this loop so FS sync
+# time is not eaten by screenshot overhead.
+STAMPS_OK=0
 INAPP_RAW=""
+INAPP_STR=""
 FRAME_EPOCH=""
-while (( SECONDS - POLL_T0 <= 8 )); do
-  INAPP_RAW="$(read_inapp_launch_sec)"
-  FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
-  shot "$OUT_DIR/00-publisher-ident.png" || true
-  if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]] \
-    && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
-    && assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"; then
-    FIRST_OK=1
-    break
+while python3 - "$HOST_LAUNCH_EPOCH" <<'PY'
+import sys, time
+sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
+PY
+do
+  docs="$(launch_docs_path)"
+  if [[ -n "$docs" && -f "$docs" ]]; then
+    echo "launch_docs_path=$docs elapsed=$(host_since_launch)s" >&2
+    INAPP_RAW="$(read_launch_field in_app_sec)"
+    if [[ -z "$INAPP_RAW" ]]; then
+      INAPP_RAW="$(read_launch_field in_app_sec_string)"
+    fi
+    INAPP_STR="$(read_launch_field in_app_sec_string)"
+    FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
+    if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+      STAMPS_OK=1
+      break
+    fi
+  else
+    echo "launch_docs waiting path=${docs:-missing} elapsed=$(host_since_launch)s" >&2
   fi
-  sleep 0.15
+  sleep 0.1
 done
-INAPP_STR="$(read_launch_field in_app_sec_string)"
-INAPP_RAW="$(read_inapp_launch_sec)"
-FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
+# One final Documents read after the window (handles last-moment sync).
+if (( STAMPS_OK == 0 )); then
+  INAPP_RAW="$(read_launch_field in_app_sec)"
+  if [[ -z "$INAPP_RAW" ]]; then
+    INAPP_RAW="$(read_launch_field in_app_sec_string)"
+  fi
+  INAPP_STR="$(read_launch_field in_app_sec_string)"
+  FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
+  if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+    STAMPS_OK=1
+  fi
+fi
 # Honest wall = app first-frame absolute epoch − host stamp at launch PID.
 WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" <<'PY'
 import sys
@@ -486,10 +523,11 @@ PY
 } | tee "$OUT_DIR/launch-timing.txt"
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
 printf '%s\n' "${WALL_DT}" > "$OUT_DIR/launch-wall-clock-seconds.txt"
-if (( FIRST_OK == 0 )); then
-  echo "First SwiftUI frame stamps never arrived within 8s poll" >&2
-  container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
-  echo "docs=$(cat "$container/Documents/launch-timing.txt" 2>/dev/null || true)" >&2
+if (( STAMPS_OK == 0 )); then
+  echo "First SwiftUI frame stamps never arrived within 8s of launch-PID" >&2
+  docs="$(launch_docs_path)"
+  echo "docs_path=${docs:-missing}" >&2
+  echo "docs=$(cat "$docs" 2>/dev/null || true)" >&2
   exit 1
 fi
 python3 - "$INAPP_RAW" "$WALL_DT" <<'PY'
@@ -517,6 +555,10 @@ if wdt < -1.0:
     raise SystemExit(f"Wall-clock launch {wdt:.3f}s looks clock-skewed")
 print(f"Wall-clock launch OK {wdt:.3f}s")
 PY
+# Frame evidence after stamps (LaunchLogo reject) — not part of the 8s stamp poll.
+shot "$OUT_DIR/00-publisher-ident.png" || true
+assert_app_frame "$OUT_DIR/00-publisher-ident.png"
+assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 # Held publisher-ident screenshot for review evidence (timing already gated above).
 launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 2
 # Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
