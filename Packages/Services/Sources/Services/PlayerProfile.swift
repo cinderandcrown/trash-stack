@@ -59,7 +59,7 @@ public final class PlayerProfile: ObservableObject {
         }
     }
 
-    public static func shotArgument() -> String? {
+    nonisolated public static func shotArgument() -> String? {
         let args = ProcessInfo.processInfo.arguments
         if let idx = args.firstIndex(of: "-trashStackShot"), idx + 1 < args.count {
             let v = args[idx + 1]

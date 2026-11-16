@@ -165,20 +165,33 @@ private struct EmberField: View {
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 24)) { timeline in
+            let t = timeline.date.timeIntervalSinceReferenceDate
             Canvas { ctx, size in
-                let t = timeline.date.timeIntervalSinceReferenceDate
-                for i in 0..<18 {
-                    let seed = Double(i) * 17.13
-                    let x = (sin(t * 0.35 + seed) * 0.5 + 0.5) * size.width
-                    let y = size.height * 0.55 - CGFloat((t * (18 + Double(i % 5)) + seed * 9)
-                        .truncatingRemainder(dividingBy: Double(size.height * 0.55)))
-                    let r = CGFloat(1.2 + (i % 3))
-                    let rect = CGRect(x: x, y: y, width: r, height: r * 1.6)
-                    let col = (i % 2 == 0) ? gold.opacity(0.55) : crimson.opacity(0.45)
-                    ctx.fill(Path(ellipseIn: rect), with: .color(col))
-                }
+                Self.drawEmbers(ctx: ctx, size: size, t: t, gold: gold, crimson: crimson)
             }
         }
         .ignoresSafeArea()
+    }
+
+    private static func drawEmbers(
+        ctx: GraphicsContext,
+        size: CGSize,
+        t: TimeInterval,
+        gold: Color,
+        crimson: Color
+    ) {
+        let band = Double(size.height) * 0.55
+        for i in 0..<18 {
+            let seed = Double(i) * 17.13
+            let xNorm = sin(t * 0.35 + seed) * 0.5 + 0.5
+            let x = CGFloat(xNorm) * size.width
+            let speed = 18.0 + Double(i % 5)
+            let travel = (t * speed + seed * 9).truncatingRemainder(dividingBy: band)
+            let y = CGFloat(band) - CGFloat(travel)
+            let r = CGFloat(1.2 + Double(i % 3))
+            let rect = CGRect(x: x, y: y, width: r, height: r * 1.6)
+            let col: Color = (i % 2 == 0) ? gold.opacity(0.55) : crimson.opacity(0.45)
+            ctx.fill(Path(ellipseIn: rect), with: .color(col))
+        }
     }
 }
