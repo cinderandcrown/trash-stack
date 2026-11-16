@@ -66,20 +66,23 @@ public final class AudioService {
 
     public func prepare() {
 #if canImport(AVFoundation)
+        guard engine == nil else { return }
         let eng = AVAudioEngine()
         _ = eng.mainMixerNode
         try? eng.start()
         engine = eng
+        // SFX only on the first prepare — music loads lazily in playMusic (64s beds).
         for name in ["lock", "crush", "recycle", "combo", "levelup", "magnet", "ui"] {
             if let buf = loadWav(named: name) {
                 buffers[name] = buf
             }
         }
-        for name in ["menu_loop", "game_loop"] {
-            if let buf = loadWav(named: name) {
-                musicBuffers[name] = buf
-            }
-        }
+#endif
+    }
+
+    private func ensureEngine() {
+#if canImport(AVFoundation)
+        if engine == nil { prepare() }
 #endif
     }
 
@@ -93,6 +96,10 @@ public final class AudioService {
     public func playSFX(_ name: String, pitch: Double = 1.0) {
         guard !muted else { return }
 #if canImport(AVFoundation)
+        ensureEngine()
+        if buffers[name] == nil, let buf = loadWav(named: name) {
+            buffers[name] = buf
+        }
         guard let engine, let buffer = buffers[name] else {
             blip(frequency: 440 * pitch)
             return
@@ -116,6 +123,10 @@ public final class AudioService {
     public func playMusic(_ name: String) {
         guard !muted else { return }
 #if canImport(AVFoundation)
+        ensureEngine()
+        if musicBuffers[name] == nil, let buf = loadWav(named: name) {
+            musicBuffers[name] = buf
+        }
         guard let engine, let buffer = musicBuffers[name] else { return }
         if currentMusic == name, musicPlayer?.isPlaying == true { return }
         if let old = musicPlayer {

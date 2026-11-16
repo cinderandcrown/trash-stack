@@ -8,10 +8,15 @@ struct TitleView: View {
     @Binding var showNotifPrompt: Bool
     @EnvironmentObject var profile: PlayerProfile
     @State private var bob = false
+    @State private var heavyReady = false
 
     var body: some View {
         ZStack {
-            AlleyBackdrop()
+            // First paint: gradient only (AlleyBackground decode is the main-thread stall).
+            NeonTheme.alleyGradient.ignoresSafeArea()
+            if heavyReady {
+                AlleyBackdrop(includeGradient: false)
+            }
             VStack(spacing: 14) {
                 Spacer(minLength: 24)
                 BundleImage(name: "RaccoonIdle")
@@ -72,9 +77,17 @@ struct TitleView: View {
             .padding(.horizontal, 8)
         }
         .onAppear {
-            AudioService.shared.playMusic("menu_loop")
+            // Honest first-paint mark BEFORE deferred heavy work.
+            LaunchTiming.markFirstTitleFrame()
             withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                 bob = true
+            }
+            Task { @MainActor in
+                await Task.yield()
+                heavyReady = true
+                HapticsService.shared.prepare()
+                AudioService.shared.prepare()
+                AudioService.shared.playMusic("menu_loop")
             }
         }
     }

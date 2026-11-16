@@ -4,14 +4,15 @@ Every in-game raster, font, and wav must be **CC0**, **CC-BY** (with attribution
 
 ## Original (Cinder and Crown LLC, © 2026)
 
-| Asset | Path(s) | Notes |
-|-------|---------|-------|
-| App icon | `TrashStack/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` | Neon dumpster + raccoon mark; opaque RGB |
-| Launch logo | `TrashStack/Resources/UI/LaunchLogo.png` | |
-| Raccoon Idle / Cheer / Panic | `Resources/UI`, `Assets.xcassets`, `GameRender/.../HUD` | True-alpha cutouts |
-| Junk silhouettes | `can`, `bottle`, `plank`, `pipe`, `crate`, `tire`, `bentPipe`, `fridge` (+ legacy aliases tube/scrap/bag/box) | Material language: metal / plastic / glass / paper |
-| HUD / particles | DumpsterFrame, AlleyBackground, Spark*, Debris*, MagnetIcon, GemPack* | |
-| SFX / BGM | `TrashStack/Resources/Audio/*.wav` | Procedural / original; recycle/combo ≥0.4s, crush ≥0.5s |
+| Asset | Path(s) | Provenance |
+|-------|---------|------------|
+| App icon | `TrashStack/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` | Original neon dumpster + raccoon mark; hand-composited / agent-baked RGB, no alpha |
+| Launch logo | `LaunchLogo.imageset` (@3x 600×600) | Original neon card mark; shipped at 3x so launch UIImage is ~200 pt (not clipped) |
+| Raccoon Idle / Cheer / Panic | `Resources/UI`, `Assets.xcassets`, `GameRender/.../HUD` | Original character art; rematted with opaque interior + soft exterior edge (not luminance-keyed) |
+| Junk silhouettes | `can`, `bottle`, `plank`, `pipe`, `crate`, `tire`, `bentPipe`, `fridge` | Original material-language tiles (metal / plastic / glass / paper). Legacy alias files bag/box/scrap/tube deleted |
+| HUD / particles | DumpsterFrame, AlleyBackground, Spark*, Debris*, MagnetIcon, GemPack* | Original alley / neon HUD rasters authored for this title |
+| SFX | `lock`, `crush`, `recycle`, `combo`, `levelup`, `magnet`, `ui` `.wav` | Original / procedural one-shots |
+| BGM | `game_loop.wav`, `menu_loop.wav` | Original procedural beds, **64 s** loops (not 8 s stubs) |
 
 ## Fonts
 
@@ -32,3 +33,4 @@ Every in-game raster, font, and wav must be **CC0**, **CC-BY** (with attribution
 - Do not ship generative art of unknown license.
 - When adding CC-BY art, list author + URL here and in-app credits.
 - Update this file in the same commit as any new raster/wav.
+- Record tool + ownership terms for any generator-assisted raster in the Provenance column.

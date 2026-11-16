@@ -13,7 +13,7 @@ Follow **[docs/VIBEGAMEDEV_METHODS.md](docs/VIBEGAMEDEV_METHODS.md)** (incl. v2 
 - Juice (hit-stop, shake, particles) required; no full-screen flash washes
 - ~30s FTUE (move / rotate / clusters / press); juicy vertical slice only
 - Deterministic smoke + side-by-side screenshot judgment after every pass
-- Never use the word “Tetris” (or tetromino / line-clear / letter piece names)
+- Never name classic falling-block trademarks (or tetromino / line-clear / letter piece names)
 
 Also see `docs/DESIGN.md`, `docs/TECHNICAL.md`, `docs/ECONOMY.md`, `docs/ART.md`, `docs/STORE.md`.
 

@@ -187,9 +187,8 @@ struct GameContainerView: View {
                             .foregroundStyle(NeonTheme.teal)
                         NeonButton(title: "Revive (ad)") {
                             Task {
-                                if !profile.firstWin {
-                                    await AdsBootstrap.startAfterFirstWinIfNeeded()
-                                }
+                                // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
+                                await AdsBootstrap.startAfterFirstWinIfNeeded()
                                 let ok = await AdsService.shared.showRewarded(placement: "revive")
                                 showContinue = false
                                 if ok {
@@ -631,18 +630,17 @@ struct GameContainerView: View {
         if state.score > 0 && !profile.firstWin {
             profile.firstWin = true
             profile.persist()
-            await AdsBootstrap.startAfterFirstWinIfNeeded()
-            if !profile.notifAsked {
-                showNotifPrompt = true
-            }
         }
-        // Streak check-in once per day from any completed shift.
+        // Never fire ATT/UMP/notification prompts on game-over. Notifications: win / streak / settings (2nd session).
         let streak = profile.registerDailyActivity()
         profile.persist()
         await AdsService.shared.maybeShowInterstitial()
         continued = false
         AudioService.shared.playMusic("menu_loop")
         if streak.isNew, streak.scrap > 0 {
+            if profile.mayPromptNotifications {
+                showNotifPrompt = true
+            }
             onStreakReward?(streak.streak, streak.scrap, streak.gems)
         } else {
             screen = .title

@@ -59,6 +59,24 @@ final class AssetAlphaTests: XCTestCase {
                     }
                 }
             }
+
+            // Interior of the silhouette (eroded core) must be ≥ 85% opaque — catches luminance-key ghosts.
+            var silhouette = 0
+            var coreOpaque = 0
+            let margin = max(8, min(w, h) / 16)
+            for y in margin..<(h - margin) {
+                for x in margin..<(w - margin) {
+                    let a = Int(data[(y * w + x) * 4 + 3])
+                    // Treat any non-trivial coverage as silhouette for the eroded core sample.
+                    if a > 20 {
+                        silhouette += 1
+                        if a >= 250 { coreOpaque += 1 }
+                    }
+                }
+            }
+            XCTAssertGreaterThan(silhouette, 1000, "\(name) silhouette too thin")
+            let ratio = Double(coreOpaque) / Double(max(1, silhouette))
+            XCTAssertGreaterThanOrEqual(ratio, 0.85, "\(name) interior opacity \(ratio) < 0.85 (luminance-key ghost?)")
         }
     }
 

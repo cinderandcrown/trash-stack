@@ -655,8 +655,9 @@ public struct GameEngine: Sendable {
             state.orders[0].progress = 7
             state.active = ActivePiece(id: .bottle, rot: 0, x: 3, y: hid + 1)
         case "demo", "autoplay":
-            for y in (rows - 4)..<rows {
-                for x in 0..<cols where (x + y) % 4 != 0 {
+            // Start denser than before so the bin can climb into real tension.
+            for y in (rows - 6)..<rows {
+                for x in 0..<cols where (x + y) % 5 != 0 {
                     let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle][(x + y) % 6]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
@@ -670,6 +671,25 @@ public struct GameEngine: Sendable {
             state.level = 2
             state.pressMeter = 4
             spawn()
+        case "demo-nearmiss":
+            // Jagged skyline kissing the overflow lip — readable near-miss.
+            let skyline = [10, 11, 12, 11, 13, 12, 11, 10]
+            for x in 0..<cols {
+                let fill = min(skyline[x], rows - hid)
+                for i in 0..<fill {
+                    let y = rows - 1 - i
+                    let id: JunkID = [.can, .bottle, .plank, .pipe, .crate, .tire, .bentPipe][(x * 5 + i * 3) % 7]
+                    state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
+                }
+            }
+            for x in 1..<5 {
+                state.board[x, hid + 1] = Cell(piece: .can, material: .metal)
+            }
+            state.score = 12400
+            state.level = 5
+            state.pressMeter = 7
+            state.combo = 1
+            state.active = ActivePiece(id: .plank, rot: 0, x: 3, y: hid + 2)
         case "daily":
             // Seeded daily board — identical for all players on the same UTC day.
             // Fill the board from the bag first, then rebuild the spawn queue so

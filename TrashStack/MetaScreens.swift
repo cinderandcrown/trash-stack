@@ -411,6 +411,14 @@ struct ShopView: View {
             .padding(.bottom, 8)
         }
         .safeAreaPadding(.top, 8)
+        // ATT/UMP/GAD only when the player opens Shop — never on launch or game-over.
+        .task {
+            let skip = ProcessInfo.processInfo.arguments.contains("-trashStackSkipAds")
+                || UserDefaults.standard.bool(forKey: "trashStack.skipAds")
+            if !skip {
+                await AdsBootstrap.start()
+            }
+        }
     }
 }
 
@@ -431,9 +439,10 @@ struct QuestsView: View {
                          : "Next crate in \(crateCountdown)")
                         .foregroundStyle(.white.opacity(0.9))
                         .font(.subheadline)
-                    Text("Odds · Scrap 100% · Bonus Gems 18%")
+                    Text(CrateLoot.oddsDisplayLine)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(NeonTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
                     NeonButton(title: profile.cratesReady > 0 ? "Open Crate" : "Waiting…", style: profile.cratesReady > 0 ? .primary : .ghost) {
                         profile.refreshCrateClock()
                         if let loot = profile.openCrate() {
@@ -506,6 +515,19 @@ struct SettingsView: View {
                             Image(systemName: "checkmark.circle.fill").foregroundStyle(NeonTheme.teal)
                         }
                         .font(.subheadline)
+                    }
+                    if profile.mayPromptNotifications {
+                        NeonButton(title: "Enable reminders") {
+                            Task {
+                                _ = await NotificationService.shared.requestAfterFirstWin()
+                                profile.notifAsked = true
+                                profile.persist()
+                            }
+                        }
+                    } else if profile.sessionCount < 2 {
+                        Text("Reminder prompt unlocks after your 2nd session.")
+                            .font(.caption2)
+                            .foregroundStyle(NeonTheme.muted)
                     }
                 }
                 .padding(.horizontal, 16)

@@ -1,6 +1,6 @@
 # Trash Stack — Recycling Night Shift
 
-Binding design for Magpie / Nicholas. Trade-dress distance from Tetris is mandatory.
+Binding design for Magpie / Nicholas. Trade-dress distance from classic falling-block puzzle games is mandatory.
 The game must feel **genuinely fun** and give people a reason to **come back daily**.
 
 ## Elevator pitch
@@ -28,7 +28,7 @@ You work the **night shift** in a neon junkyard. Drop junk **items** into an 8×
 
 Max straight span is **3** (no 1×4 / I-tetromino shapes). Materials: **metal, plastic, glass, paper** only.
 
-**Forbidden:** UI text, code identifiers, or asset names that say Tetris, tetromino, “line clear”, or letter piece names **T / S / Z / I / O**.
+**Forbidden:** UI text, code identifiers, or asset names that say classic falling-block trademarks, tetromino, “line clear”, or letter piece names **T / S / Z / I / O**.
 
 ## Core loop
 

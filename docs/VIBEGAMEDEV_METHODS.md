@@ -30,7 +30,7 @@ Native Swift + SpriteKit + StoreKit 2 only. Imitate this repo's architecture.
 ## QA
 
 - After every pass, a continuous deterministic smoke video (seeded RNG, an explicit ready signal, an outcome assertion, fail on unexpected logs) plus screenshots. Green CI is not the same as fun.
-- Describe bugs by what's visible, then fix. No leftover debug strings. Never use the word 'Tetris' anywhere.
+- Describe bugs by what's visible, then fix. No leftover debug strings. Never use classic falling-block trademarks anywhere.
 
 ## V2 (Chong-U) — mobile feel and judgment
 

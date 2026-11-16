@@ -12,6 +12,9 @@ public final class CompactorScene: SKScene {
     public var onGameOver: ((GameState) -> Void)?
     public var onEvents: (([GameEvent]) -> Void)?
     public var autoplay = false
+    /// Demo-only elapsed time for scripted near-miss → game-over beats.
+    private var autoplayElapsed: TimeInterval = 0
+    private var demoPhase: Int = 0
     public var preferredFPS: Int = 60
     public private(set) var measuredFPS: Double = 60
     public var raccoonMood: RaccoonMood = .idle
@@ -91,6 +94,8 @@ public final class CompactorScene: SKScene {
     /// Continuous autoplay demo — no instant board swaps.
     public func startDemoChoreography(onGameOverBeat: @escaping () -> Void) {
         autoplay = true
+        autoplayElapsed = 0
+        demoPhase = 0
         removeAction(forKey: "demoChoreography")
         // Soft prompts only: ensure press eventually, snatch once, then natural top-out.
         run(SKAction.sequence([
@@ -358,11 +363,29 @@ public final class CompactorScene: SKScene {
         smoothActivePose(dt: dt)
 
         if autoplay {
+            autoplayElapsed += TimeInterval(dt)
+            // Scripted tension: build toward the lip, then a real game-over.
+            if demoPhase == 0, autoplayElapsed > 14 {
+                engine.applyShotScenario("demo-nearmiss")
+                hasVisualPose = false
+                demoPhase = 1
+                onToast?("SO CLOSE")
+                raccoonMood = .panic
+            } else if demoPhase == 1, autoplayElapsed > 24 {
+                engine.applyShotScenario("revive")
+                hasVisualPose = false
+                demoPhase = 2
+                onGameOver?(engine.state)
+                render(immediate: true)
+                return
+            }
             gravityAcc += Double(dt)
             if gravityAcc > 0.28 {
                 gravityAcc = 0
-                engine.autoplayStep()
-                handleEvents()
+                if !engine.state.over {
+                    engine.autoplayStep()
+                    handleEvents()
+                }
                 if engine.state.over { onGameOver?(engine.state) }
                 render(immediate: false)
             }
@@ -416,7 +439,9 @@ public final class CompactorScene: SKScene {
             case .locked:
                 hasVisualPose = false
             case .recycled(_, let cells, let score, _, let material, let coords):
-                recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo)
+                // Snapshot textures BEFORE render clears the cells (real item ghosts, not flat squares).
+                let snaps = snapshotCellLooks(coords: coords)
+                recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo, snaps: snaps)
                 subtleGlow(color: materialGlow(material))
                 screenShake(strength: CGFloat(feel.shakeRecycle) * (engine.state.combo >= 2 ? 1.35 : 1.0))
                 if engine.state.combo >= 2 {
@@ -609,7 +634,32 @@ public final class CompactorScene: SKScene {
         }
     }
 
-    private func recycleSuck(coords: [BoardCoord], material: Material = .metal, points: Int = 0, combo: Int = 1) {
+    private struct CellLook {
+        var texture: SKTexture?
+        var size: CGSize
+        var color: SKColor
+        var blend: CGFloat
+    }
+
+    private func snapshotCellLooks(coords: [BoardCoord]) -> [BoardCoord: CellLook] {
+        let hid = engine.state.board.config.hiddenRows
+        let vis = engine.state.board.config.visibleRows
+        var out: [BoardCoord: CellLook] = [:]
+        for c in coords {
+            let visY = c.y - hid
+            guard visY >= 0, visY < vis, let n = cellNodes[visY][c.x] else { continue }
+            out[c] = CellLook(texture: n.texture, size: n.size, color: n.color, blend: n.colorBlendFactor)
+        }
+        return out
+    }
+
+    private func recycleSuck(
+        coords: [BoardCoord],
+        material: Material = .metal,
+        points: Int = 0,
+        combo: Int = 1,
+        snaps: [BoardCoord: CellLook] = [:]
+    ) {
         let chute = chutePoint(for: material)
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
@@ -619,8 +669,14 @@ public final class CompactorScene: SKScene {
             guard visY >= 0, visY < vis else { continue }
             let start = positionFor(x: c.x, boardY: c.y)
             let ghost: SKSpriteNode
-            if let existing = cellNodes[visY][c.x], let t = existing.texture {
+            if let snap = snaps[c], let t = snap.texture {
+                ghost = SKSpriteNode(texture: t, size: snap.size)
+                ghost.color = snap.color
+                ghost.colorBlendFactor = snap.blend
+            } else if let existing = cellNodes[visY][c.x], let t = existing.texture {
                 ghost = SKSpriteNode(texture: t, size: existing.size)
+                ghost.color = existing.color
+                ghost.colorBlendFactor = existing.colorBlendFactor
             } else {
                 ghost = SKSpriteNode(color: fallbackColor(material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
             }
@@ -766,21 +822,34 @@ public final class CompactorScene: SKScene {
                 if let cell {
                     let name = JunkCatalog.textureName(for: cell.piece)
                     let square = JunkCatalog.def(for: cell.piece).isSquare
-                    let span: CGFloat = square ? 2 : 1
-                    if let t = tex(name) {
+                    // Only the 2×2 *anchor* cell (top-left of a complete footprint) draws at 2×2.
+                    // Partial remnants after recycle/press always fall back to a filled 1×1 cell.
+                    let isSquareAnchor = square
+                        && !covered.contains(BoardCoord(x, boardY))
+                        && x + 1 < engine.state.board.config.cols
+                        && boardY + 1 < engine.state.board.config.rows
+                        && engine.state.board[x + 1, boardY]?.piece == cell.piece
+                        && engine.state.board[x, boardY + 1]?.piece == cell.piece
+                        && engine.state.board[x + 1, boardY + 1]?.piece == cell.piece
+                    let span: CGFloat = isSquareAnchor ? 2 : 1
+                    let cellSizePx = CGSize(width: cs.width * span - cellPad, height: cs.height * span - cellPad)
+                    // Opaque material fill so occupied cells read as solid (silhouettes alone look empty).
+                    // Non-square locked cells are mostly solid color with a light texture watermark.
+                    node.color = fallbackColor(cell.material)
+                    if isSquareAnchor, let t = tex(name) {
                         node.texture = t
-                        node.color = .white
-                        node.colorBlendFactor = 0
-                        node.size = CGSize(width: cs.width * span - cellPad, height: cs.height * span - cellPad)
+                        node.colorBlendFactor = 0.18
+                    } else if let t = tex(name) {
+                        node.texture = t
+                        node.colorBlendFactor = 0.82
                     } else {
                         node.texture = nil
-                        node.color = fallbackColor(cell.material)
                         node.colorBlendFactor = 1
-                        node.size = CGSize(width: cs.width * span - cellPad, height: cs.height * span - cellPad)
                     }
+                    node.size = cellSizePx
                     node.alpha = cell.sticky ? 0.7 : 1
                     let dest: CGPoint
-                    if square {
+                    if isSquareAnchor {
                         dest = CGPoint(
                             x: positionFor(x: x, boardY: boardY).x + cs.width * 0.5,
                             y: positionFor(x: x, boardY: boardY).y - cs.height * 0.5
@@ -836,28 +905,36 @@ public final class CompactorScene: SKScene {
         activeRoot = root
         let cs = cellSize()
         let name = JunkCatalog.textureName(for: p.id)
-        // One silhouette per item, scaled to the footprint AABB (readable junk, not cell tiles).
-        let shape = p.def.rotations[p.rot % p.def.rotations.count]
-        let xs = shape.map { $0[0] }
-        let ys = shape.map { $0[1] }
-        let minX = xs.min() ?? 0
-        let maxX = xs.max() ?? 0
-        let minY = ys.min() ?? 0
-        let maxY = ys.max() ?? 0
-        let spanX = CGFloat(maxX - minX + 1)
-        let spanY = CGFloat(maxY - minY + 1)
-        let n: SKSpriteNode
-        if let t = tex(name) {
-            n = SKSpriteNode(texture: t, size: CGSize(width: cs.width * spanX - cellPad, height: cs.height * spanY - cellPad))
+        // Per-cell segments so the art matches the collision footprint in every rotation.
+        // Square items (crate/tire) stay one 2×2 sprite; everything else is one filled cell per offset.
+        if p.def.isSquare {
+            let n: SKSpriteNode
+            if let t = tex(name) {
+                n = SKSpriteNode(texture: t, size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
+                n.color = fallbackColor(p.def.material)
+                n.colorBlendFactor = 0.15
+            } else {
+                n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
+            }
+            n.position = CGPoint(x: cs.width * 0.5, y: -cs.height * 0.5)
+            root.addChild(n)
+            activeNodes.append(n)
         } else {
-            n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width * spanX - cellPad, height: cs.height * spanY - cellPad))
+            let shape = p.def.rotations[p.rot % p.def.rotations.count]
+            for off in shape {
+                let n: SKSpriteNode
+                if let t = tex(name) {
+                    n = SKSpriteNode(texture: t, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                    n.color = fallbackColor(p.def.material)
+                    n.colorBlendFactor = 0.55
+                } else {
+                    n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                }
+                n.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
+                root.addChild(n)
+                activeNodes.append(n)
+            }
         }
-        n.position = CGPoint(
-            x: (CGFloat(minX) + spanX * 0.5 - 0.5) * cs.width,
-            y: -(CGFloat(minY) + spanY * 0.5 - 0.5) * cs.height
-        )
-        root.addChild(n)
-        activeNodes.append(n)
     }
 
     private func layoutActiveNodes() {

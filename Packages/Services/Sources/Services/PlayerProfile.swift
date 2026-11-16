@@ -24,6 +24,8 @@ public final class PlayerProfile: ObservableObject {
     @Published public var streakSavers: Int = 1
     @Published public var streakSaverWeekKey: String = ""
     @Published public var firstWin: Bool = false
+    /// Cold-launch sessions completed (incremented once per process start).
+    @Published public var sessionCount: Int = 0
     @Published public var notifAsked: Bool = false
     @Published public var adsRemoved: Bool = false
     @Published public var premiumPass: Bool = false
@@ -88,6 +90,7 @@ public final class PlayerProfile: ObservableObject {
         streakSavers = defaults.object(forKey: "streakSavers") as? Int ?? 1
         streakSaverWeekKey = defaults.string(forKey: "streakSaverWeekKey") ?? ""
         firstWin = defaults.bool(forKey: "firstWin")
+        sessionCount = defaults.integer(forKey: "sessionCount")
         notifAsked = defaults.bool(forKey: "notifAsked")
         adsRemoved = defaults.bool(forKey: "adsRemoved")
         premiumPass = defaults.bool(forKey: "premiumPass")
@@ -116,6 +119,7 @@ public final class PlayerProfile: ObservableObject {
         defaults.set(streakSavers, forKey: "streakSavers")
         defaults.set(streakSaverWeekKey, forKey: "streakSaverWeekKey")
         defaults.set(firstWin, forKey: "firstWin")
+        defaults.set(sessionCount, forKey: "sessionCount")
         defaults.set(notifAsked, forKey: "notifAsked")
         defaults.set(adsRemoved, forKey: "adsRemoved")
         defaults.set(premiumPass, forKey: "premiumPass")
@@ -221,17 +225,27 @@ public final class PlayerProfile: ObservableObject {
         return max(0, nextCrateAt - Date().timeIntervalSince1970)
     }
 
+    /// Bump once per cold launch (call from app entry).
+    public func noteSessionLaunch() {
+        sessionCount += 1
+        persist()
+    }
+
+    /// True once the player has opened settings on/after their 2nd session.
+    public var mayPromptNotifications: Bool {
+        sessionCount >= 2 && !notifAsked
+    }
+
     @discardableResult
     public func openCrate() -> (scrap: Int, gems: Int)? {
         refreshCrateClock()
         guard cratesReady > 0 else { return nil }
         cratesReady -= 1
-        let s = 40 + Int.random(in: 0...40)
-        let g = Int.random(in: 0...2)
-        scrap += s
-        gems += g
+        let loot = CrateLoot.roll()
+        scrap += loot.scrap
+        gems += loot.gems
         persist()
-        return (s, g)
+        return loot
     }
 
     public func markDailyComplete(score: Int) {

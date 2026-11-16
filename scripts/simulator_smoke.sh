@@ -8,6 +8,7 @@ APP_PATH="${2:?path to TrashStack.app}"
 OUT_DIR="${3:-smoke-artifacts}"
 BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
 DISPLAY="${SIMCTL_DISPLAY:-internal}"
+SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
 
@@ -134,6 +135,55 @@ if beiges >= 5 and darks <= 1:
     print(f"Springboard/home frame (app not foreground): {path}", file=sys.stderr)
     sys.exit(3)
 print(f"Frame OK {path} (dark={darks} white={whites} beige={beiges})")
+PY
+}
+
+# Title frame must be the real title screen — reject the launch splash (LaunchLogo card).
+assert_title_not_splash() {
+  local file="$1"
+  local logo="${SMOKE_ROOT}/TrashStack/Assets.xcassets/LaunchLogo.imageset/LaunchLogo.png"
+  python3 - "$file" "$logo" <<'PY'
+import sys, pathlib
+path = pathlib.Path(sys.argv[1])
+logo_path = pathlib.Path(sys.argv[2])
+try:
+    from PIL import Image
+except Exception as e:
+    print(f"Pillow required to reject splash as title: {e}", file=sys.stderr)
+    sys.exit(2)
+im = Image.open(path).convert("RGB")
+w, h = im.size
+if not logo_path.exists():
+    print(f"LaunchLogo missing at {logo_path}", file=sys.stderr)
+    sys.exit(2)
+logo = Image.open(logo_path).convert("RGB").resize((w, h))
+# Center-weighted MSE similarity vs splash art.
+err = 0.0
+n = 0
+for y in range(h // 5, 4 * h // 5, max(1, h // 40)):
+    for x in range(w // 5, 4 * w // 5, max(1, w // 40)):
+        a = im.getpixel((x, y))
+        b = logo.getpixel((x, y))
+        err += sum((a[i] - b[i]) ** 2 for i in range(3))
+        n += 1
+mse = err / max(1, n * 3)
+# Empirically: identical frames → mse≈0; real title vs splash → large. Fail if too close.
+if mse < 1800:
+    print(f"Title frame looks like launch splash (mse={mse:.0f} < 1800): {path}", file=sys.stderr)
+    sys.exit(5)
+# Also require title-ish teal/magenta signal in the upper half (wordmark / raccoon neon).
+teal = magenta = 0
+for y in range(int(h * 0.12), int(h * 0.45), max(1, h // 50)):
+    for x in range(int(w * 0.15), int(w * 0.85), max(1, w // 40)):
+        r, g, b = im.getpixel((x, y))
+        if g > 140 and b > 140 and r < 120:
+            teal += 1
+        if r > 160 and b > 140 and g < 120:
+            magenta += 1
+if teal + magenta < 3:
+    print(f"Title frame missing neon wordmark colors (teal={teal} magenta={magenta}): {path}", file=sys.stderr)
+    sys.exit(5)
+print(f"Title OK (not splash) {path} mse={mse:.0f} teal={teal} magenta={magenta}")
 PY
 }
 
@@ -286,14 +336,16 @@ except Exception:
     print("Springboard crop fallback: copied full frame (no Pillow)")
 PY
 
-# Cold-launch timing (ads skipped): launch → first valid title frame, minimal settle.
-# In-app budget is <1.5s (ATT/UMP/GAD deferred until after first win). Smoke measures
-# simctl wall time with a generous ceiling — not a substitute for packet-gap QA.
+# Cold-launch timing (ads skipped):
+# 1) In-app: ProcessInfo.systemUptime at @main → TitleView.onAppear (UserDefaults).
+# 2) Wall-clock: bash $SECONDS around simctl launch → first real title frame (≤ 8s).
+# Do NOT relabel wall-clock as in-app paint. Do NOT raise the 8s ceiling.
 with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true
 LAUNCH_T0=$SECONDS
 with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 cat /tmp/sim-launch-cold.out >&2 || true
@@ -301,29 +353,48 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if app_running; then break; fi
   sleep 0.15
 done
-# Poll for a valid title frame quickly (in-app paint is <1.5s; simctl needs a few tries).
 TITLE_OK=0
-for try in 1 2 3 4 5 6; do
-  sleep 0.35
+for try in 1 2 3 4 5 6 7 8; do
+  sleep 0.25
   shot "$OUT_DIR/01-title.png" || true
-  if assert_app_frame "$OUT_DIR/01-title.png"; then
+  if assert_app_frame "$OUT_DIR/01-title.png" && assert_title_not_splash "$OUT_DIR/01-title.png"; then
     TITLE_OK=1
     break
   fi
 done
 LAUNCH_DT=$((SECONDS - LAUNCH_T0))
-echo "cold_launch_to_title_s=$LAUNCH_DT" | tee "$OUT_DIR/launch-timing.txt"
-printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-time-seconds.txt"
-echo "NOTE: in-app first interactive frame budget <1.5s (ATT/GAD deferred after first win)." | tee -a "$OUT_DIR/launch-timing.txt"
+# Read honest in-app metric written by LaunchTiming.markFirstTitleFrame().
+INAPP_RAW="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSec 2>/dev/null || true)"
+INAPP_STR="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSecString 2>/dev/null || true)"
+{
+  echo "wall_clock_launch_to_title_s=$LAUNCH_DT"
+  echo "in_app_process_start_to_title_s=${INAPP_RAW:-missing}"
+  echo "in_app_process_start_to_title_string=${INAPP_STR:-missing}"
+  echo "gates: in_app<=1.5s AND wall_clock<=8s; 01-title must reject LaunchLogo splash"
+} | tee "$OUT_DIR/launch-timing.txt"
+printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
+printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-wall-clock-seconds.txt"
 if (( TITLE_OK == 0 )); then
-  echo "Title frame invalid after cold launch polls — falling back to launch_shot" >&2
-  launch_shot "" "$OUT_DIR/01-title.png" 2
-fi
-# Simctl + boot residual ceiling (not the 1.5s in-app budget). Fail only if pathological.
-if (( LAUNCH_DT > 45 )); then
-  echo "Cold launch wall-clock pathological: ${LAUNCH_DT}s (simctl ceiling 45s; in-app target <1.5s)" >&2
+  echo "Title frame invalid or still splash after cold launch polls" >&2
   exit 1
 fi
+if (( LAUNCH_DT > 8 )); then
+  echo "Cold launch wall-clock ${LAUNCH_DT}s exceeds honest 8s ceiling" >&2
+  exit 1
+fi
+python3 - "$INAPP_RAW" <<'PY'
+import sys
+raw = (sys.argv[1] or "").strip()
+if not raw:
+    raise SystemExit("Missing in-app launch metric trashStack.launchToTitleSec")
+try:
+    dt = float(raw)
+except ValueError as e:
+    raise SystemExit(f"Bad in-app launch metric {raw!r}: {e}")
+if dt > 1.5:
+    raise SystemExit(f"In-app launch {dt:.3f}s exceeds 1.5s budget")
+print(f"In-app launch OK {dt:.3f}s")
+PY
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 5
@@ -415,16 +486,10 @@ wait "$REC_PID" 2>/dev/null || true
 sleep 2
 smoke_budget
 
-# simctl recordVideo has no app audio — mux music+SFX, re-encode under ~150MB.
-AUDIO_DIR="$(cd "$(dirname "$0")/.." && pwd)/TrashStack/Resources/Audio"
+# simctl recordVideo cannot capture AVAudioEngine. Do NOT paste SFX at fixed adelay offsets
+# (that lied about sync). Mux only the same game_loop bed the app plays, and label honestly.
+AUDIO_DIR="$SMOKE_ROOT/TrashStack/Resources/Audio"
 MUSIC="$AUDIO_DIR/game_loop.wav"
-CRUSH="$AUDIO_DIR/crush.wav"
-RECYCLE="$AUDIO_DIR/recycle.wav"
-COMBO="$AUDIO_DIR/combo.wav"
-LOCK="$AUDIO_DIR/lock.wav"
-LEVELUP="$AUDIO_DIR/levelup.wav"
-MAGNET="$AUDIO_DIR/magnet.wav"
-# Resolve ffmpeg (PATH or Homebrew).
 FFMPEG_BIN="$(command -v ffmpeg || true)"
 if [[ -z "$FFMPEG_BIN" ]]; then
   for cand in /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
@@ -450,63 +515,45 @@ if [[ -z "$FFMPEG_BIN" ]]; then
   echo "ffmpeg not found (install via brew install ffmpeg)" >&2
   exit 1
 fi
-echo "Muxing with $FFMPEG_BIN ($(wc -c < "$VIDEO_RAW") byte silent capture)" >&2
-if [[ -f "$VIDEO_RAW" && -f "$MUSIC" && -n "$FFMPEG_BIN" ]]; then
-  "$FFMPEG_BIN" -y -i "$VIDEO_RAW" \
-    -i "$MUSIC" \
-    -i "$CRUSH" \
-    -i "$RECYCLE" \
-    -i "$COMBO" \
-    -i "$LOCK" \
-    -i "$LEVELUP" \
-    -i "$MAGNET" \
-    -filter_complex "\
-[1:a]volume=0.34,aloop=loop=-1:size=2e+09,atrim=0:50,apad=whole_dur=50[music];\
-[5:a]adelay=2500|2500,volume=0.55[lock1];\
-[5:a]adelay=7000|7000,volume=0.5[lock2];\
-[3:a]adelay=12000|12000,volume=0.85[rec1];\
-[4:a]adelay=12400|12400,volume=0.75[combo1];\
-[2:a]adelay=18000|18000,volume=0.95[press];\
-[5:a]adelay=22000|22000,volume=0.5[lock3];\
-[3:a]adelay=25000|25000,volume=0.8[rec2];\
-[7:a]adelay=28000|28000,volume=0.9[snatch];\
-[6:a]adelay=30000|30000,volume=0.75[order];\
-[5:a]adelay=36000|36000,volume=0.45[lock4];\
-[6:a]adelay=46000|46000,volume=0.85[revive];\
-[music][lock1][lock2][rec1][combo1][press][lock3][rec2][snatch][order][lock4][revive]amix=inputs=12:duration=first:dropout_transition=0[aout]" \
-    -map 0:v -map "[aout]" -c:v libx264 -pix_fmt yuv420p -crf 28 -preset veryfast -c:a aac -b:a 128k -movflags +faststart -shortest "$VIDEO_OUT" \
-    >/tmp/ffmpeg-mux.log 2>&1 || {
-      echo "ffmpeg mux failed; keeping silent video as gameplay-demo.mp4" >&2
-      cat /tmp/ffmpeg-mux.log >&2 || true
-      mv -f "$VIDEO_RAW" "$VIDEO_OUT"
-    }
-  rm -f "$VIDEO_RAW"
-  if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
-    echo "Gameplay video missing audio track after mux" >&2
+cat > "$OUT_DIR/demo-audio.txt" <<EOF
+simctl recordVideo does not capture in-app AVAudioEngine output.
+This mux uses ONLY TrashStack/Resources/Audio/game_loop.wav (same asset the app plays)
+looped under the silent capture — no synthetic SFX adelay offsets.
+In-app SFX/music fire during the recorded play but are not on the simctl track.
+Demo script includes a near-miss beat (~14s) and a real game-over (~24s).
+EOF
+echo "Muxing music bed only with $FFMPEG_BIN ($(wc -c < "$VIDEO_RAW") byte silent capture)" >&2
+"$FFMPEG_BIN" -y -i "$VIDEO_RAW" -i "$MUSIC" \
+  -filter_complex "[1:a]volume=0.34,aloop=loop=-1:size=2e+09,atrim=0:50,apad=whole_dur=50[aout]" \
+  -map 0:v -map "[aout]" -c:v libx264 -pix_fmt yuv420p -crf 28 -preset veryfast -c:a aac -b:a 128k \
+  -movflags +faststart -shortest "$VIDEO_OUT" \
+  >/tmp/ffmpeg-mux.log 2>&1 || {
+    echo "ffmpeg mux failed; keeping silent video as gameplay-demo.mp4" >&2
     cat /tmp/ffmpeg-mux.log >&2 || true
+    mv -f "$VIDEO_RAW" "$VIDEO_OUT"
+  }
+rm -f "$VIDEO_RAW"
+if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
+  echo "Gameplay video missing audio track after mux" >&2
+  cat /tmp/ffmpeg-mux.log >&2 || true
+  exit 1
+fi
+bytes=$(wc -c < "$VIDEO_OUT")
+if (( bytes > 150000000 )); then
+  echo "Gameplay video too large ($bytes bytes); recompressing" >&2
+  "$FFMPEG_BIN" -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1
+  mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
+fi
+echo "Muxed game_loop bed onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
+# Near-miss / GO window for evidence (~t=20–28s).
+"$FFMPEG_BIN" -y -ss 20 -t 8 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
+  "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1 || {
+    echo "tension clip failed" >&2
+    cat /tmp/ffmpeg-clip.log >&2 || true
     exit 1
-  fi
-  bytes=$(wc -c < "$VIDEO_OUT")
-  if (( bytes > 150000000 )); then
-    echo "Gameplay video too large ($bytes bytes); recompressing" >&2
-    "$FFMPEG_BIN" -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1
-    mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
-  fi
-  echo "Muxed music+SFX onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
-  # Recycle-chain clip with audio for evidence (~t=11–15s).
-  "$FFMPEG_BIN" -y -ss 11 -t 4 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
-    "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1 || {
-      echo "recycle-chain clip failed" >&2
-      cat /tmp/ffmpeg-clip.log >&2 || true
-      exit 1
-    }
-  if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
-    echo "recycle-chain-clip.mp4 missing audio" >&2
-    exit 1
-  fi
-else
-  echo "ffmpeg/audio missing — demo MUST have an audio track" >&2
-  echo "VIDEO_RAW=$([[ -f $VIDEO_RAW ]] && echo ok || echo missing) MUSIC=$([[ -f $MUSIC ]] && echo ok || echo missing) FFMPEG=${FFMPEG_BIN:-none}" >&2
+  }
+if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
+  echo "recycle-chain-clip.mp4 missing audio" >&2
   exit 1
 fi
 

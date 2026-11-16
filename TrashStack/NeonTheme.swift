@@ -156,29 +156,42 @@ struct CurrencyChip: View {
 }
 
 struct AlleyBackdrop: View {
+    var includeGradient: Bool = true
+    @State private var showRain = false
+
     var body: some View {
         ZStack {
-            NeonTheme.alleyGradient.ignoresSafeArea()
+            if includeGradient {
+                NeonTheme.alleyGradient.ignoresSafeArea()
+            }
             BundleImage(name: "AlleyBackground")
                 .scaledToFill()
                 .ignoresSafeArea()
                 .opacity(0.9)
-            // Rain streaks (lightweight SwiftUI, not SpriteKit glow nodes)
-            TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
-                Canvas { ctx, size in
-                    let t = timeline.date.timeIntervalSinceReferenceDate
-                    for i in 0..<28 {
-                        let x = (CGFloat(i) / 28) * size.width + CGFloat(sin(t + Double(i))) * 8
-                        let y = CGFloat((t * 180 + Double(i) * 47).truncatingRemainder(dividingBy: Double(size.height + 40))) - 20
-                        var path = Path()
-                        path.move(to: CGPoint(x: x, y: y))
-                        path.addLine(to: CGPoint(x: x - 4, y: y + 16))
-                        ctx.stroke(path, with: .color(.white.opacity(0.18)), lineWidth: 1)
+            if showRain {
+                // Rain deferred so first title paint is not competing with Canvas.
+                TimelineView(.animation(minimumInterval: 1 / 30)) { timeline in
+                    Canvas { ctx, size in
+                        let t = timeline.date.timeIntervalSinceReferenceDate
+                        for i in 0..<28 {
+                            let x = (CGFloat(i) / 28) * size.width + CGFloat(sin(t + Double(i))) * 8
+                            let y = CGFloat((t * 180 + Double(i) * 47).truncatingRemainder(dividingBy: Double(size.height + 40))) - 20
+                            var path = Path()
+                            path.move(to: CGPoint(x: x, y: y))
+                            path.addLine(to: CGPoint(x: x - 4, y: y + 16))
+                            ctx.stroke(path, with: .color(.white.opacity(0.18)), lineWidth: 1)
+                        }
                     }
                 }
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
             }
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+        }
+        .onAppear {
+            Task { @MainActor in
+                await Task.yield()
+                showRain = true
+            }
         }
     }
 }
