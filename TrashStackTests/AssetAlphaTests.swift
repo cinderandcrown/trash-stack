@@ -2,6 +2,7 @@
 
 import XCTest
 import UIKit
+import GameCore
 @testable import GameRender
 
 /// Fails if raccoon (or other keyed) art still has opaque checkerboard corners.
