@@ -94,9 +94,9 @@ One **seeded** puzzle per calendar day (UTC date seed), **same for everyone**. L
 - **PRESS** · **SNATCH** · hold/stash — large, thumb-safe, never under notch / home indicator
 - Placement-insensitive: grab from any point on the playfield
 
-## FTUE (~30 seconds)
+## FTUE (~30–45 seconds)
 
-Move → rotate → clusters (4+ material) → PRESS. Then the juicy vertical slice (Shift / Endless / Daily). No feature sprawl.
+Interactive first shift (not a text wall): almost-cluster gift → first recycle/chain → PRESS slam. Skip allowed. Then Endless + Daily. **Shift Mode hidden until handcrafted levels are real.**
 
 ## Docs
 

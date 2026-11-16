@@ -240,6 +240,36 @@ public final class CompactorScene: SKScene {
             ])))
         }
 
+        // Visible per-material recycle chutes (right of bin).
+        let chuteMats: [(Material, SKColor)] = [
+            (.metal, SKColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 1)),
+            (.plastic, SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)),
+            (.glass, SKColor(red: 0.15, green: 0.9, blue: 0.95, alpha: 1)),
+            (.paper, SKColor(red: 0.9, green: 0.7, blue: 0.35, alpha: 1)),
+        ]
+        for (i, pair) in chuteMats.enumerated() {
+            let mouth = SKShapeNode(rectOf: CGSize(width: cs.width * 0.7, height: cs.height * 1.1), cornerRadius: 6)
+            mouth.fillColor = pair.1.withAlphaComponent(0.35)
+            mouth.strokeColor = pair.1
+            mouth.lineWidth = 2
+            mouth.position = chutePoint(for: pair.0)
+            // chutePoint needs board; temporarily place by index until engine ready — recompute after grid.
+            mouth.position = CGPoint(
+                x: origin.x + gridW + cs.width * 0.55,
+                y: origin.y + cs.height * (3.5 + CGFloat(i) * 2.2)
+            )
+            mouth.zPosition = 5
+            mouth.name = "chute-\(pair.0.rawValue)"
+            addChild(mouth)
+            let tag = SKLabelNode(fontNamed: "AvenirNext-Bold")
+            tag.text = String(pair.0.rawValue.prefix(1)).uppercased()
+            tag.fontSize = 9
+            tag.fontColor = pair.1
+            tag.verticalAlignmentMode = .center
+            tag.position = .zero
+            mouth.addChild(tag)
+        }
+
         // Mechanical press plate (rests above the bin until slam).
         let plateW = cs.width * CGFloat(cols) + 18
         let plate = SKSpriteNode(color: SKColor(red: 0.72, green: 0.78, blue: 0.88, alpha: 1), size: CGSize(width: plateW, height: max(14, cs.height * 0.55)))
@@ -385,15 +415,17 @@ public final class CompactorScene: SKScene {
             switch e {
             case .locked:
                 hasVisualPose = false
-            case .recycled(_, let cells, _, _, _, let coords):
-                recycleSuck(coords: coords)
-                subtleGlow(color: SKColor(red: 0.2, green: 1, blue: 0.75, alpha: 0.35))
+            case .recycled(_, let cells, let score, _, let material, let coords):
+                recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo)
+                subtleGlow(color: materialGlow(material))
+                screenShake(strength: CGFloat(feel.shakeRecycle) * (engine.state.combo >= 2 ? 1.35 : 1.0))
                 if engine.state.combo >= 2 {
-                    onToast?("Chain ×\(engine.state.combo)")
+                    onToast?("CHAIN ×\(engine.state.combo)")
                     raccoonMood = .cheer
                 } else {
-                    onToast?("Recycled")
+                    onToast?("RECYCLE")
                 }
+                spawnScorePips(points: score, near: coords.first.map { positionFor(x: $0.x, boardY: $0.y) })
                 _ = cells
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
@@ -445,22 +477,101 @@ public final class CompactorScene: SKScene {
                 coords.append(BoardCoord(x, y + hid))
                 if let node = cellNodes[y][x] {
                     let glow = SKSpriteNode(
-                        color: SKColor(red: 0.1, green: 1, blue: 0.85, alpha: 0.35),
-                        size: CGSize(width: node.size.width + 6, height: node.size.height + 6)
+                        color: SKColor(red: 0.1, green: 1, blue: 0.85, alpha: 0.55),
+                        size: CGSize(width: node.size.width + 8, height: node.size.height + 8)
                     )
+                    glow.name = "recycleHoldGlow"
                     glow.position = node.position
                     glow.zPosition = 7
                     addChild(glow)
+                    // Hold the glow long enough for smoke capture (do not vanish at suck end).
                     glow.run(SKAction.repeatForever(SKAction.sequence([
-                        SKAction.fadeAlpha(to: 0.15, duration: 0.2),
-                        SKAction.fadeAlpha(to: 0.5, duration: 0.2),
+                        SKAction.fadeAlpha(to: 0.25, duration: 0.25),
+                        SKAction.fadeAlpha(to: 0.7, duration: 0.25),
                     ])))
                 }
             }
         }
-        recycleSuck(coords: coords)
-        subtleGlow(color: SKColor(red: 0.2, green: 1, blue: 0.7, alpha: 0.4))
-        onToast?("Recycle chain")
+        recycleSuck(coords: coords, material: .metal, points: 800, combo: 3)
+        subtleGlow(color: SKColor(red: 0.2, green: 1, blue: 0.7, alpha: 0.55))
+        screenShake(strength: CGFloat(feel.shakeRecycle) * 1.4)
+        onToast?("CHAIN ×3")
+        // Keep a mid-bin banner flash for smoke (~1.2s).
+        let banner = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        banner.text = "RECYCLE"
+        banner.fontSize = 36
+        banner.fontColor = SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 1)
+        banner.position = CGPoint(x: size.width * 0.5, y: size.height * 0.58)
+        banner.zPosition = 80
+        banner.setScale(0.6)
+        addChild(banner)
+        banner.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.scale(to: 1.15, duration: 0.18),
+                SKAction.fadeAlpha(to: 1, duration: 0.1),
+            ]),
+            SKAction.wait(forDuration: 0.9),
+            SKAction.fadeOut(withDuration: 0.25),
+            SKAction.removeFromParent(),
+        ]))
+        let chain = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        chain.text = "CHAIN ×3"
+        chain.fontSize = 28
+        chain.fontColor = SKColor(red: 1, green: 0.3, blue: 0.85, alpha: 1)
+        chain.position = CGPoint(x: size.width * 0.5, y: size.height * 0.52)
+        chain.zPosition = 81
+        chain.alpha = 0
+        addChild(chain)
+        chain.run(SKAction.sequence([
+            SKAction.wait(forDuration: 0.15),
+            SKAction.fadeIn(withDuration: 0.12),
+            SKAction.wait(forDuration: 1.0),
+            SKAction.fadeOut(withDuration: 0.25),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func materialGlow(_ material: Material) -> SKColor {
+        switch material {
+        case .metal: return SKColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 0.45)
+        case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 0.45)
+        case .glass: return SKColor(red: 0.2, green: 0.95, blue: 1, alpha: 0.45)
+        case .paper: return SKColor(red: 0.9, green: 0.7, blue: 0.35, alpha: 0.45)
+        }
+    }
+
+    private func chutePoint(for material: Material) -> CGPoint {
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let gridW = cs.width * CGFloat(engine.state.board.config.cols)
+        let idx: CGFloat
+        switch material {
+        case .metal: idx = 0
+        case .plastic: idx = 1
+        case .glass: idx = 2
+        case .paper: idx = 3
+        }
+        let x = origin.x + gridW + cs.width * 0.55
+        let y = origin.y + cs.height * (3.5 + idx * 2.2)
+        return CGPoint(x: x, y: y)
+    }
+
+    private func spawnScorePips(points: Int, near point: CGPoint?) {
+        let origin = point ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45)
+        let label = SKLabelNode(fontNamed: "AvenirNext-Bold")
+        label.text = "+\(points)"
+        label.fontSize = 22
+        label.fontColor = .white
+        label.position = origin
+        label.zPosition = 82
+        addChild(label)
+        label.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.moveBy(x: 0, y: 48, duration: 0.55),
+                SKAction.fadeOut(withDuration: 0.55),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
     }
 
     private func screenShake(strength: CGFloat) {
@@ -498,8 +609,8 @@ public final class CompactorScene: SKScene {
         }
     }
 
-    private func recycleSuck(coords: [BoardCoord]) {
-        let chute = CGPoint(x: size.width * 0.92, y: size.height * 0.55)
+    private func recycleSuck(coords: [BoardCoord], material: Material = .metal, points: Int = 0, combo: Int = 1) {
+        let chute = chutePoint(for: material)
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
         let cs = cellSize()
@@ -511,7 +622,7 @@ public final class CompactorScene: SKScene {
             if let existing = cellNodes[visY][c.x], let t = existing.texture {
                 ghost = SKSpriteNode(texture: t, size: existing.size)
             } else {
-                ghost = SKSpriteNode(color: SKColor(red: 0.2, green: 1, blue: 0.8, alpha: 0.95), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                ghost = SKSpriteNode(color: fallbackColor(material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
             }
             ghost.position = start
             ghost.zPosition = 57
@@ -519,20 +630,21 @@ public final class CompactorScene: SKScene {
             let dur = feel.recycleSuckSec
             let suck = SKAction.group([
                 SKAction.move(to: chute, duration: dur),
-                SKAction.scale(to: 0.15, duration: dur),
+                SKAction.scale(to: 0.12, duration: dur),
                 SKAction.fadeOut(withDuration: dur),
             ])
             suck.timingMode = .easeIn
             ghost.run(SKAction.sequence([suck, SKAction.removeFromParent()]))
         }
-        spawnParticle(named: "SparkTeal", at: chute, count: min(14, 4 + coords.count))
-        if engine.state.combo >= 3 {
-            subtleGlow(color: SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 0.25))
-            screenShake(strength: CGFloat(feel.shakeRecycle))
-            hitStop(seconds: feel.hitStopComboSec)
-        } else {
-            hitStop(seconds: feel.hitStopShortSec)
+        let particleCount = combo >= 3 ? min(60, 30 + coords.count * 3) : min(28, 10 + coords.count * 2)
+        spawnParticle(named: "SparkTeal", at: chute, count: particleCount)
+        if combo >= 2 {
+            spawnParticle(named: "SparkMagenta", at: chute, count: particleCount / 2)
         }
+        if points > 0 {
+            spawnScorePips(points: points, near: chute)
+        }
+        hitStop(seconds: combo >= 2 ? feel.hitStopComboSec : feel.hitStopShortSec)
     }
 
     private func hitStop(seconds: Double) {
@@ -724,42 +836,34 @@ public final class CompactorScene: SKScene {
         activeRoot = root
         let cs = cellSize()
         let name = JunkCatalog.textureName(for: p.id)
-        if p.def.isSquare {
-            let n: SKSpriteNode
-            if let t = tex(name) {
-                n = SKSpriteNode(texture: t, size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
-            } else {
-                n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
-            }
-            n.position = .zero
-            root.addChild(n)
-            activeNodes.append(n)
+        // One silhouette per item, scaled to the footprint AABB (readable junk, not cell tiles).
+        let shape = p.def.rotations[p.rot % p.def.rotations.count]
+        let xs = shape.map { $0[0] }
+        let ys = shape.map { $0[1] }
+        let minX = xs.min() ?? 0
+        let maxX = xs.max() ?? 0
+        let minY = ys.min() ?? 0
+        let maxY = ys.max() ?? 0
+        let spanX = CGFloat(maxX - minX + 1)
+        let spanY = CGFloat(maxY - minY + 1)
+        let n: SKSpriteNode
+        if let t = tex(name) {
+            n = SKSpriteNode(texture: t, size: CGSize(width: cs.width * spanX - cellPad, height: cs.height * spanY - cellPad))
         } else {
-            let shape = p.def.rotations[p.rot % p.def.rotations.count]
-            for off in shape {
-                let n: SKSpriteNode
-                if let t = tex(name) {
-                    n = SKSpriteNode(texture: t, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
-                } else {
-                    n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
-                }
-                n.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
-                root.addChild(n)
-                activeNodes.append(n)
-            }
+            n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width * spanX - cellPad, height: cs.height * spanY - cellPad))
         }
+        n.position = CGPoint(
+            x: (CGFloat(minX) + spanX * 0.5 - 0.5) * cs.width,
+            y: -(CGFloat(minY) + spanY * 0.5 - 0.5) * cs.height
+        )
+        root.addChild(n)
+        activeNodes.append(n)
     }
 
     private func layoutActiveNodes() {
         guard let p = engine.state.active, let root = activeRoot else { return }
-        let cs = cellSize()
-        // Pivot at logic (visualX, visualY); offsets already relative to piece local origin.
         let base = positionForBoard(x: visualX, y: visualY)
-        if p.def.isSquare {
-            root.position = CGPoint(x: base.x + cs.width * 0.5, y: base.y - cs.height * 0.5)
-        } else {
-            root.position = base
-        }
+        root.position = base
     }
 
     private func positionForBoard(x: CGFloat, y: CGFloat) -> CGPoint {
@@ -776,9 +880,9 @@ public final class CompactorScene: SKScene {
     private func fallbackColor(_ mat: Material) -> SKColor {
         switch mat {
         case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.72, alpha: 1)
-        case .plastic: return SKColor(red: 0, green: 0.9, blue: 0.95, alpha: 1)
+        case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)
         case .paper: return SKColor(red: 0.85, green: 0.7, blue: 0.35, alpha: 1)
-        case .glass: return SKColor(red: 0.45, green: 0.85, blue: 1, alpha: 0.9)
+        case .glass: return SKColor(red: 0.2, green: 0.9, blue: 0.95, alpha: 0.9)
         }
     }
 

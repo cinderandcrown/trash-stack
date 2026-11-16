@@ -106,11 +106,13 @@ struct RootView: View {
             playMode = .daily
             screen = .game
         case "streak":
+            // Honest streak numbers (no forced 48/1). If already claimed, show real totals.
             let r = profile.registerDailyActivity()
-            streakSnapshot = (max(1, r.streak), max(r.scrap, 48), max(r.gems, 1))
-            if !r.isNew {
-                // Force a visible reward for evidence even if already claimed today.
-                streakSnapshot = (max(profile.dailyStreak, 3), 48, 1)
+            if r.isNew {
+                streakSnapshot = (r.streak, r.scrap, r.gems)
+            } else {
+                let day = max(profile.dailyStreak, 1)
+                streakSnapshot = (day, StreakRewards.scrap(forDay: day), StreakRewards.gems(forDay: day))
             }
             screen = .streak
         case "share", "daily-share":

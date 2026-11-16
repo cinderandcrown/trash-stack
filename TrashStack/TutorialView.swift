@@ -1,106 +1,115 @@
 // Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 
 import SwiftUI
+import SpriteKit
+import GameRender
+import GameCore
 import Services
 
-/// ~30s FTUE: move → rotate → clusters → press. Juicy vertical slice only.
+/// Interactive first shift (~30–45s): guaranteed almost-cluster → first chain → press.
+/// Text cards are a tiny bark overlay, not the lesson.
 struct TutorialView: View {
     @Binding var screen: AppScreen
     @EnvironmentObject var profile: PlayerProfile
+    @State private var scene = CompactorScene(size: CGSize(width: 390, height: 620))
+    @State private var bark = "Drag the can onto the metal pile"
     @State private var step = 0
-
-    private let steps: [(title: String, body: String, cue: String, cta: String)] = [
-        (
-            "Drag to move",
-            "Drag anywhere on the dumpster to slide the falling junk left or right. Placement doesn’t matter — grab from anywhere.",
-            "MOVE",
-            "Got it"
-        ),
-        (
-            "Tap to rotate",
-            "Tap the board once to rotate bent pipes and long junk. Square crates and tires don’t need a spin.",
-            "ROTATE",
-            "Next"
-        ),
-        (
-            "Make a cluster",
-            "Connect 4+ cells of the same material — metal, plastic, glass, or paper. They suck into the chute. Chains feel great.",
-            "CLUSTER",
-            "Next"
-        ),
-        (
-            "Slam the PRESS",
-            "Placing junk fills the PRESS meter. When it’s ready, tap PRESS to crush the bottom two rows into scrap.",
-            "PRESS",
-            "Start shift"
-        ),
-    ]
+    @State private var recycled = false
+    @State private var pressed = false
 
     var body: some View {
         ZStack {
-            AlleyBackdrop()
-            VStack(spacing: 16) {
-                Text("NIGHT SHIFT INTRO")
-                    .font(.system(.title2, design: .rounded).weight(.black))
+            NeonTheme.playChrome.ignoresSafeArea()
+            VStack(spacing: 8) {
+                Text("FIRST SHIFT")
+                    .font(.system(.title3, design: .rounded).weight(.black))
                     .foregroundStyle(NeonTheme.teal)
-                    .padding(.top, 8)
+                    .padding(.top, 4)
+                Text(bark)
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+                    .animation(.easeOut(duration: 0.2), value: bark)
 
-                Text("About 30 seconds")
+                SpriteView(scene: scene)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .padding(.horizontal, 10)
+                    .layoutPriority(1)
+
+                HStack(spacing: 12) {
+                    Button {
+                        scene.slamPress()
+                        AudioService.shared.playSFX("crush")
+                    } label: {
+                        Text(scene.engine.state.pressMeter >= scene.engine.state.pressMeterMax ? "SLAM PRESS" : "PRESS…")
+                            .font(.caption.weight(.black))
+                            .foregroundStyle(.black)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 12)
+                            .background(scene.engine.state.pressMeter >= scene.engine.state.pressMeterMax ? NeonTheme.magenta : NeonTheme.panel)
+                            .clipShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(scene.engine.state.pressMeter < scene.engine.state.pressMeterMax)
+
+                    if pressed || (recycled && step >= 2) {
+                        NeonButton(title: "Onto the yard") {
+                            finish(toGame: true)
+                        }
+                    }
+                }
+                .padding(.horizontal, 16)
+
+                Button("Skip") { finish(toGame: false) }
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(NeonTheme.muted)
-
-                BundleImage(name: step >= 2 ? "RaccoonCheer" : "RaccoonIdle")
-                    .scaledToFit()
-                    .frame(height: 100)
-
-                Text(steps[step].cue)
-                    .font(.system(.caption, design: .rounded).weight(.black))
-                    .foregroundStyle(.black)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(NeonTheme.teal)
-                    .clipShape(Capsule())
-
-                NeonPanel {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(steps[step].title)
-                            .font(.title3.weight(.black))
-                            .foregroundStyle(.white)
-                        Text(steps[step].body)
-                            .foregroundStyle(Color.white.opacity(0.82))
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text("Step \(step + 1) of \(steps.count)")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(NeonTheme.magenta)
-                    }
-                }
-                .padding(.horizontal, 16)
-
-                NeonButton(title: steps[step].cta) {
-                    if step < steps.count - 1 {
-                        step += 1
-                        AudioService.shared.playSFX("ui")
-                    } else {
-                        profile.tutorialDone = true
-                        profile.persist()
-                        AudioService.shared.playSFX("levelup")
-                        screen = .game
-                    }
-                }
-                .padding(.horizontal, 16)
-
-                Button("Skip") {
-                    profile.tutorialDone = true
-                    profile.persist()
-                    screen = .title
-                }
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(NeonTheme.muted)
-
-                Spacer(minLength: 0)
+                    .padding(.bottom, 8)
             }
-            .safeAreaPadding(.top, 12)
-            .safeAreaPadding(.bottom, 12)
+            .safeAreaPadding(.top, 8)
+            .safeAreaPadding(.bottom, 8)
         }
+        .onAppear(perform: bootstrap)
+    }
+
+    private func bootstrap() {
+        scene.feel = ConfigLoader.feelOrFallback()
+        scene.onEvents = { events in
+            for e in events {
+                switch e {
+                case .recycled:
+                    if !recycled {
+                        recycled = true
+                        step = 2
+                        bark = "Nice! Sucked into the chute — now slam PRESS"
+                        AudioService.shared.playSFX("recycle", pitch: 1.15)
+                        scene.engine.fillPressMeter()
+                    }
+                case .pressed:
+                    pressed = true
+                    bark = "That's the night shift. You're ready."
+                    AudioService.shared.playSFX("crush")
+                default: break
+                }
+            }
+        }
+        scene.onToast = { text in
+            if text.contains("CHAIN") || text.contains("RECYCLE") {
+                bark = text
+            }
+        }
+        // applyShot rebuilds + presents juice; leave press nearly ready.
+        scene.applyShot("ftue")
+        scene.engine.state.pressMeter = max(0, scene.engine.state.pressMeterMax - 2)
+        scene.render(immediate: true)
+        bark = "Drag the falling can into the metal — make 4+ to recycle"
+        AudioService.shared.playSFX("ui")
+    }
+
+    private func finish(toGame: Bool) {
+        profile.tutorialDone = true
+        profile.persist()
+        AudioService.shared.playSFX("levelup")
+        screen = toGame ? .game : .title
     }
 }

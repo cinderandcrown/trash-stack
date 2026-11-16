@@ -336,7 +336,7 @@ struct ShopView: View {
         ("Street Stash", "$0.99", "40 Neon Gems", "GemPackS"),
         ("Alley Cache", "$4.99", "210 Neon Gems", "GemPackM"),
         ("Dumpster Vault", "$9.99", "450 Neon Gems", "GemPackL"),
-        ("Night Shift Crate", "$19.99", "1,200 Neon Gems", "GemPackXL"),
+        ("Neon Haul", "$19.99", "1,200 Neon Gems · not a loot crate", "GemPackXL"),
         ("Neon Legend", "$49.99", "2,500 Neon Gems", "GemPackXXL"),
     ]
 
@@ -382,14 +382,17 @@ struct ShopView: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(pack.title).font(.headline).foregroundStyle(.white)
                                     Text(pack.blurb).font(.caption).foregroundStyle(Color.white.opacity(0.7))
+                                    Text("Purchases unlock when ASC product IDs land")
+                                        .font(.caption2)
+                                        .foregroundStyle(NeonTheme.muted)
                                 }
                                 Spacer()
                                 Text(pack.price)
                                     .font(.subheadline.weight(.black))
-                                    .foregroundStyle(.black)
+                                    .foregroundStyle(.white.opacity(0.55))
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)
-                                    .background(NeonTheme.magenta)
+                                    .background(NeonTheme.panel)
                                     .clipShape(Capsule())
                             }
                             .padding(14)
@@ -399,6 +402,7 @@ struct ShopView: View {
                                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                                     .stroke(NeonTheme.magenta.opacity(0.4), lineWidth: 1)
                             )
+                            .accessibilityLabel("\(pack.title), \(pack.price), coming soon")
                         }
                     }
                     .padding(.horizontal, 16)
@@ -413,38 +417,41 @@ struct ShopView: View {
 struct QuestsView: View {
     @Binding var screen: AppScreen
     @EnvironmentObject private var profile: PlayerProfile
+    @State private var lastLoot: (scrap: Int, gems: Int)? = nil
+
     var body: some View {
         ZStack {
             AlleyBackdrop()
             VStack(spacing: 12) {
-                MetaChromeHeader(title: "QUESTS") { screen = .title }
-                NeonPanel(title: "Tonight's board") {
-                    questRow("Recycle 20 metal cells", "⚙ 120")
-                    questRow("Slam the press twice", "◆ 3")
-                    questRow("Complete a 3× recycle chain", "⚙ 80")
-                    questRow("Fill an order ticket", "◆ 5")
-                }
-                .padding(.horizontal, 16)
-                NeonPanel(title: "This week") {
-                    questRow("Win 5 Shift levels", "⚙ 400")
-                    questRow("Score 8,000 in Endless", "◆ 10")
-                    questRow("Clear Daily Dumpster 3×", "⚙ 250")
-                }
-                .padding(.horizontal, 16)
-                NeonPanel(title: "Free crate") {
+                MetaChromeHeader(title: "FREE CRATE") { screen = .title }
+                // Quests facade hidden for v1 — crate ceremony with odds only.
+                NeonPanel(title: "Free crate (every 4h · cap 2)") {
                     Text(profile.cratesReady > 0
                          ? "Ready · \(profile.cratesReady)/2 waiting"
                          : "Next crate in \(crateCountdown)")
                         .foregroundStyle(.white.opacity(0.9))
                         .font(.subheadline)
+                    Text("Odds · Scrap 100% · Bonus Gems 18%")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(NeonTheme.muted)
                     NeonButton(title: profile.cratesReady > 0 ? "Open Crate" : "Waiting…", style: profile.cratesReady > 0 ? .primary : .ghost) {
                         profile.refreshCrateClock()
-                        if profile.openCrate() != nil {
+                        if let loot = profile.openCrate() {
+                            lastLoot = loot
                             AudioService.shared.playSFX("combo", pitch: 1.15)
                         }
                     }
+                    if let loot = lastLoot {
+                        Text("You got +\(loot.scrap) Scrap" + (loot.gems > 0 ? " · +\(loot.gems) Gems" : ""))
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(NeonTheme.teal)
+                            .padding(.top, 6)
+                    }
                 }
                 .padding(.horizontal, 16)
+                Text("Daily / weekly quests return when progress is wired.")
+                    .font(.caption2)
+                    .foregroundStyle(NeonTheme.muted)
                 Spacer()
             }
         }
@@ -455,16 +462,6 @@ struct QuestsView: View {
     private var crateCountdown: String {
         let rem = max(0, Int(profile.secondsUntilNextCrate))
         return String(format: "%d:%02d", rem / 60, rem % 60)
-    }
-
-    private func questRow(_ title: String, _ reward: String) -> some View {
-        HStack {
-            Text(title).foregroundStyle(.white)
-            Spacer()
-            Text(reward).foregroundStyle(NeonTheme.teal).fontWeight(.bold)
-        }
-        .font(.subheadline)
-        .padding(.vertical, 4)
     }
 }
 

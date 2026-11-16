@@ -7,9 +7,15 @@ import GoogleMobileAds
 import Services
 
 /// Wires Google Mobile Ads (test IDs), UMP, and ATT.
+/// Must run AFTER first interactive paint — ideally after first win (no launch prompts).
 enum AdsBootstrap {
+    private static var didStart = false
+
     @MainActor
     static func start() async {
+        guard !didStart else { return }
+        didStart = true
+        // Prefer deferring ATT until after first win; still skip if already determined.
         if ATTrackingManager.trackingAuthorizationStatus == .notDetermined {
             await ATTrackingManager.requestTrackingAuthorization()
         }
@@ -20,6 +26,12 @@ enum AdsBootstrap {
             }
         }
         await AdsService.shared.bootstrap()
+    }
+
+    /// Call from post-win / shop paths so cold launch stays under ~1.5s.
+    @MainActor
+    static func startAfterFirstWinIfNeeded() async {
+        await start()
     }
 
     /// UMP 2.x SPM binary still exposes the ObjC-prefixed API surface.

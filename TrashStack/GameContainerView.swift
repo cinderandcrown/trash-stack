@@ -47,8 +47,8 @@ struct GameContainerView: View {
                 .ignoresSafeArea(edges: .horizontal)
                 .layoutPriority(1)
                 .overlay(alignment: .top) {
-                    if nearMiss {
-                        Text("BIN ALMOST FULL")
+                    if nearMiss || (lastState?.over == true) {
+                        Text(lastState?.over == true ? "BIN OVERFLOW" : "BIN ALMOST FULL")
                             .font(.caption.weight(.black))
                             .foregroundStyle(NeonTheme.magenta)
                             .padding(.horizontal, 12)
@@ -174,12 +174,22 @@ struct GameContainerView: View {
                         BundleImage(name: "RaccoonPanic")
                             .scaledToFit()
                             .frame(width: 110, height: 110)
-                        Text("ONE MORE?").font(.title2.bold()).foregroundStyle(NeonTheme.magenta)
-                        Text("Watch a rewarded ad to revive once this run.")
+                        Text(nearMiss ? "SO CLOSE" : "ONE MORE?")
+                            .font(.title2.bold())
+                            .foregroundStyle(NeonTheme.magenta)
+                        Text(nearMiss
+                             ? "Bin was kissing the lip — revive once (opt-in ad) or clock out with your streak intact."
+                             : "Revive once with an opt-in ad, or clock out. No purchase prompts here.")
                             .multilineTextAlignment(.center)
                             .foregroundStyle(NeonTheme.muted)
+                        Text("Score \(hudScore) · streak \(profile.dailyStreak)d")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.teal)
                         NeonButton(title: "Revive (ad)") {
                             Task {
+                                if !profile.firstWin {
+                                    await AdsBootstrap.startAfterFirstWinIfNeeded()
+                                }
                                 let ok = await AdsService.shared.showRewarded(placement: "revive")
                                 showContinue = false
                                 if ok {
@@ -311,17 +321,18 @@ struct GameContainerView: View {
         Group {
             if let toastText {
                 Text(toastText)
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 6)
+                    .font(.system(.title3, design: .rounded).weight(.black))
+                    .foregroundStyle(toastText.contains("CHAIN") ? NeonTheme.magenta : NeonTheme.teal)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity)
-                    .background(NeonTheme.panel.opacity(0.92))
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .background(Color.black.opacity(0.72))
+                    .overlay(Rectangle().fill(NeonTheme.teal.opacity(0.35)).frame(height: 2), alignment: .bottom)
+                    .transition(.scale.combined(with: .opacity))
             }
         }
-        .frame(height: toastText == nil ? 0 : 28)
-        .animation(.easeOut(duration: 0.2), value: toastText)
+        .frame(height: toastText == nil ? 0 : 44)
+        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: toastText)
     }
 
     private var previewHoldBar: some View {
@@ -620,6 +631,7 @@ struct GameContainerView: View {
         if state.score > 0 && !profile.firstWin {
             profile.firstWin = true
             profile.persist()
+            await AdsBootstrap.startAfterFirstWinIfNeeded()
             if !profile.notifAsked {
                 showNotifPrompt = true
             }

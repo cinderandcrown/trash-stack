@@ -14,11 +14,7 @@ struct ModeSelectView: View {
             AlleyBackdrop()
             VStack(spacing: 14) {
                 MetaChromeHeader(title: "CHOOSE SHIFT") { screen = .title }
-                modeCard(
-                    title: "Shift Mode",
-                    blurb: "Handcrafted districts · order tickets · 3-star goals",
-                    mode: .shift
-                )
+                // Shift Mode hidden for v1 until handcrafted levels are real (QA P1-4).
                 modeCard(
                     title: "Endless Night Shift",
                     blurb: "High score · Game Center leaderboard",
@@ -31,6 +27,10 @@ struct ModeSelectView: View {
                         : "One seeded puzzle for everyone today",
                     mode: .daily
                 )
+                Text("Shift districts coming soon — Endless + Daily ship first.")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(NeonTheme.muted)
+                    .padding(.horizontal, 20)
                 Spacer(minLength: 0)
             }
             .padding(.bottom, 12)

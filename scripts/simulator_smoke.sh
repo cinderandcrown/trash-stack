@@ -180,12 +180,17 @@ launch_shot() {
   local outfile="$2"
   local settle="${3:-4}"
   local attempts=0
+  # Recycle juice is longer (~0.5s suck + held glow/banner) — more attempts, not a looser assert.
   local max_attempts=2
+  if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
+    max_attempts=3
+    if (( settle < 7 )); then settle=7; fi
+  fi
   local shot_start=$SECONDS
 
   while (( attempts < max_attempts )); do
     attempts=$((attempts + 1))
-    if (( SECONDS - shot_start > 55 )); then
+    if (( SECONDS - shot_start > 70 )); then
       echo "launch_shot deadline exceeded for mode='$mode'" >&2
       break
     fi
@@ -214,7 +219,13 @@ launch_shot() {
       fi
     done
     # Extra settle after process is alive so SwiftUI/SpriteKit can paint.
-    sleep "$settle"
+    # Recycle: capture while hold-glow + RECYCLE/CHAIN banner are still up (~1.2s).
+    if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
+      sleep 1.1
+      sleep "$settle"
+    else
+      sleep "$settle"
+    fi
 
     if ! app_running; then
       echo "App not running after launch (mode='$mode' attempt=$attempts)" >&2
@@ -252,14 +263,45 @@ smoke_budget
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
-launch_shot "" "$OUT_DIR/01-title.png" 3
+# Cold-launch timing (ads skipped): measure simctl launch → title frame.
+# App-side ATT/UMP/GAD are deferred until after first win; this asserts the smoke path stays snappy.
+LAUNCH_T0=$SECONDS
+# Springboard crop of the installed icon (home screen before launch).
+with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$OUT_DIR/00-springboard.png" 2>/dev/null \
+  || with_deadline 20 xcrun simctl io "$DEVICE" screenshot "$OUT_DIR/00-springboard.png" || true
+python3 - <<PY
+from pathlib import Path
+try:
+    from PIL import Image
+    p = Path("$OUT_DIR/00-springboard.png")
+    if p.exists():
+        im = Image.open(p)
+        w,h = im.size
+        crop = im.crop((w//2-120, h//2-220, w//2+120, h//2-40))
+        crop.save("$OUT_DIR/00-springboard-icon-crop.png")
+        print("Springboard icon crop OK", crop.size)
+except Exception as e:
+    print("Springboard crop skipped:", e)
+PY
+
+launch_shot "" "$OUT_DIR/01-title.png" 2
+LAUNCH_DT=$((SECONDS - LAUNCH_T0))
+echo "cold_launch_to_title_s=$LAUNCH_DT" | tee "$OUT_DIR/launch-timing.txt"
+# Includes simctl overhead; fail if absurdly slow. Target interactive paint <1.5s in-app.
+if (( LAUNCH_DT > 8 )); then
+  echo "Cold launch to title frame too slow: ${LAUNCH_DT}s (expect sim overhead <8s with ads skipped)" >&2
+  exit 1
+fi
+printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-time-seconds.txt"
+echo "NOTE: in-app first interactive frame budget is <1.5s (ATT/GAD deferred). Smoke wall-clock includes simctl." | tee -a "$OUT_DIR/launch-timing.txt"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 5
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
 launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 5
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
+# Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
+launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 7
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 4
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
@@ -393,9 +435,20 @@ if [[ -f "$VIDEO_RAW" && -f "$MUSIC" ]] && command -v ffmpeg >/dev/null 2>&1; th
     mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
   fi
   echo "Muxed music+SFX onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
+  # Recycle-chain clip with audio for evidence (~t=11–15s).
+  ffmpeg -y -ss 11 -t 4 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
+    "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1 || {
+      echo "recycle-chain clip failed" >&2
+      cat /tmp/ffmpeg-clip.log >&2 || true
+      exit 1
+    }
+  if ! ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
+    echo "recycle-chain-clip.mp4 missing audio" >&2
+    exit 1
+  fi
 else
-  echo "ffmpeg/audio missing — using silent capture" >&2
-  mv -f "$VIDEO_RAW" "$VIDEO_OUT"
+  echo "ffmpeg/audio missing — demo MUST have an audio track" >&2
+  exit 1
 fi
 
 fps="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.measuredFPS 2>/dev/null || echo 0)"
@@ -409,7 +462,7 @@ PY
 
 for f in 01-title.png 02-gameplay.png 03-compactor-clear.png 04-recycle-combo.png \
          05-game-over-revive.png 06-base.png 07-pass.png 08-shop.png 09-notification-prompt.png \
-         gameplay-demo.mp4; do
+         gameplay-demo.mp4 recycle-chain-clip.mp4 launch-time-seconds.txt; do
   path="$OUT_DIR/$f"
   if [[ ! -s "$path" ]]; then
     echo "Missing or empty smoke artifact: $path" >&2

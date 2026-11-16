@@ -11,8 +11,19 @@ import SpriteKit
 public enum JunkTextureLoader {
     public static let appBundleId = "com.cinderandcrown.trashstack"
 
+    /// Legacy atlas keys → current silhouette files.
+    private static let aliases: [String: String] = [
+        "tube": "bottle",
+        "scrap": "plank",
+        "bag": "bentPipe",
+        "box": "fridge",
+    ]
+
     public static func image(named name: String) -> UIImage? {
+        let resolved = aliases[name] ?? name
+        if let img = imageFromModule(named: resolved) { return img }
         if let img = imageFromModule(named: name) { return img }
+        if let img = UIImage(named: resolved) { return img }
         if let img = UIImage(named: name) { return img }
         for bundle in candidateBundles() {
             if let img = UIImage(named: name, in: bundle, compatibleWith: nil) {

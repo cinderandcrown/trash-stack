@@ -568,6 +568,26 @@ public struct GameEngine: Sendable {
             state.pressMeter = 5
             state.level = 3
             state.active = ActivePiece(id: .can, x: 1, y: hid + 2)
+        case "ftue":
+            // Almost-cluster: 3 metal cans; active metal can completes the recycle.
+            for x in 0..<3 {
+                state.board[x, rows - 1] = Cell(piece: .can, material: .metal)
+            }
+            state.board[0, rows - 2] = Cell(piece: .can, material: .metal)
+            state.board[1, rows - 2] = Cell(piece: .can, material: .metal)
+            // Soft glass clutter away from the gift cluster.
+            state.board[6, rows - 1] = Cell(piece: .bottle, material: .glass)
+            state.board[7, rows - 1] = Cell(piece: .bottle, material: .glass)
+            state.score = 0
+            state.level = 1
+            state.combo = 0
+            state.pressMeter = 0
+            state.snatchAvailable = false
+            state.orders = [
+                OrderTicket(id: "ftue-recycle", label: "Recycle metal once", kind: .recycleMaterial, target: 4, progress: 0, material: .metal),
+            ]
+            state.active = ActivePiece(id: .can, x: 3, y: hid + 4)
+            state.queue = [.bottle, .plank]
         case "compactor", "press":
             // Bottom rows filled for a press slam showcase + meter full.
             for y in (rows - 2)..<rows {

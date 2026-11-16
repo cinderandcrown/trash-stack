@@ -62,11 +62,11 @@ public enum JunkCatalog {
         JunkDef(id: .can, material: .metal, textureName: "can", rotations: [
             [[0, 0]],
         ], weight: 14),
-        JunkDef(id: .bottle, material: .glass, textureName: "tube", rotations: [
+        JunkDef(id: .bottle, material: .glass, textureName: "bottle", rotations: [
             [[0, 0], [0, 1]],
             [[0, 0], [1, 0]],
         ], weight: 12),
-        JunkDef(id: .plank, material: .paper, textureName: "scrap", rotations: [
+        JunkDef(id: .plank, material: .paper, textureName: "plank", rotations: [
             [[0, 0], [1, 0], [2, 0]],
             [[0, 0], [0, 1], [0, 2]],
         ], weight: 10),
@@ -80,13 +80,13 @@ public enum JunkCatalog {
         JunkDef(id: .tire, material: .plastic, textureName: "tire", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1]],
         ], weight: 9),
-        JunkDef(id: .bentPipe, material: .metal, textureName: "bag", rotations: [
+        JunkDef(id: .bentPipe, material: .metal, textureName: "bentPipe", rotations: [
             [[0, 0], [0, 1], [1, 1]],
             [[0, 1], [1, 0], [1, 1]],
             [[0, 0], [1, 0], [1, 1]],
             [[0, 0], [1, 0], [0, 1]],
         ], weight: 10),
-        JunkDef(id: .fridge, material: .metal, textureName: "box", rotations: [
+        JunkDef(id: .fridge, material: .metal, textureName: "fridge", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2]],
             [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]],
         ], weight: 3),

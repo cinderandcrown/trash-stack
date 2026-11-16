@@ -57,16 +57,9 @@ struct TitleView: View {
                     NeonButton(title: "Junkyard", style: .ghost) { screen = .base }
                     NeonButton(title: "Season Pass", style: .ghost) { screen = .pass }
                     NeonButton(title: "Shop", style: .ghost) { screen = .shop }
-                    NeonButton(title: "Quests", style: .ghost) { screen = .quests }
                     NeonButton(title: "Settings", style: .ghost) { screen = .settings }
-                    NeonButton(title: "Open Crate", style: .secondary) {
-                        profile.refreshCrateClock()
-                        if let loot = profile.openCrate() {
-                            AudioService.shared.playSFX("combo", pitch: 1.2)
-                            _ = loot
-                        } else {
-                            AudioService.shared.playSFX("ui")
-                        }
+                    NeonButton(title: profile.cratesReady > 0 ? "Open Crate" : "Crate…", style: .secondary) {
+                        screen = .quests // crate ceremony lives here for v1
                     }
                 }
                 .padding(.horizontal, 22)
