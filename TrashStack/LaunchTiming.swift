@@ -4,6 +4,7 @@ import Foundation
 
 /// Honest cold-launch instrumentation: process start → first title frame.
 /// Smoke reads `trashStack.launchToTitleSec` and asserts ≤ 1.5s.
+@MainActor
 enum LaunchTiming {
     /// Captured at first access — call `bootstrap()` from `@main` init.
     private(set) static var processStartUptime: TimeInterval = 0
