@@ -4,16 +4,18 @@ Native Swift + SpriteKit + StoreKit 2. Magpie / App Store evidence via simulator
 
 ## Working methods
 
-Follow **[docs/VIBEGAMEDEV_METHODS.md](docs/VIBEGAMEDEV_METHODS.md)** for every gameplay pass:
+Follow **[docs/VIBEGAMEDEV_METHODS.md](docs/VIBEGAMEDEV_METHODS.md)** (incl. v2 Chong-U rules) for every gameplay pass:
 
 - One system per pass; state current behavior → aim → files → how it shows in smoke video
 - Core feel first, then progression, then come-back hooks
-- Feel numbers in JSON/plist; board gym for isolated setups
+- Feel numbers in `feel.json`; one gym per system (`BoardGym`)
+- Forgiving controls; safe-area HUD; chrome must not compete with the board
 - Juice (hit-stop, shake, particles) required; no full-screen flash washes
-- Deterministic smoke video + screenshots after every pass
+- ~30s FTUE (move / rotate / clusters / press); juicy vertical slice only
+- Deterministic smoke + side-by-side screenshot judgment after every pass
 - Never use the word “Tetris” (or tetromino / line-clear / letter piece names)
 
-Also see `docs/DESIGN.md`, `docs/ECONOMY.md`, `docs/ART.md`, `docs/STORE.md`.
+Also see `docs/DESIGN.md`, `docs/TECHNICAL.md`, `docs/ECONOMY.md`, `docs/ART.md`, `docs/STORE.md`.
 
 ## CI / shipping
 

@@ -678,8 +678,26 @@ public struct GameEngine: Sendable {
             state.score = 0
             state.level = 1
             spawn()
+        case "snatch":
+            // Gym: mid-board junk + Snatch available.
+            applyShotScenario("game")
+            state.snatchAvailable = true
+            state.score = 2400
+        case "tickets":
+            // Gym: orders mid-progress for ticket VFX.
+            applyShotScenario("game")
+            if !state.orders.isEmpty {
+                state.orders[0].progress = max(1, state.orders[0].target - 2)
+            }
+            if state.orders.count > 1 {
+                state.orders[1].progress = state.orders[1].target
+            }
         default:
-            spawn()
+            if let gym = BoardGym(rawValue: shot) {
+                applyShotScenario(gym.shotName)
+            } else {
+                spawn()
+            }
         }
     }
 

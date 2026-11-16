@@ -39,13 +39,15 @@ struct BundleImage: View {
 
 enum NeonTheme {
     static let bgTop = Color(red: 0.03, green: 0.03, blue: 0.07)
-    static let bgBottom = Color(red: 0.08, green: 0.03, blue: 0.14)
-    static let panel = Color(red: 0.07, green: 0.08, blue: 0.14)
-    static let panelStroke = Color(red: 0.0, green: 0.92, blue: 0.95)
-    static let magenta = Color(red: 0.95, green: 0.2, blue: 0.75)
-    static let teal = Color(red: 0.0, green: 0.92, blue: 0.95)
+    static let bgBottom = Color(red: 0.06, green: 0.04, blue: 0.09)
+    /// Dim play chrome — must not compete with the neon dumpster board.
+    static let playChrome = Color(red: 0.02, green: 0.02, blue: 0.05)
+    static let panel = Color(red: 0.06, green: 0.07, blue: 0.11)
+    static let panelStroke = Color(red: 0.0, green: 0.75, blue: 0.78)
+    static let magenta = Color(red: 0.88, green: 0.22, blue: 0.68)
+    static let teal = Color(red: 0.0, green: 0.82, blue: 0.86)
     static let text = Color.white
-    static let muted = Color.white.opacity(0.78)
+    static let muted = Color.white.opacity(0.62)
 
     static var alleyGradient: LinearGradient {
         LinearGradient(colors: [bgTop, bgBottom], startPoint: .top, endPoint: .bottom)

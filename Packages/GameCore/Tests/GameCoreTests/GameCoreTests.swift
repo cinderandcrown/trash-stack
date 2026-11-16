@@ -189,6 +189,14 @@ final class GameCoreTests: XCTestCase {
         }
     }
 
+    func testFeelConfigLoads() throws {
+        let feel = try ConfigLoader.feel()
+        XCTAssertGreaterThan(feel.recycleSuckSec, 0)
+        XCTAssertLessThanOrEqual(feel.gravityMinSec, feel.gravityBaseSec)
+        XCTAssertEqual(BoardGym.allCases.count, 5)
+        XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
+    }
+
     func testNoStraightSpanLongerThanThree() {
         for def in JunkCatalog.all {
             for rot in def.rotations {

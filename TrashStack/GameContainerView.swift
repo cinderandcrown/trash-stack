@@ -135,9 +135,12 @@ struct GameContainerView: View {
                 .disabled(!snatchReady)
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 8)
+            .padding(.bottom, 4)
         }
-        .background(Color(red: 0.02, green: 0.02, blue: 0.06).ignoresSafeArea())
+        // Quiet chrome — board owns the color; HUD stays dim and in safe areas.
+        .background(NeonTheme.playChrome.ignoresSafeArea())
+        .safeAreaPadding(.top, 4)
+        .safeAreaPadding(.bottom, 6)
         .onAppear(perform: bootstrap)
         .onDisappear { scoreAnimTask?.cancel(); scoreAnimTask = nil }
         .onChange(of: hudScore) { _, newValue in animateScore(to: newValue) }
@@ -371,10 +374,11 @@ struct GameContainerView: View {
     }
 
     private var gestureHint: some View {
-        Text("Drag · Tap rotate · Flick drop · PRESS when ready · SNATCH once")
+        Text("Drag anywhere · Tap rotate · Swipe down to drop")
             .font(.caption2.weight(.semibold))
-            .foregroundStyle(NeonTheme.muted)
+            .foregroundStyle(NeonTheme.muted.opacity(0.85))
             .padding(.vertical, 6)
+            .accessibilityLabel("Drag anywhere to move, tap to rotate, swipe down to drop")
     }
 
     private var classicPad: some View {
@@ -419,7 +423,7 @@ struct GameContainerView: View {
         preview = scene.engine.peekNext(2)
         holdItem = scene.engine.state.hold
         let wasNear = nearMiss
-        nearMiss = scene.engine.isNearOverflow()
+        nearMiss = scene.engine.isNearOverflow(threshold: scene.feel.nearMissRows)
         if nearMiss, !wasNear {
             // Near-miss tension bed: low, uneasy loop cue (no separate asset yet).
             AudioService.shared.playMusic("game_loop")

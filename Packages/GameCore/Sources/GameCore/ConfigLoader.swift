@@ -13,6 +13,14 @@ public enum ConfigLoader {
         return try decode("seasons/\(name)", as: SeasonConfig.self)
     }
 
+    public static func feel() throws -> FeelConfig {
+        try decode("feel", as: FeelConfig.self)
+    }
+
+    public static func feelOrFallback() -> FeelConfig {
+        (try? feel()) ?? .fallback
+    }
+
     private static func decode<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
         let url = try resourceURL(named: name)
         let data = try Data(contentsOf: url)

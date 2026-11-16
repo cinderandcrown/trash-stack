@@ -3,25 +3,35 @@
 import SwiftUI
 import Services
 
+/// ~30s FTUE: move → rotate → clusters → press. Juicy vertical slice only.
 struct TutorialView: View {
     @Binding var screen: AppScreen
     @EnvironmentObject var profile: PlayerProfile
     @State private var step = 0
 
-    private let steps: [(title: String, body: String, cta: String)] = [
+    private let steps: [(title: String, body: String, cue: String, cta: String)] = [
         (
-            "Drop junk items",
-            "Drag cans, bottles, pipes, and crates into the 8×14 dumpster. Tap to rotate bent pieces. This is a night-shift recycle bin — not a puzzle of letter blocks.",
+            "Drag to move",
+            "Drag anywhere on the dumpster to slide the falling junk left or right. Placement doesn’t matter — grab from anywhere.",
+            "MOVE",
             "Got it"
         ),
         (
-            "Recycle materials",
-            "When 4 or more touching cells share a material (metal, plastic, glass, paper), they get sucked into the recycle chute. Chains can cascade when junk settles.",
+            "Tap to rotate",
+            "Tap the board once to rotate bent pipes and long junk. Square crates and tires don’t need a spin.",
+            "ROTATE",
+            "Next"
+        ),
+        (
+            "Make a cluster",
+            "Connect 4+ cells of the same material — metal, plastic, glass, or paper. They suck into the chute. Chains feel great.",
+            "CLUSTER",
             "Next"
         ),
         (
             "Slam the PRESS",
-            "Placing items fills the PRESS meter. When it’s full, tap PRESS to crush the bottom two rows into scrap. That’s your timed power move — then finish order tickets and use Snatch once.",
+            "Placing junk fills the PRESS meter. When it’s ready, tap PRESS to crush the bottom two rows into scrap.",
+            "PRESS",
             "Start shift"
         ),
     ]
@@ -29,18 +39,30 @@ struct TutorialView: View {
     var body: some View {
         ZStack {
             AlleyBackdrop()
-            VStack(spacing: 20) {
+            VStack(spacing: 16) {
                 Text("NIGHT SHIFT INTRO")
                     .font(.system(.title2, design: .rounded).weight(.black))
                     .foregroundStyle(NeonTheme.teal)
-                    .padding(.top, 12)
+                    .padding(.top, 8)
 
-                BundleImage(name: step == 2 ? "RaccoonCheer" : "RaccoonIdle")
+                Text("About 30 seconds")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(NeonTheme.muted)
+
+                BundleImage(name: step >= 2 ? "RaccoonCheer" : "RaccoonIdle")
                     .scaledToFit()
-                    .frame(height: 120)
+                    .frame(height: 100)
+
+                Text(steps[step].cue)
+                    .font(.system(.caption, design: .rounded).weight(.black))
+                    .foregroundStyle(.black)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(NeonTheme.teal)
+                    .clipShape(Capsule())
 
                 NeonPanel {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 10) {
                         Text(steps[step].title)
                             .font(.title3.weight(.black))
                             .foregroundStyle(.white)
@@ -57,9 +79,11 @@ struct TutorialView: View {
                 NeonButton(title: steps[step].cta) {
                     if step < steps.count - 1 {
                         step += 1
+                        AudioService.shared.playSFX("ui")
                     } else {
                         profile.tutorialDone = true
                         profile.persist()
+                        AudioService.shared.playSFX("levelup")
                         screen = .game
                     }
                 }
@@ -75,8 +99,8 @@ struct TutorialView: View {
 
                 Spacer(minLength: 0)
             }
-            .safeAreaPadding(.top, 16)
-            .padding(.bottom, 12)
+            .safeAreaPadding(.top, 12)
+            .safeAreaPadding(.bottom, 12)
         }
     }
 }

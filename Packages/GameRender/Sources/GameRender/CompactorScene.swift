@@ -15,6 +15,7 @@ public final class CompactorScene: SKScene {
     public var preferredFPS: Int = 60
     public private(set) var measuredFPS: Double = 60
     public var raccoonMood: RaccoonMood = .idle
+    public var feel: FeelConfig = ConfigLoader.feelOrFallback()
 
     public enum RaccoonMood: Equatable { case idle, cheer, panic }
 
@@ -338,13 +339,13 @@ public final class CompactorScene: SKScene {
             return
         }
         guard !engine.state.over, engine.state.active != nil else { return }
-        let grav = max(0.12, 0.62 - Double(engine.state.level) * 0.03)
+        let grav = max(feel.gravityMinSec, feel.gravityBaseSec - Double(engine.state.level) * feel.gravityLevelStep)
         gravityAcc += Double(dt)
         if gravityAcc >= grav {
             gravityAcc = 0
             if !engine.softDrop() {
                 lockAcc += grav
-                if lockAcc > 0.45 {
+                if lockAcc > feel.lockDelaySec {
                     lockAcc = 0
                     engine.lock()
                     handleEvents()
@@ -370,8 +371,8 @@ public final class CompactorScene: SKScene {
             hasVisualPose = true
         } else {
             // Lateral ease; vertical chase with a bit of lag for continuous fall.
-            let lx = min(1, dt * 18)
-            let ly = min(1, dt * 14)
+            let lx = min(1, dt * CGFloat(feel.fallLerpLateral))
+            let ly = min(1, dt * CGFloat(feel.fallLerpVertical))
             visualX += (targetX - visualX) * lx
             visualY += (targetY - visualY) * ly
         }
@@ -515,10 +516,11 @@ public final class CompactorScene: SKScene {
             ghost.position = start
             ghost.zPosition = 57
             addChild(ghost)
+            let dur = feel.recycleSuckSec
             let suck = SKAction.group([
-                SKAction.move(to: chute, duration: 0.25),
-                SKAction.scale(to: 0.15, duration: 0.25),
-                SKAction.fadeOut(withDuration: 0.25),
+                SKAction.move(to: chute, duration: dur),
+                SKAction.scale(to: 0.15, duration: dur),
+                SKAction.fadeOut(withDuration: dur),
             ])
             suck.timingMode = .easeIn
             ghost.run(SKAction.sequence([suck, SKAction.removeFromParent()]))
@@ -526,7 +528,19 @@ public final class CompactorScene: SKScene {
         spawnParticle(named: "SparkTeal", at: chute, count: min(14, 4 + coords.count))
         if engine.state.combo >= 3 {
             subtleGlow(color: SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 0.25))
-            screenShake(strength: 6)
+            screenShake(strength: CGFloat(feel.shakeRecycle))
+            hitStop(seconds: feel.hitStopComboSec)
+        } else {
+            hitStop(seconds: feel.hitStopShortSec)
+        }
+    }
+
+    private func hitStop(seconds: Double) {
+        guard seconds > 0 else { return }
+        // Brief speed dip — keeps SpriteKit actions alive (unlike isPaused).
+        speed = 0.05
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            self?.speed = 1
         }
     }
 
@@ -542,23 +556,25 @@ public final class CompactorScene: SKScene {
         let slamY = origin.y + cs.height * 1.15
         plate.position.y = restY
         plate.setScale(1)
-        let down = SKAction.moveTo(y: slamY, duration: 0.18)
+        let down = SKAction.moveTo(y: slamY, duration: feel.pressSlamDownSec)
         down.timingMode = .easeIn
         let squash = SKAction.sequence([
             SKAction.scaleY(to: 0.55, duration: 0.06),
             SKAction.scaleY(to: 1.05, duration: 0.08),
             SKAction.scaleY(to: 1.0, duration: 0.06),
         ])
-        let up = SKAction.moveTo(y: restY, duration: 0.22)
+        let up = SKAction.moveTo(y: restY, duration: feel.pressSlamUpSec)
         up.timingMode = .easeOut
         plate.run(SKAction.sequence([
             down,
             SKAction.run { [weak self] in
-                self?.screenShake(strength: cells >= 10 ? 12 : 7)
-                let midX = (self?.size.width ?? 0) * 0.5
-                self?.spawnParticle(named: "SparkMagenta", at: CGPoint(x: midX, y: slamY), count: min(20, 6 + cells))
-                self?.spawnParticle(named: "DebrisMetal", at: CGPoint(x: midX, y: slamY + 10), count: min(14, 4 + cells / 2))
-                self?.spawnParticle(named: "SparkGold", at: CGPoint(x: midX, y: slamY + 6), count: 8)
+                guard let self else { return }
+                let midX = self.size.width * 0.5
+                self.screenShake(strength: CGFloat(self.feel.shakePress))
+                self.hitStop(seconds: self.feel.hitStopComboSec)
+                self.spawnParticle(named: "SparkMagenta", at: CGPoint(x: midX, y: slamY), count: min(20, 6 + cells))
+                self.spawnParticle(named: "DebrisMetal", at: CGPoint(x: midX, y: slamY + 10), count: min(14, 4 + cells / 2))
+                self.spawnParticle(named: "SparkGold", at: CGPoint(x: midX, y: slamY + 6), count: 8)
             },
             squash,
             SKAction.wait(forDuration: 0.08),
@@ -567,7 +583,7 @@ public final class CompactorScene: SKScene {
     }
 
     private func pressJuiceFallback(cells: Int) {
-        screenShake(strength: cells >= 10 ? 12 : 7)
+        screenShake(strength: CGFloat(cells >= 10 ? feel.shakePress : feel.shakeRecycle))
         spawnParticle(named: "SparkMagenta", at: CGPoint(x: size.width / 2, y: gridOrigin().y + cellSize().height), count: min(20, 6 + cells))
         spawnParticle(named: "DebrisMetal", at: CGPoint(x: size.width / 2, y: gridOrigin().y + cellSize().height * 2), count: min(14, 4 + cells / 2))
     }
@@ -666,7 +682,7 @@ public final class CompactorScene: SKScene {
                         node.setScale(1)
                     } else if hypot(node.position.x - dest.x, node.position.y - dest.y) > 1 {
                         node.removeAction(forKey: "settle")
-                        let drop = SKAction.move(to: dest, duration: 0.16)
+                        let drop = SKAction.move(to: dest, duration: feel.settleBounceSec)
                         drop.timingMode = .easeIn
                         let bounce = SKAction.sequence([
                             SKAction.moveBy(x: 0, y: 4, duration: 0.05),
@@ -804,16 +820,19 @@ public final class CompactorScene: SKScene {
         let dt = CACurrentMediaTime() - touchStartTime
         let dist = hypot(dx, dy)
 
-        if dist < 12, dt < 0.35 {
+        // Forgiving: small tap = rotate; clear downward flick = drop; upward = hold.
+        if dist < 28, dt < 0.4 {
             _ = engine.tryRotate()
-            render(immediate: true)
-        } else if dy < -55, abs(dy) > abs(dx), dt < 0.35 {
+            render(immediate: false)
+        } else if dy < -40, abs(dy) > abs(dx) * 0.7 {
             engine.hardDrop()
             handleEvents()
+            hasVisualPose = false
             render(immediate: false)
             if engine.state.over { onGameOver?(engine.state) }
-        } else if dy > 55, abs(dy) > abs(dx) {
+        } else if dy > 50, abs(dy) > abs(dx) {
             engine.stash()
+            hasVisualPose = false
             render(immediate: true)
         }
         touchStart = nil

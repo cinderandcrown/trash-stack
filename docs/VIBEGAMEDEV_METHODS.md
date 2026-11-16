@@ -31,3 +31,13 @@ Native Swift + SpriteKit + StoreKit 2 only. Imitate this repo's architecture.
 
 - After every pass, a continuous deterministic smoke video (seeded RNG, an explicit ready signal, an outcome assertion, fail on unexpected logs) plus screenshots. Green CI is not the same as fun.
 - Describe bugs by what's visible, then fix. No leftover debug strings. Never use the word 'Tetris' anywhere.
+
+## V2 (Chong-U) — mobile feel and judgment
+
+- Keep a **short GDD** and a **mobile-aware technical design** in `docs/` and update them per pass (`docs/DESIGN.md`, `docs/TECHNICAL.md`).
+- Controls are **placement-insensitive and forgiving** (drag anywhere to move a piece, tap to rotate, swipe down to drop), with nothing hidden under the notch or home indicator.
+- **One gym per system** (board and junk spawner, clusters, press, Snatch, tickets).
+- Background and HUD colors must **not compete with the board**.
+- **Agent eyes:** change things, judge the smoke screenshots side by side against the previous build, and iterate until clearly better.
+- Listen to every SFX; reject harsh or mismatched ones.
+- Before release, a **~30-second FTUE** that teaches move, rotate, clusters and the press. Ship a **juicy vertical slice**; no feature sprawl.

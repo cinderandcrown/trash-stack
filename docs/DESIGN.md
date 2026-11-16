@@ -82,14 +82,20 @@ One **seeded** puzzle per calendar day (UTC date seed), **same for everyone**. L
 
 No purchase popups at launch, mid-run, or after a loss. At most **one dismissible offer per session**. Soft currency from play; cosmetics/convenience only. See `docs/ECONOMY.md`.
 
-## Controls
+## Controls (forgiving)
 
-- Drag · tap rotate · flick drop · **PRESS** · **SNATCH** · stash/hold slot
+- **Drag anywhere** on the board to move · **tap** to rotate · **swipe down** to drop
+- **PRESS** · **SNATCH** · hold/stash — large, thumb-safe, never under notch / home indicator
+- Placement-insensitive: grab from any point on the playfield
 
-## Tutorial
+## FTUE (~30 seconds)
 
-Three interactive beats: place → material recycle of 4+ → fill and slam PRESS.
+Move → rotate → clusters (4+ material) → PRESS. Then the juicy vertical slice (Shift / Endless / Daily). No feature sprawl.
+
+## Docs
+
+- Short GDD: this file. Mobile technical design: `docs/TECHNICAL.md`. Methods: `docs/VIBEGAMEDEV_METHODS.md`.
 
 ## Evidence (smoke)
 
-Must show: material recycle, chain, press slam, order complete, Snatch, game over, **Daily Dumpster**, **share card**, **streak reward**. Video ≲150 MB with music + SFX.
+Must show: material recycle, chain, press slam, order complete, Snatch, game over, **Daily Dumpster**, **share card**, **streak reward**. Video ≲150 MB with music + SFX. Judge screenshots side-by-side vs the previous build (agent eyes).
