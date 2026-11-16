@@ -1,0 +1,135 @@
+{
+ "01-title": {
+  "ssim": 0.305,
+  "edge_iou": 0.086,
+  "palette_dE": 10.4,
+  "lum_ref": 42.7,
+  "lum_new": 19.7
+ },
+ "02-gameplay": {
+  "ssim": 0.818,
+  "edge_iou": 0.799,
+  "palette_dE": 7.1,
+  "lum_ref": 37.1,
+  "lum_new": 31.6
+ },
+ "03-compactor-clear": {
+  "ssim": 0.518,
+  "edge_iou": 0.533,
+  "palette_dE": 7.6,
+  "lum_ref": 37.9,
+  "lum_new": 36.0
+ },
+ "04-recycle-combo": {
+  "ssim": 0.524,
+  "edge_iou": 0.572,
+  "palette_dE": 4.0,
+  "lum_ref": 27.0,
+  "lum_new": 27.3
+ },
+ "05-game-over-revive": {
+  "ssim": 0.689,
+  "edge_iou": 0.411,
+  "palette_dE": 4.2,
+  "lum_ref": 25.6,
+  "lum_new": 24.9
+ },
+ "06-base": {
+  "ssim": 0.981,
+  "edge_iou": 0.987,
+  "palette_dE": 0.1,
+  "lum_ref": 31.5,
+  "lum_new": 31.7
+ },
+ "07-pass": {
+  "ssim": 0.976,
+  "edge_iou": 0.962,
+  "palette_dE": 0.2,
+  "lum_ref": 43.8,
+  "lum_new": 44.8
+ },
+ "08-shop": {
+  "ssim": 0.651,
+  "edge_iou": 0.386,
+  "palette_dE": 3.2,
+  "lum_ref": 28.4,
+  "lum_new": 26.5
+ },
+ "09-notification-prompt": {
+  "ssim": 0.936,
+  "edge_iou": 0.868,
+  "palette_dE": 0.5,
+  "lum_ref": 26.6,
+  "lum_new": 26.4
+ },
+ "10-daily-dumpster": {
+  "ssim": 0.808,
+  "edge_iou": 0.76,
+  "palette_dE": 7.6,
+  "lum_ref": 35.1,
+  "lum_new": 31.9
+ },
+ "11-daily-share-card": {
+  "ssim": 0.988,
+  "edge_iou": 0.969,
+  "palette_dE": 1.8,
+  "lum_ref": 34.7,
+  "lum_new": 34.8
+ },
+ "12-streak-reward": {
+  "ssim": 0.954,
+  "edge_iou": 0.93,
+  "palette_dE": 0.8,
+  "lum_ref": 33.9,
+  "lum_new": 34.6
+ },
+ "marketing/01-play": {
+  "ssim": 0.8,
+  "edge_iou": 0.794,
+  "palette_dE": 7.6,
+  "lum_ref": 33.7,
+  "lum_new": 31.5
+ },
+ "marketing/02-crush": {
+  "ssim": 0.514,
+  "edge_iou": 0.546,
+  "palette_dE": 9.0,
+  "lum_ref": 36.1,
+  "lum_new": 32.4
+ },
+ "marketing/03-recycle": {
+  "ssim": 0.513,
+  "edge_iou": 0.522,
+  "palette_dE": 6.3,
+  "lum_ref": 34.2,
+  "lum_new": 29.1
+ },
+ "marketing/04-junkyard": {
+  "ssim": 0.981,
+  "edge_iou": 0.986,
+  "palette_dE": 0.4,
+  "lum_ref": 31.9,
+  "lum_new": 32.2
+ },
+ "marketing/05-pass": {
+  "ssim": 0.977,
+  "edge_iou": 0.967,
+  "palette_dE": 0.2,
+  "lum_ref": 43.9,
+  "lum_new": 44.9
+ },
+ "marketing/06-shop": {
+  "ssim": 0.658,
+  "edge_iou": 0.396,
+  "palette_dE": 8.7,
+  "lum_ref": 29.1,
+  "lum_new": 27.2
+ },
+ "marketing/07-daily": {
+  "ssim": 0.806,
+  "edge_iou": 0.789,
+  "palette_dE": 5.6,
+  "lum_ref": 35.3,
+  "lum_new": 32.6
+ }
+}
