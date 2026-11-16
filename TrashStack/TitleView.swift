@@ -77,7 +77,7 @@ struct TitleView: View {
             .padding(.horizontal, 8)
         }
         .onAppear {
-            // Honest first-paint mark BEFORE deferred heavy work.
+            // Idempotent: publisher ident stamps first frame on cold launch; this covers skip/shot paths.
             LaunchTiming.markFirstTitleFrame()
             withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                 bob = true

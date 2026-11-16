@@ -71,12 +71,7 @@ public final class AudioService {
         _ = eng.mainMixerNode
         try? eng.start()
         engine = eng
-        // SFX only on the first prepare — music loads lazily in playMusic (64s beds).
-        for name in ["lock", "crush", "recycle", "combo", "levelup", "magnet", "ui"] {
-            if let buf = loadWav(named: name) {
-                buffers[name] = buf
-            }
-        }
+        // Buffers load lazily in playSFX / playMusic — keep prepare off the first-paint path.
 #endif
     }
 

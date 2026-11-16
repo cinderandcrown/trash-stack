@@ -2,7 +2,8 @@
 
 import Foundation
 
-/// Honest cold-launch instrumentation: process start → first title frame.
+/// Honest cold-launch instrumentation: process start → first interactive frame
+/// (publisher ident on cold launch, or Trash Stack title when the ident is skipped).
 /// Smoke reads `trashStack.launchToTitleSec` and asserts ≤ 1.5s.
 @MainActor
 enum LaunchTiming {

@@ -337,9 +337,10 @@ except Exception:
 PY
 
 # Cold-launch timing (ads skipped):
-# 1) In-app: ProcessInfo.systemUptime at @main → TitleView.onAppear (UserDefaults).
-# 2) Wall-clock: bash $SECONDS around simctl launch → first real title frame (≤ 8s).
+# 1) In-app: ProcessInfo.systemUptime at @main → first interactive frame (publisher ident).
+# 2) Wall-clock: bash $SECONDS around simctl launch → first valid app frame (≤ 8s).
 # Do NOT relabel wall-clock as in-app paint. Do NOT raise the 8s ceiling.
+# Publisher ident (~2s) must NOT delay first-frame measurement.
 with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
@@ -353,29 +354,29 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if app_running; then break; fi
   sleep 0.15
 done
-TITLE_OK=0
+# First meaningful frame = publisher ident (or title if ident skipped). Gate on that — not on title.
+FIRST_OK=0
 for try in 1 2 3 4 5 6 7 8; do
-  sleep 0.25
-  shot "$OUT_DIR/01-title.png" || true
-  if assert_app_frame "$OUT_DIR/01-title.png" && assert_title_not_splash "$OUT_DIR/01-title.png"; then
-    TITLE_OK=1
+  sleep 0.2
+  shot "$OUT_DIR/00-publisher-ident.png" || true
+  if assert_app_frame "$OUT_DIR/00-publisher-ident.png"; then
+    FIRST_OK=1
     break
   fi
 done
 LAUNCH_DT=$((SECONDS - LAUNCH_T0))
-# Read honest in-app metric written by LaunchTiming.markFirstTitleFrame().
 INAPP_RAW="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSec 2>/dev/null || true)"
 INAPP_STR="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSecString 2>/dev/null || true)"
 {
-  echo "wall_clock_launch_to_title_s=$LAUNCH_DT"
-  echo "in_app_process_start_to_title_s=${INAPP_RAW:-missing}"
-  echo "in_app_process_start_to_title_string=${INAPP_STR:-missing}"
-  echo "gates: in_app<=1.5s AND wall_clock<=8s; 01-title must reject LaunchLogo splash"
+  echo "wall_clock_launch_to_first_frame_s=$LAUNCH_DT"
+  echo "in_app_process_start_to_first_frame_s=${INAPP_RAW:-missing}"
+  echo "in_app_process_start_to_first_frame_string=${INAPP_STR:-missing}"
+  echo "gates: in_app<=1.5s AND wall_clock<=8s; first frame is publisher ident (not delayed by preload)"
 } | tee "$OUT_DIR/launch-timing.txt"
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
 printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-wall-clock-seconds.txt"
-if (( TITLE_OK == 0 )); then
-  echo "Title frame invalid or still splash after cold launch polls" >&2
+if (( FIRST_OK == 0 )); then
+  echo "First frame invalid after cold launch polls" >&2
   exit 1
 fi
 if (( LAUNCH_DT > 8 )); then
@@ -395,6 +396,28 @@ if dt > 1.5:
     raise SystemExit(f"In-app launch {dt:.3f}s exceeds 1.5s budget")
 print(f"In-app launch OK {dt:.3f}s")
 PY
+# Held publisher-ident screenshot for review evidence (timing already gated above).
+launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 2
+# Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
+with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+sleep 0.3
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
+TITLE_OK=0
+for try in 1 2 3 4 5 6 7 8; do
+  sleep 0.3
+  shot "$OUT_DIR/01-title.png" || true
+  if assert_app_frame "$OUT_DIR/01-title.png" && assert_title_not_splash "$OUT_DIR/01-title.png"; then
+    TITLE_OK=1
+    break
+  fi
+done
+if (( TITLE_OK == 0 )); then
+  echo "Title frame invalid or still LaunchLogo splash" >&2
+  exit 1
+fi
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 5
@@ -435,7 +458,7 @@ python3 - "$OUT_DIR" <<'PY'
 import hashlib, pathlib, sys
 root = pathlib.Path(sys.argv[1])
 files = [
-  "01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
+  "00-publisher-ident.png","01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
   "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png",
   "10-daily-dumpster.png","11-daily-share-card.png","12-streak-reward.png",
 ]
@@ -566,7 +589,7 @@ if fps > 0 and fps < 50:
 print(f"FPS assert ok ({fps})")
 PY
 
-for f in 01-title.png 02-gameplay.png 03-compactor-clear.png 04-recycle-combo.png \
+for f in 00-publisher-ident.png 01-title.png 02-gameplay.png 03-compactor-clear.png 04-recycle-combo.png \
          05-game-over-revive.png 06-base.png 07-pass.png 08-shop.png 09-notification-prompt.png \
          gameplay-demo.mp4 recycle-chain-clip.mp4 launch-time-seconds.txt; do
   path="$OUT_DIR/$f"

@@ -8,6 +8,20 @@ enum AppScreen: String {
     case title, modes, shiftMap, game, base, pass, shop, quests, settings, tutorial, notif, marketing, streak, dailyShare
 }
 
+enum PublisherIdentGate {
+    /// Cold launch only (once per process). Shot modes skip except `ident` / `publisher`.
+    static func shouldPresent() -> Bool {
+        if ProcessInfo.processInfo.arguments.contains("-trashStackSkipIdent") { return false }
+        if UserDefaults.standard.bool(forKey: "trashStack.skipIdent") { return false }
+        let shot = PlayerProfile.shotArgument()
+            ?? UserDefaults.standard.string(forKey: "trashStack.shot")
+        if let shot, !shot.isEmpty {
+            return shot == "ident" || shot == "publisher"
+        }
+        return true
+    }
+}
+
 struct RootView: View {
     @EnvironmentObject var profile: PlayerProfile
     @State private var screen: AppScreen = .title
@@ -17,54 +31,66 @@ struct RootView: View {
     @State private var streakSnapshot: (streak: Int, scrap: Int, gems: Int) = (0, 0, 0)
     @State private var shareCardText = ""
     @State private var shareScore = 0
+    @State private var showIdent = PublisherIdentGate.shouldPresent()
+    @State private var holdIdentShot = false
 
     var body: some View {
         ZStack {
             NeonTheme.alleyGradient.ignoresSafeArea()
 
-            switch screen {
-            case .title: TitleView(screen: $screen, showNotifPrompt: $showNotifPrompt)
-            case .modes: ModeSelectView(screen: $screen, playMode: $playMode)
-            case .shiftMap: ShiftMapView(screen: $screen, playMode: $playMode)
-            case .game:
-                GameContainerView(
-                    screen: $screen,
-                    showNotifPrompt: $showNotifPrompt,
-                    playMode: $playMode,
-                    onDailyFinished: { score, card in
-                        shareScore = score
-                        shareCardText = card
-                        screen = .dailyShare
-                    },
-                    onStreakReward: { streak, scrap, gems in
-                        streakSnapshot = (streak, scrap, gems)
-                        screen = .streak
+            if showIdent {
+                PublisherIdentView(holdForShot: holdIdentShot) {
+                    withAnimation(.easeInOut(duration: 0.28)) {
+                        showIdent = false
                     }
-                )
-            case .base: JunkyardView(screen: $screen)
-            case .pass: SeasonPassView(screen: $screen)
-            case .shop: ShopView(screen: $screen)
-            case .quests: QuestsView(screen: $screen)
-            case .settings: SettingsView(screen: $screen)
-            case .tutorial: TutorialView(screen: $screen)
-            case .marketing: MarketingShotView(caption: marketingCaption)
-            case .streak:
-                StreakRewardView(
-                    screen: $screen,
-                    streak: streakSnapshot.streak,
-                    scrap: streakSnapshot.scrap,
-                    gems: streakSnapshot.gems
-                )
-            case .dailyShare:
-                DailyShareCardView(screen: $screen, cardText: shareCardText, score: shareScore)
-            case .notif: EmptyView()
+                }
+                .transition(.opacity)
+                .zPosition(50)
+            } else {
+                switch screen {
+                case .title: TitleView(screen: $screen, showNotifPrompt: $showNotifPrompt)
+                case .modes: ModeSelectView(screen: $screen, playMode: $playMode)
+                case .shiftMap: ShiftMapView(screen: $screen, playMode: $playMode)
+                case .game:
+                    GameContainerView(
+                        screen: $screen,
+                        showNotifPrompt: $showNotifPrompt,
+                        playMode: $playMode,
+                        onDailyFinished: { score, card in
+                            shareScore = score
+                            shareCardText = card
+                            screen = .dailyShare
+                        },
+                        onStreakReward: { streak, scrap, gems in
+                            streakSnapshot = (streak, scrap, gems)
+                            screen = .streak
+                        }
+                    )
+                case .base: JunkyardView(screen: $screen)
+                case .pass: SeasonPassView(screen: $screen)
+                case .shop: ShopView(screen: $screen)
+                case .quests: QuestsView(screen: $screen)
+                case .settings: SettingsView(screen: $screen)
+                case .tutorial: TutorialView(screen: $screen)
+                case .marketing: MarketingShotView(caption: marketingCaption)
+                case .streak:
+                    StreakRewardView(
+                        screen: $screen,
+                        streak: streakSnapshot.streak,
+                        scrap: streakSnapshot.scrap,
+                        gems: streakSnapshot.gems
+                    )
+                case .dailyShare:
+                    DailyShareCardView(screen: $screen, cardText: shareCardText, score: shareScore)
+                case .notif: EmptyView()
+                }
             }
 
-            if showNotifPrompt {
+            if showNotifPrompt, !showIdent {
                 NotifPromptView(show: $showNotifPrompt)
             }
 
-            if !marketingCaption.isEmpty, screen != .marketing {
+            if !marketingCaption.isEmpty, screen != .marketing, !showIdent {
                 VStack {
                     Spacer()
                     Text(marketingCaption)
@@ -99,14 +125,19 @@ struct RootView: View {
         UserDefaults.standard.removeObject(forKey: "trashStack.shot")
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
         switch shot {
+        case "ident", "publisher":
+            holdIdentShot = true
+            showIdent = true
         case "game", "gameplay", "compactor", "recycle", "revive", "press":
+            showIdent = false
             playMode = .endless
             screen = .game
         case "daily":
+            showIdent = false
             playMode = .daily
             screen = .game
         case "streak":
-            // Honest streak numbers (no forced 48/1). If already claimed, show real totals.
+            showIdent = false
             let r = profile.registerDailyActivity()
             if r.isNew {
                 streakSnapshot = (r.streak, r.scrap, r.gems)
@@ -116,6 +147,7 @@ struct RootView: View {
             }
             screen = .streak
         case "share", "daily-share":
+            showIdent = false
             shareScore = max(profile.lastDailyScore, 2400)
             shareCardText = DailyDumpster.shareCard(
                 dayKey: DailyDumpster.dayKey(),
@@ -125,52 +157,69 @@ struct RootView: View {
             )
             screen = .dailyShare
         case "modes":
+            showIdent = false
             screen = .modes
         case "base", "junkyard":
+            showIdent = false
             screen = .base
         case "pass", "season":
+            showIdent = false
             screen = .pass
         case "shop", "gems":
+            showIdent = false
             screen = .shop
         case "settings":
+            showIdent = false
             screen = .settings
         case "quests":
+            showIdent = false
             screen = .quests
         case "tutorial":
+            showIdent = false
             screen = .tutorial
         case "notif", "notifications":
+            showIdent = false
             showNotifPrompt = true
             screen = .title
         case "demo", "autoplay":
+            showIdent = false
             playMode = .endless
             screen = .game
         case "mkt-play":
+            showIdent = false
             marketingCaption = "Night shift in a neon dumpster"
             UserDefaults.standard.set("game", forKey: "trashStack.shotActive")
             screen = .game
         case "mkt-crush":
+            showIdent = false
             marketingCaption = "Slam the PRESS for scrap"
             UserDefaults.standard.set("compactor", forKey: "trashStack.shotActive")
             screen = .game
         case "mkt-recycle":
+            showIdent = false
             marketingCaption = "Recycle 4+ matching materials"
             UserDefaults.standard.set("recycle", forKey: "trashStack.shotActive")
             screen = .game
         case "mkt-base":
+            showIdent = false
             marketingCaption = "Build your Junkyard hideout"
             screen = .base
         case "mkt-pass":
+            showIdent = false
             marketingCaption = "Neon Dumpster Season Pass"
             screen = .pass
         case "mkt-shop":
+            showIdent = false
             marketingCaption = "Gems for looks — never nagged"
             screen = .shop
         case "mkt-daily":
+            showIdent = false
             marketingCaption = "Daily Dumpster — same seed worldwide"
             playMode = .daily
             UserDefaults.standard.set("daily", forKey: "trashStack.shotActive")
             screen = .game
         default:
+            showIdent = false
             screen = .title
         }
     }
@@ -198,5 +247,12 @@ struct MarketingShotView: View {
                     .padding()
             }
         }
+    }
+}
+
+private extension View {
+    /// zIndex shim — SwiftUI uses zIndex, not SpriteKit zPosition.
+    func zPosition(_ value: Double) -> some View {
+        zIndex(value)
     }
 }
