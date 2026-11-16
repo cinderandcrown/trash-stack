@@ -4,13 +4,14 @@ import SwiftUI
 import Services
 
 /// Cold-launch studio ident — Cinder & Crown Creative Presents.
-/// First paint is charcoal + logo silhouette only; embers / SFX / heavy work deferred.
+/// First paint is solid charcoal only (stamp launch timing); logo/embers deferred one frame.
 struct PublisherIdentView: View {
     /// When true (smoke `-trashStackShot ident`), hold the final pose for a screenshot.
     var holdForShot: Bool = false
     var onFinished: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var showLogoArt = false
     @State private var logoOpacity: Double = 0
     @State private var logoScale: CGFloat = 0.92
     @State private var titleOpacity: Double = 0
@@ -28,83 +29,90 @@ struct PublisherIdentView: View {
     var body: some View {
         ZStack {
             charcoal.ignoresSafeArea()
-            // Subtle ember glow (static radial — cheap first paint).
-            RadialGradient(
-                colors: [crimson.opacity(0.55 * glowPulse), charcoal.opacity(0)],
-                center: .center,
-                startRadius: 20,
-                endRadius: 340
-            )
-            .ignoresSafeArea()
-            .allowsHitTesting(false)
+            if showLogoArt {
+                RadialGradient(
+                    colors: [crimson.opacity(0.55 * glowPulse), charcoal.opacity(0)],
+                    center: .center,
+                    startRadius: 20,
+                    endRadius: 340
+                )
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
 
-            if showEmbers, !reduceMotion {
-                EmberField(gold: gold, crimson: crimson)
-                    .allowsHitTesting(false)
-            }
-
-            VStack(spacing: 22) {
-                Spacer(minLength: 40)
-                ZStack {
-                    BundleImage(name: "CinderCrownMute")
-                        .scaledToFit()
-                        .frame(width: 168, height: 168)
-                        .opacity(logoOpacity)
-                        .scaleEffect(logoScale)
-                        .shadow(color: gold.opacity(0.35 * glowPulse), radius: 28)
-                        .accessibilityLabel("Cinder and Crown")
-
-                    if !reduceMotion {
-                        // Soft gold light sweep across the crown.
-                        LinearGradient(
-                            colors: [.clear, gold.opacity(0.55), .clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                        .frame(width: 56, height: 180)
-                        .rotationEffect(.degrees(18))
-                        .offset(x: sweepX * 140)
-                        .blendMode(.plusLighter)
-                        .opacity(logoOpacity)
-                        .mask(
-                            BundleImage(name: "CinderCrownMute")
-                                .scaledToFit()
-                                .frame(width: 168, height: 168)
-                        )
+                if showEmbers, !reduceMotion {
+                    EmberField(gold: gold, crimson: crimson)
                         .allowsHitTesting(false)
-                    }
                 }
 
-                Text("Cinder & Crown Creative Presents")
-                    .font(.system(size: 17, weight: .light, design: .serif))
-                    .tracking(3.2)
-                    .foregroundStyle(cream.opacity(0.95))
-                    .multilineTextAlignment(.center)
-                    .opacity(titleOpacity)
-                    .padding(.horizontal, 28)
+                VStack(spacing: 22) {
+                    Spacer(minLength: 40)
+                    ZStack {
+                        BundleImage(name: "CinderCrownMute")
+                            .scaledToFit()
+                            .frame(width: 168, height: 168)
+                            .opacity(logoOpacity)
+                            .scaleEffect(logoScale)
+                            .shadow(color: gold.opacity(0.35 * glowPulse), radius: 28)
+                            .accessibilityLabel("Cinder and Crown")
 
-                Text("Cinder & Crown logo, © Cinder and Crown LLC, used by permission.")
-                    .font(.system(size: 10, weight: .regular, design: .default))
-                    .tracking(0.4)
-                    .foregroundStyle(gold.opacity(0.55))
-                    .multilineTextAlignment(.center)
-                    .opacity(creditOpacity)
-                    .padding(.horizontal, 24)
+                        if !reduceMotion {
+                            LinearGradient(
+                                colors: [.clear, gold.opacity(0.55), .clear],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                            .frame(width: 56, height: 180)
+                            .rotationEffect(.degrees(18))
+                            .offset(x: sweepX * 140)
+                            .blendMode(.plusLighter)
+                            .opacity(logoOpacity)
+                            .mask(
+                                BundleImage(name: "CinderCrownMute")
+                                    .scaledToFit()
+                                    .frame(width: 168, height: 168)
+                            )
+                            .allowsHitTesting(false)
+                        }
+                    }
 
-                Spacer(minLength: 48)
+                    Text("Cinder & Crown Creative Presents")
+                        .font(.system(size: 17, weight: .light, design: .serif))
+                        .tracking(3.2)
+                        .foregroundStyle(cream.opacity(0.95))
+                        .multilineTextAlignment(.center)
+                        .opacity(titleOpacity)
+                        .padding(.horizontal, 28)
+
+                    Text("Cinder & Crown logo, © Cinder and Crown LLC, used by permission.")
+                        .font(.system(size: 10, weight: .regular, design: .default))
+                        .tracking(0.4)
+                        .foregroundStyle(gold.opacity(0.55))
+                        .multilineTextAlignment(.center)
+                        .opacity(creditOpacity)
+                        .padding(.horizontal, 24)
+
+                    Spacer(minLength: 48)
+                }
             }
         }
         .contentShape(Rectangle())
         .onTapGesture { finish(skipped: true) }
-        .onAppear(perform: runSequence)
+        .onAppear(perform: bootstrapFirstFrame)
         .accessibilityAddTraits(.isButton)
         .accessibilityHint("Skips the studio intro")
     }
 
-    private func runSequence() {
-        // Honest first-frame stamp — ident is the first interactive paint.
+    private func bootstrapFirstFrame() {
+        // Honest first-frame stamp BEFORE decoding the mute logo.
         LaunchTiming.markFirstTitleFrame()
+        Task { @MainActor in
+            await Task.yield()
+            showLogoArt = true
+            runSequence()
+        }
+    }
 
+    private func runSequence() {
         if reduceMotion {
             logoOpacity = 1
             logoScale = 1
@@ -118,7 +126,6 @@ struct PublisherIdentView: View {
             return
         }
 
-        // Ignite logo (~0.55s), title fade (~0.35s), hold, crossfade out (~0.35s) → ~2.0s.
         withAnimation(.easeOut(duration: 0.55)) {
             logoOpacity = 1
             logoScale = 1
@@ -130,7 +137,6 @@ struct PublisherIdentView: View {
         Task { @MainActor in
             await Task.yield()
             showEmbers = true
-            // Optional whoosh — respects mute; lazy single-buffer load (no full SFX bank).
             AudioService.shared.playSFX("ember_whoosh", pitch: 0.95)
             try? await Task.sleep(nanoseconds: 380_000_000)
             withAnimation(.easeOut(duration: 0.35)) {

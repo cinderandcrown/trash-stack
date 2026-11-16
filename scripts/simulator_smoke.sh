@@ -187,6 +187,41 @@ print(f"Title OK (not splash) {path} mse={mse:.0f} teal={teal} magenta={magenta}
 PY
 }
 
+# Reject the OS UILaunchScreen (LaunchLogo) — dark enough to pass assert_app_frame but not SwiftUI yet.
+assert_not_launch_splash() {
+  local file="$1"
+  local logo="${SMOKE_ROOT}/TrashStack/Assets.xcassets/LaunchLogo.imageset/LaunchLogo.png"
+  python3 - "$file" "$logo" <<'PY'
+import sys, pathlib
+path = pathlib.Path(sys.argv[1])
+logo_path = pathlib.Path(sys.argv[2])
+try:
+    from PIL import Image
+except Exception as e:
+    print(f"Pillow required to reject launch splash: {e}", file=sys.stderr)
+    sys.exit(2)
+im = Image.open(path).convert("RGB")
+w, h = im.size
+if not logo_path.exists():
+    print(f"LaunchLogo missing at {logo_path}", file=sys.stderr)
+    sys.exit(2)
+logo = Image.open(logo_path).convert("RGB").resize((w, h))
+err = 0.0
+n = 0
+for y in range(h // 5, 4 * h // 5, max(1, h // 40)):
+    for x in range(w // 5, 4 * w // 5, max(1, w // 40)):
+        a = im.getpixel((x, y))
+        b = logo.getpixel((x, y))
+        err += sum((a[i] - b[i]) ** 2 for i in range(3))
+        n += 1
+mse = err / max(1, n * 3)
+if mse < 1800:
+    print(f"Still OS launch splash (mse={mse:.0f} < 1800): {path}", file=sys.stderr)
+    sys.exit(5)
+print(f"Not launch splash OK {path} mse={mse:.0f}")
+PY
+}
+
 # Fail if gameplay shots still show SpriteKit's red-X missing-texture tiles.
 assert_no_missing_textures() {
   local file="$1"
@@ -337,46 +372,49 @@ except Exception:
 PY
 
 # Cold-launch timing (ads skipped):
-# 1) In-app: ProcessInfo.systemUptime at @main → first interactive frame (publisher ident).
-# 2) Wall-clock: bash $SECONDS around simctl launch → first valid app frame (≤ 8s).
-# Do NOT relabel wall-clock as in-app paint. Do NOT raise the 8s ceiling.
-# Publisher ident (~2s) must NOT delay first-frame measurement.
+# 1) In-app: ProcessInfo.systemUptime at @main → first SwiftUI frame (ident) ≤ 1.5s.
+# 2) Wall-clock: after process is up → first non-LaunchLogo frame with in-app stamp ≤ 8s.
+# Do NOT accept OS UILaunchScreen as first frame. Do NOT raise the 8s ceiling.
 with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true
-LAUNCH_T0=$SECONDS
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSecString" >/dev/null 2>&1 || true
 with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 cat /tmp/sim-launch-cold.out >&2 || true
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if app_running; then break; fi
   sleep 0.15
 done
-# First meaningful frame = publisher ident (or title if ident skipped). Gate on that — not on title.
+# Wall clock starts once the process is up — not during simctl launch overhead.
+LAUNCH_T0=$SECONDS
 FIRST_OK=0
-for try in 1 2 3 4 5 6 7 8; do
+INAPP_RAW=""
+for try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16; do
   sleep 0.2
+  INAPP_RAW="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSec 2>/dev/null || true)"
   shot "$OUT_DIR/00-publisher-ident.png" || true
-  if assert_app_frame "$OUT_DIR/00-publisher-ident.png"; then
+  if [[ -n "${INAPP_RAW// /}" ]] \
+    && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
+    && assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"; then
     FIRST_OK=1
     break
   fi
 done
 LAUNCH_DT=$((SECONDS - LAUNCH_T0))
-INAPP_RAW="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSec 2>/dev/null || true)"
 INAPP_STR="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSecString 2>/dev/null || true)"
 {
-  echo "wall_clock_launch_to_first_frame_s=$LAUNCH_DT"
+  echo "wall_clock_process_up_to_first_frame_s=$LAUNCH_DT"
   echo "in_app_process_start_to_first_frame_s=${INAPP_RAW:-missing}"
   echo "in_app_process_start_to_first_frame_string=${INAPP_STR:-missing}"
-  echo "gates: in_app<=1.5s AND wall_clock<=8s; first frame is publisher ident (not delayed by preload)"
+  echo "gates: in_app<=1.5s AND wall_clock<=8s; reject OS LaunchLogo; require in-app stamp"
 } | tee "$OUT_DIR/launch-timing.txt"
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
 printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-wall-clock-seconds.txt"
 if (( FIRST_OK == 0 )); then
-  echo "First frame invalid after cold launch polls" >&2
+  echo "First SwiftUI frame never arrived (or still LaunchLogo / missing in-app stamp)" >&2
   exit 1
 fi
 if (( LAUNCH_DT > 8 )); then

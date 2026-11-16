@@ -110,6 +110,10 @@ struct RootView: View {
             }
         }
         .onAppear {
+            // Stamp first frame as soon as RootView appears (ident path); idempotent with Ident/Title.
+            if showIdent {
+                LaunchTiming.markFirstTitleFrame()
+            }
             if let pref = PlayMode(rawValue: profile.preferredMode.rawValue) {
                 playMode = pref
             }

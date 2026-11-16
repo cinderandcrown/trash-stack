@@ -30,5 +30,6 @@ enum LaunchTiming {
         defaults.set(now, forKey: "trashStack.titleFrameUptime")
         // Also mirror as a string for easy `defaults read` in smoke.
         defaults.set(String(format: "%.4f", dt), forKey: "trashStack.launchToTitleSecString")
+        defaults.synchronize()
     }
 }
