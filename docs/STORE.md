@@ -18,7 +18,7 @@ Trash Stack is a material-matching dumpster game, not a block-letter puzzle.
 - **Snatch** once per run with your raccoon helper
 - **Junkyard base**, Season Pass, Gem Shop, quests, and daily spin (odds always shown)
 
-Free to play. Soft currency from play. Cosmetics and convenience only — never pay-to-win score. Age rating designed for 12+.
+Free to play. Soft currency from play. Mild progress speedups / boosters OK if earnable free and not crazy — no paid-only power, no nagging. Age rating designed for 12+.
 
 ## Keywords
 

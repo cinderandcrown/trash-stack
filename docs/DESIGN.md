@@ -78,9 +78,15 @@ One **seeded** puzzle per calendar day (UTC date seed), **same for everyone**. L
 - **Season Pass**: free + premium **cosmetic** tracks (bin skins, item skins, chute effects, raccoon outfits)
 - **Game Center achievements** (first recycle, 5× chain, press slam, daily clear, streak 7, etc.)
 
-### Monetization guardrails
+### Monetization guardrails (Nicholas)
 
-No purchase popups at launch, mid-run, or after a loss. At most **one dismissible offer per session**. Soft currency from play; cosmetics/convenience only. See `docs/ECONOMY.md`.
+**Mild pay-to-win is OK — just not crazy.** Paid items may **speed progress** and give a **modest edge** (e.g. Recycling Yard timer skips, run boosters, extra Snatch charges). Soft rules:
+
+- Everything powerful must also be **earnable for free by playing** (no paid-only power).
+- No gap so large that a **skilled free player can’t compete** (leaderboards, Shift stars, Daily Dumpster).
+- Cosmetics stay swagger; progression buys are convenience / mild edge, not a wall.
+
+**No-nagging still applies:** no purchase popups at launch, mid-run, or after a loss; at most **one dismissible offer per session**. See `docs/ECONOMY.md`.
 
 ## Controls (forgiving)
 
@@ -109,7 +115,7 @@ Do **not** implement this section until the in-flight feel / FTUE / retention pa
 - **Recycling Yard** home base: upgrades paid with materials you recycled in runs (metal / plastic / glass / paper → yard buildings), not generic soft-currency spam.
 - Upgrades that **finish while you’re away** (real-time timers) — the reason to open the app again.
 - **Daily recycling-order goals** tied to the Yard (distinct from in-run order tickets).
-- **Something to collect every visit** (finished upgrade, free crate, yard scrap pile) — no nagging, no pay-to-win.
+- **Something to collect every visit** (finished upgrade, free crate, yard scrap pile) — no nagging; mild paid speedups OK if earnable free and not crazy (see Monetization).
 
 **Feel (CoD → night-shift punch)**
 

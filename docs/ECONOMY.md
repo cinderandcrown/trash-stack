@@ -79,7 +79,7 @@ Buildings (Scrap + real-time timers; Gems speed up; builder slots):
 Builders: **2** free, up to **4** (extra slot gem stub cost 350).  
 Speedup: `ceil(remainingSec / 60)` Gems (min 1, max 200).
 
-Perks are **run juice / economy**, never pay-to-win personal-best score.
+**Mild pay-to-win is OK — just not crazy** (Nicholas / `docs/DESIGN.md`): timer skips, boosters, extra Snatch charges may give a modest edge and speed progress, but everything must be earnable free by playing, no paid-only power, and no gap so large a skilled free player can’t compete. No-nagging rules above still apply.
 
 ## Season Pass (Fortnite model)
 
