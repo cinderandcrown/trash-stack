@@ -422,8 +422,35 @@ COMBO="$AUDIO_DIR/combo.wav"
 LOCK="$AUDIO_DIR/lock.wav"
 LEVELUP="$AUDIO_DIR/levelup.wav"
 MAGNET="$AUDIO_DIR/magnet.wav"
-if [[ -f "$VIDEO_RAW" && -f "$MUSIC" ]] && command -v ffmpeg >/dev/null 2>&1; then
-  ffmpeg -y -i "$VIDEO_RAW" \
+# Resolve ffmpeg (PATH or Homebrew).
+FFMPEG_BIN="$(command -v ffmpeg || true)"
+if [[ -z "$FFMPEG_BIN" ]]; then
+  for cand in /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
+    if [[ -x "$cand" ]]; then FFMPEG_BIN="$cand"; break; fi
+  done
+fi
+FFPROBE_BIN="$(command -v ffprobe || true)"
+if [[ -z "$FFPROBE_BIN" ]]; then
+  for cand in /opt/homebrew/bin/ffprobe /usr/local/bin/ffprobe; do
+    if [[ -x "$cand" ]]; then FFPROBE_BIN="$cand"; break; fi
+  done
+fi
+if [[ ! -f "$VIDEO_RAW" ]]; then
+  echo "Silent capture missing: $VIDEO_RAW" >&2
+  ls -la "$OUT_DIR" >&2 || true
+  exit 1
+fi
+if [[ ! -f "$MUSIC" ]]; then
+  echo "Music bed missing: $MUSIC" >&2
+  exit 1
+fi
+if [[ -z "$FFMPEG_BIN" ]]; then
+  echo "ffmpeg not found (install via brew install ffmpeg)" >&2
+  exit 1
+fi
+echo "Muxing with $FFMPEG_BIN ($(wc -c < "$VIDEO_RAW") byte silent capture)" >&2
+if [[ -f "$VIDEO_RAW" && -f "$MUSIC" && -n "$FFMPEG_BIN" ]]; then
+  "$FFMPEG_BIN" -y -i "$VIDEO_RAW" \
     -i "$MUSIC" \
     -i "$CRUSH" \
     -i "$RECYCLE" \
@@ -452,30 +479,32 @@ if [[ -f "$VIDEO_RAW" && -f "$MUSIC" ]] && command -v ffmpeg >/dev/null 2>&1; th
       mv -f "$VIDEO_RAW" "$VIDEO_OUT"
     }
   rm -f "$VIDEO_RAW"
-  if ! ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
+  if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
     echo "Gameplay video missing audio track after mux" >&2
+    cat /tmp/ffmpeg-mux.log >&2 || true
     exit 1
   fi
   bytes=$(wc -c < "$VIDEO_OUT")
   if (( bytes > 150000000 )); then
     echo "Gameplay video too large ($bytes bytes); recompressing" >&2
-    ffmpeg -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1
+    "$FFMPEG_BIN" -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1
     mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
   fi
   echo "Muxed music+SFX onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
   # Recycle-chain clip with audio for evidence (~t=11–15s).
-  ffmpeg -y -ss 11 -t 4 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
+  "$FFMPEG_BIN" -y -ss 11 -t 4 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
     "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1 || {
       echo "recycle-chain clip failed" >&2
       cat /tmp/ffmpeg-clip.log >&2 || true
       exit 1
     }
-  if ! ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
+  if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
     echo "recycle-chain-clip.mp4 missing audio" >&2
     exit 1
   fi
 else
   echo "ffmpeg/audio missing — demo MUST have an audio track" >&2
+  echo "VIDEO_RAW=$([[ -f $VIDEO_RAW ]] && echo ok || echo missing) MUSIC=$([[ -f $MUSIC ]] && echo ok || echo missing) FFMPEG=${FFMPEG_BIN:-none}" >&2
   exit 1
 fi
 
