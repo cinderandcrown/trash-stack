@@ -231,19 +231,39 @@ print(f"Not launch splash OK {path} (stdlib; in-app stamp authoritative)")
 PY
 }
 
-read_inapp_launch_sec() {
-  local v container
-  v="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSec 2>/dev/null || true)"
-  v="$(echo "$v" | tr -d '[:space:]')"
-  if [[ -z "$v" || "$v" == "missing" ]]; then
-    v="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSecString 2>/dev/null || true)"
-    v="$(echo "$v" | tr -d '[:space:]' | tr -d '\"')"
+# Read a key from Documents/launch-timing.txt (preferred) or UserDefaults.
+read_launch_field() {
+  local key="$1"
+  local v="" container defkey=""
+  container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  if [[ -n "$container" && -f "$container/Documents/launch-timing.txt" ]]; then
+    v="$(grep -E "^${key}=" "$container/Documents/launch-timing.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
   fi
   if [[ -z "$v" ]]; then
-    container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
-    if [[ -n "$container" && -f "$container/Documents/launch-timing.txt" ]]; then
+    case "$key" in
+      in_app_sec) defkey="trashStack.launchToTitleSec" ;;
+      in_app_sec_string) defkey="trashStack.launchToTitleSecString" ;;
+      first_frame_wall_epoch) defkey="trashStack.firstFrameWallEpochString" ;;
+    esac
+    if [[ -n "$defkey" ]]; then
+      v="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
+      v="$(echo "$v" | tr -d '[:space:]' | tr -d '\"')"
+    fi
+  fi
+  # Legacy: plain Documents file that was only the dt string.
+  if [[ -z "$v" && "$key" == "in_app_sec" && -n "$container" && -f "$container/Documents/launch-timing.txt" ]]; then
+    if ! grep -q '=' "$container/Documents/launch-timing.txt" 2>/dev/null; then
       v="$(tr -d '[:space:]' < "$container/Documents/launch-timing.txt")"
     fi
+  fi
+  printf '%s' "$v"
+}
+
+read_inapp_launch_sec() {
+  local v
+  v="$(read_launch_field in_app_sec)"
+  if [[ -z "$v" ]]; then
+    v="$(read_launch_field in_app_sec_string)"
   fi
   printf '%s' "$v"
 }
@@ -398,9 +418,10 @@ except Exception:
 PY
 
 # Cold-launch timing (ads skipped):
-# 1) In-app: ProcessInfo.systemUptime at @main → first SwiftUI frame (ident) ≤ 1.5s.
-# 2) Wall-clock: after process is up → first non-LaunchLogo frame with in-app stamp ≤ 8s.
-# Do NOT accept OS UILaunchScreen as first frame. Do NOT raise the 8s ceiling.
+# 1) In-app (authoritative): ProcessInfo.systemUptime @main → first SwiftUI frame ≤ 1.5s.
+# 2) Wall-clock (honest): host epoch at simctl launch PID return → app first_frame_wall_epoch ≤ 8s.
+#    Do NOT use bash $SECONDS polling as the wall metric (that is harness overhead).
+# Do NOT raise the 8s ceiling.
 with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
@@ -408,62 +429,93 @@ with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trash
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true
 with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSecString" >/dev/null 2>&1 || true
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpoch" >/dev/null 2>&1 || true
+with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpochString" >/dev/null 2>&1 || true
 with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
+# Host wall clock the instant launch returns its PID (same Mac clock as Date() in-sim).
+HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-cold.out >&2 || true
+echo "host_launch_epoch=$HOST_LAUNCH_EPOCH" >&2
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if app_running; then break; fi
   sleep 0.15
 done
-# Wall clock starts once the process is up — not during simctl launch overhead.
-# Hard stop at 8s (honest ceiling) — do not poll for minutes if stamp never arrives.
-LAUNCH_T0=$SECONDS
+# Poll only until the in-app stamp appears (budget 8s host wall, not a metric).
+POLL_T0=$SECONDS
 FIRST_OK=0
 INAPP_RAW=""
-while (( SECONDS - LAUNCH_T0 <= 8 )); do
+FRAME_EPOCH=""
+while (( SECONDS - POLL_T0 <= 8 )); do
   INAPP_RAW="$(read_inapp_launch_sec)"
+  FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
   shot "$OUT_DIR/00-publisher-ident.png" || true
-  if [[ -n "$INAPP_RAW" ]] \
+  if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]] \
     && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
     && assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"; then
     FIRST_OK=1
     break
   fi
-  sleep 0.2
+  sleep 0.15
 done
-LAUNCH_DT=$((SECONDS - LAUNCH_T0))
-INAPP_STR="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.launchToTitleSecString 2>/dev/null || true)"
+INAPP_STR="$(read_launch_field in_app_sec_string)"
 INAPP_RAW="$(read_inapp_launch_sec)"
+FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
+# Honest wall = app first-frame absolute epoch − host stamp at launch PID.
+WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" <<'PY'
+import sys
+host = (sys.argv[1] or "").strip()
+frame = (sys.argv[2] or "").strip()
+if not host or not frame:
+    print("missing")
+    raise SystemExit(0)
+try:
+    dt = float(frame) - float(host)
+except ValueError:
+    print("missing")
+    raise SystemExit(0)
+print(f"{dt:.4f}")
+PY
+)"
 {
-  echo "wall_clock_process_up_to_first_frame_s=$LAUNCH_DT"
+  echo "host_launch_epoch=$HOST_LAUNCH_EPOCH"
+  echo "first_frame_wall_epoch=${FRAME_EPOCH:-missing}"
+  echo "wall_clock_launch_pid_to_first_frame_s=${WALL_DT}"
   echo "in_app_process_start_to_first_frame_s=${INAPP_RAW:-missing}"
   echo "in_app_process_start_to_first_frame_string=${INAPP_STR:-missing}"
-  echo "gates: in_app<=1.5s AND wall_clock<=8s; reject OS LaunchLogo; require in-app stamp"
+  echo "gates: in_app<=1.5s (authoritative) AND wall_clock<=8s; reject OS LaunchLogo; require stamps"
 } | tee "$OUT_DIR/launch-timing.txt"
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
-printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-wall-clock-seconds.txt"
+printf '%s\n' "${WALL_DT}" > "$OUT_DIR/launch-wall-clock-seconds.txt"
 if (( FIRST_OK == 0 )); then
-  echo "First SwiftUI frame never arrived within 8s (or still LaunchLogo / missing in-app stamp)" >&2
-  echo "defaults=$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" 2>/dev/null | head -40 || true)" >&2
+  echo "First SwiftUI frame stamps never arrived within 8s poll" >&2
   container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
-  echo "docs=$(ls -la "$container/Documents" 2>/dev/null || true)" >&2
+  echo "docs=$(cat "$container/Documents/launch-timing.txt" 2>/dev/null || true)" >&2
   exit 1
 fi
-if (( LAUNCH_DT > 8 )); then
-  echo "Cold launch wall-clock ${LAUNCH_DT}s exceeds honest 8s ceiling" >&2
-  exit 1
-fi
-python3 - "$INAPP_RAW" <<'PY'
+python3 - "$INAPP_RAW" "$WALL_DT" <<'PY'
 import sys
-raw = (sys.argv[1] or "").strip()
-if not raw:
-    raise SystemExit("Missing in-app launch metric trashStack.launchToTitleSec")
+in_app = (sys.argv[1] or "").strip()
+wall = (sys.argv[2] or "").strip()
+if not in_app:
+    raise SystemExit("Missing in-app launch metric")
 try:
-    dt = float(raw)
+    dt = float(in_app)
 except ValueError as e:
-    raise SystemExit(f"Bad in-app launch metric {raw!r}: {e}")
+    raise SystemExit(f"Bad in-app launch metric {in_app!r}: {e}")
 if dt > 1.5:
     raise SystemExit(f"In-app launch {dt:.3f}s exceeds 1.5s budget")
 print(f"In-app launch OK {dt:.3f}s")
+if not wall or wall == "missing":
+    raise SystemExit("Missing honest wall-clock metric (host epoch vs first_frame_wall_epoch)")
+try:
+    wdt = float(wall)
+except ValueError as e:
+    raise SystemExit(f"Bad wall-clock metric {wall!r}: {e}")
+if wdt > 8.0:
+    raise SystemExit(f"Wall-clock launch {wdt:.3f}s exceeds honest 8s ceiling")
+if wdt < -1.0:
+    raise SystemExit(f"Wall-clock launch {wdt:.3f}s looks clock-skewed")
+print(f"Wall-clock launch OK {wdt:.3f}s")
 PY
 # Held publisher-ident screenshot for review evidence (timing already gated above).
 launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 2
