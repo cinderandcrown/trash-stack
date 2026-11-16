@@ -297,24 +297,26 @@ with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "tras
 LAUNCH_T0=$SECONDS
 with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 cat /tmp/sim-launch-cold.out >&2 || true
-for _ in 1 2 3 4 5 6 7 8 9 10; do
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   if app_running; then break; fi
-  sleep 0.2
+  sleep 0.15
 done
-# Brief paint settle only — keep this short so the number reflects launch, not sleep.
-sleep 0.8
-shot "$OUT_DIR/01-title.png"
-LAUNCH_DT=$(python3 - <<PY
-import time
-# bash SECONDS is integer; print with one decimal via elapsed approximation
-print($((SECONDS - LAUNCH_T0)))
-PY
-)
+# Poll for a valid title frame quickly (in-app paint is <1.5s; simctl needs a few tries).
+TITLE_OK=0
+for try in 1 2 3 4 5 6; do
+  sleep 0.35
+  shot "$OUT_DIR/01-title.png" || true
+  if assert_app_frame "$OUT_DIR/01-title.png"; then
+    TITLE_OK=1
+    break
+  fi
+done
+LAUNCH_DT=$((SECONDS - LAUNCH_T0))
 echo "cold_launch_to_title_s=$LAUNCH_DT" | tee "$OUT_DIR/launch-timing.txt"
 printf '%s\n' "$LAUNCH_DT" > "$OUT_DIR/launch-time-seconds.txt"
 echo "NOTE: in-app first interactive frame budget <1.5s (ATT/GAD deferred after first win)." | tee -a "$OUT_DIR/launch-timing.txt"
-if ! assert_app_frame "$OUT_DIR/01-title.png"; then
-  echo "Title frame invalid after cold launch — falling back to launch_shot" >&2
+if (( TITLE_OK == 0 )); then
+  echo "Title frame invalid after cold launch polls — falling back to launch_shot" >&2
   launch_shot "" "$OUT_DIR/01-title.png" 2
 fi
 # Simctl + boot residual ceiling (not the 1.5s in-app budget). Fail only if pathological.
