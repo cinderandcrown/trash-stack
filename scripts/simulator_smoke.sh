@@ -13,7 +13,7 @@ SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 STEP_BUDGET_S="${STEP_BUDGET_S:-90}"
 SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-12}"
 SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-15}"
-CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-3}"
+CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-4}"
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
 TIMING_FILE="$OUT_DIR/smoke-step-timing.tsv"
@@ -98,17 +98,38 @@ recover_simulator_once() {
   DEADLINE_FAILS=0
   IN_RECOVER=1
   echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, reinstall, then retry." >&2
-  note_timing step recover_simulator 180 0 0 "start:$reason"
+  note_timing step recover_simulator 240 0 0 "start:$reason"
   local t0=$SECONDS rc=0
   : >/tmp/sim-recover.log
   raw_deadline 45 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 60 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+  raw_deadline 120 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+  if ! raw_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1; then
+    echo "Erase/reboot install failed — creating a fresh simulator device." >&2
+    raw_deadline 45 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+    # Keep the old UDID around; create a sibling iPhone and switch DEVICE.
+    local new_udid=""
+    rm -f /tmp/sim-new-udid.txt
+    raw_deadline 45 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 17" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
+    new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
+    if [[ -z "$new_udid" ]]; then
+      raw_deadline 45 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 16" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
+      new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
+    fi
+    if [[ -n "$new_udid" ]]; then
+      DEVICE="$new_udid"
+      echo "Recover DEVICE now $DEVICE" >&2
+      raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+      raw_deadline 120 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+      raw_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+    else
+      rc=1
+    fi
+  fi
   raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
-  note_timing step recover_simulator 180 "$((SECONDS - t0))" "$rc" "done:$reason"
+  note_timing step recover_simulator 240 "$((SECONDS - t0))" "$rc" "done:$reason"
   IN_RECOVER=0
   if (( rc != 0 )); then
     echo "Simulator recover reinstall failed — fail fast." >&2
@@ -200,14 +221,22 @@ app_running() {
 }
 
 shot() {
-  local out="$1"
-  if with_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
+  local out="$1" ok=0
+  # Display fallbacks must NOT each count as a wedge timeout (3 displays ≠ wedged sim).
+  if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
+    ok=1
+  elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
+    ok=1
+  elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out" 2>/tmp/sim-shot.err; then
+    ok=1
+  fi
+  if (( ok == 1 )); then
+    DEADLINE_FAILS=0
     return 0
   fi
-  if with_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
-    return 0
-  fi
-  with_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out"
+  # Count the whole screenshot sequence as a single deadline failure toward wedge.
+  on_deadline_timeout "simctl io screenshot (all displays)"
+  return 124
 }
 
 # Reject blank / springboard captures. Prefer Pillow; fall back to stdlib PNG decode.
@@ -560,8 +589,8 @@ launch_shot() {
     fi
     smoke_budget
     # Prefer killall over simctl terminate — terminate is a known hang on wedged sims.
-    with_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-    with_deadline 5 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    # killall timeout when the app is already dead must not trip the wedge counter.
+    raw_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
     sleep 0.2
 
     write_shot_defaults "$mode"
