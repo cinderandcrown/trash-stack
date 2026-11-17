@@ -1383,19 +1383,34 @@ assert_not_launch_splash "$OUT_DIR/00-timing-frame.png" || true
 # and wrote the title screen as "ident".
 IDENT_CAPTURED=0
 CURRENT_STEP="shot:ident-cold"
-note_timing step "$CURRENT_STEP" 20 0 0 "start"
+note_timing step "$CURRENT_STEP" 45 0 0 "start"
 IDENT_T0=$SECONDS
-# Ident is held (trashStackShot ident); wait for logo + credit pose past charcoal first paint.
-sleep 1.4
-if shot "$OUT_DIR/00-publisher-ident.png" \
-  && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
-  && assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"; then
+# Ident is held (trashStackShot ident). Retry while still on this process — a later
+# relaunch + recover erase is far more expensive than a few screenshot attempts.
+for ident_try in 1 2 3 4 5 6; do
+  sleep 0.9
+  if shot "$OUT_DIR/00-publisher-ident.png" \
+    && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
+    && assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"; then
+    IDENT_CAPTURED=1
+    note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 0 "ok"
+    echo "Publisher ident captured from cold launch (try=$ident_try)" >&2
+    break
+  fi
+  echo "Cold-launch ident try=$ident_try not ready" >&2
+done
+if (( IDENT_CAPTURED == 0 )) \
+  && [[ -f "$OUT_DIR/00-timing-frame.png" ]] \
+  && assert_app_frame "$OUT_DIR/00-timing-frame.png" \
+  && assert_shot_matches_mode "ident" "$OUT_DIR/00-timing-frame.png"; then
+  cp "$OUT_DIR/00-timing-frame.png" "$OUT_DIR/00-publisher-ident.png"
   IDENT_CAPTURED=1
-  note_timing step "$CURRENT_STEP" 20 "$((SECONDS - IDENT_T0))" 0 "ok"
-  echo "Publisher ident captured from cold launch" >&2
-else
-  note_timing step "$CURRENT_STEP" 20 "$((SECONDS - IDENT_T0))" 1 "retry_later"
-  echo "Cold-launch ident not ready — will retry dedicated shot" >&2
+  note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 0 "ok_timing_fallback"
+  echo "Publisher ident fell back to cold-launch timing frame (charcoal studio card)" >&2
+fi
+if (( IDENT_CAPTURED == 0 )); then
+  note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 1 "missed"
+  echo "Cold-launch ident missed — will try soft dedicated shot (no recover)" >&2
 fi
 # Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
 CURRENT_STEP="title"
@@ -1438,9 +1453,31 @@ if (( TITLE_OK == 0 )); then
 fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
 smoke_budget
-# Publisher ident — only relaunch if cold-launch capture missed the studio card.
+# Publisher ident — soft dedicated attempt only (never recover/erase for ident alone).
 if (( IDENT_CAPTURED == 0 )); then
-  launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 3
+  CURRENT_STEP="shot:ident"
+  note_timing step "$CURRENT_STEP" 60 0 0 "start"
+  IDENT_T0=$SECONDS
+  write_shot_defaults "ident" 8
+  with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot ident -trashStackSkipAds >/tmp/sim-launch-ident.out 2>&1 || true
+  cat /tmp/sim-launch-ident.out >&2 || true
+  sleep 1.2
+  for ident_try in 1 2 3 4; do
+    shot "$OUT_DIR/00-publisher-ident.png" || true
+    if assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
+      && assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"; then
+      IDENT_CAPTURED=1
+      note_timing step "$CURRENT_STEP" 60 "$((SECONDS - IDENT_T0))" 0 "ok"
+      break
+    fi
+    sleep 0.8
+  done
+  if (( IDENT_CAPTURED == 0 )); then
+    note_timing step "$CURRENT_STEP" 60 "$((SECONDS - IDENT_T0))" 1 "failed"
+    echo "Publisher ident still missing after soft attempts" >&2
+    print_timing_table
+    exit 1
+  fi
 fi
 assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
