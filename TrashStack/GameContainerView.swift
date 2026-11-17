@@ -45,6 +45,7 @@ struct GameContainerView: View {
             previewHoldBar
 
             SpriteView(scene: scene)
+                .background(Color(red: 0.05, green: 0.06, blue: 0.10))
                 .ignoresSafeArea(edges: .horizontal)
                 .layoutPriority(1)
                 .overlay(alignment: .top) {
@@ -183,7 +184,9 @@ struct GameContainerView: View {
                              : "Revive once with an opt-in ad, or clock out. No purchase prompts here.")
                             .multilineTextAlignment(.center)
                             .foregroundStyle(NeonTheme.muted)
-                        Text("Score \(hudScore) · streak \(profile.dailyStreak)d")
+                        Text(profile.dailyStreak > 0
+                             ? "Score \(hudScore) · streak \(profile.dailyStreak)d"
+                             : "Score \(hudScore)")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(NeonTheme.teal)
                         NeonButton(title: "Revive (ad)") {
@@ -488,13 +491,49 @@ struct GameContainerView: View {
         scene.scaleMode = .resizeFill
         scene.configureForProMotion(false)
         LaunchTiming.markPlayTap()
+        // Demo/shot paths skip the ident — still warm textures before first board paint.
+        AssetPreloader.preloadDuringIdent()
         let shot = UserDefaults.standard.string(forKey: "trashStack.shotActive")
             ?? PlayerProfile.shotArgument()
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
         scene.autoplay = auto
+        let modeShot: String? = {
+            if let shot { return shot }
+            if playMode == .daily { return "daily" }
+            return nil
+        }()
+        // Apply board content immediately so the first SpriteKit paint is a filled bin, not gray empty.
+        if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
+            scene.applyShot(modeShot)
+            if modeShot == "revive" {
+                scene.autoplay = false
+                showContinue = true
+                raccoonMood = .panic
+            }
+        } else if playMode == .daily {
+            scene.applyShot("daily")
+        }
         scene.onFirstGameFrame = {
             Task { @MainActor in
                 LaunchTiming.markFirstGameFrame()
+                if auto {
+                    let playScene = scene
+                    playScene.autoplay = true
+                    playScene.startDemoChoreography {
+                        Task { @MainActor in
+                            raccoonMood = .panic
+                            showContinue = true
+                            try? await Task.sleep(nanoseconds: 2_200_000_000)
+                            showContinue = false
+                            continued = true
+                            playScene.revive()
+                            AudioService.shared.playSFX("levelup")
+                        }
+                    }
+                }
+                AudioService.shared.playMusic("game_loop")
+                syncHUD()
+                displayScore = scene.engine.state.score
             }
         }
         scene.onGameOver = { state in
@@ -556,43 +595,9 @@ struct GameContainerView: View {
                 UserDefaults.standard.set(scene.measuredFPS, forKey: "trashStack.measuredFPS")
             }
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-            let modeShot: String? = {
-                if let shot { return shot }
-                if playMode == .daily { return "daily" }
-                return nil
-            }()
-            if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
-                scene.applyShot(modeShot)
-                if modeShot == "demo" || modeShot == "autoplay" {
-                    scene.autoplay = true
-                    let playScene = scene
-                    playScene.startDemoChoreography {
-                        Task { @MainActor in
-                            raccoonMood = .panic
-                            showContinue = true
-                            try? await Task.sleep(nanoseconds: 2_200_000_000)
-                            showContinue = false
-                            continued = true
-                            playScene.revive()
-                            AudioService.shared.playSFX("levelup")
-                        }
-                    }
-                }
-                if modeShot == "revive" {
-                    scene.autoplay = false
-                    showContinue = true
-                    raccoonMood = .panic
-                }
-            } else if playMode == .daily {
-                scene.applyShot("daily")
-            }
-            syncHUD()
-            displayScore = scene.engine.state.score
-            AudioService.shared.playMusic("game_loop")
-        }
         syncHUD()
         displayScore = scene.engine.state.score
+        AudioService.shared.playMusic("game_loop")
     }
 
     @MainActor

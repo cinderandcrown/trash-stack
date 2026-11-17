@@ -114,6 +114,9 @@ struct RootView: View {
             if showIdent {
                 LaunchTiming.markFirstTitleFrame()
             }
+            // Always kick texture/audio warm — demo/shot paths skip the ident.
+            AssetPreloader.preloadDuringIdent()
+            AudioService.shared.applyPersistedMute()
             if let pref = PlayMode(rawValue: profile.preferredMode.rawValue) {
                 playMode = pref
             }

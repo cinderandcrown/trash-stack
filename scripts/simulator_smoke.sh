@@ -1184,8 +1184,10 @@ PY
 
 # Cold-launch timing (ads skipped):
 # 1) In-app (authoritative): ProcessInfo.systemUptime @main → first SwiftUI frame ≤ 1.5s.
-# 2) Wall-clock (honest): host epoch at simctl launch PID return → app first_frame_wall_epoch ≤ 8s.
-#    Do NOT use bash $SECONDS polling as the wall metric (that is harness overhead).
+# 2) Wall-clock (honest): host epoch at simctl launch *invoke* → stamps visible ≤ 8s.
+#    Prefer app Date() epoch when host/sim clocks agree; if the sim clock is skewed,
+#    fall back to host observation time of the Documents stamp (same 8s ceiling — not looser).
+# Do NOT use bash $SECONDS polling as the wall metric (that is harness overhead).
 # Do NOT raise the 8s ceiling.
 CURRENT_STEP="cold_launch_timing"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
@@ -1198,18 +1200,22 @@ with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trash
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSecString" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpoch" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpochString" >/dev/null 2>&1 || true
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
-# Host wall clock the instant launch returns its PID (same Mac clock as Date() in-sim).
+# Drop any stale Documents stamp left by unit-test launches.
+_docs_cold="$(launch_docs_path)"
+if [[ -n "$_docs_cold" && -f "$_docs_cold" ]]; then
+  rm -f "$_docs_cold" || true
+fi
+# Stamp host clock at invoke — not after launch returns (simctl can block while the app already painted).
 HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 cat /tmp/sim-launch-cold.out >&2 || true
 echo "host_launch_epoch=$HOST_LAUNCH_EPOCH" >&2
-# Poll Documents mirror until stamps appear. Window = 8s from launch-PID stamp
-# (not bash $SECONDS / poll-start). Keep shot/asserts out of this loop so FS sync
-# time is not eaten by screenshot overhead.
+# Poll Documents mirror until stamps appear. Window = 8s from launch invoke.
 STAMPS_OK=0
 INAPP_RAW=""
 INAPP_STR=""
 FRAME_EPOCH=""
+HOST_STAMPS_SEEN=""
 while python3 - "$HOST_LAUNCH_EPOCH" <<'PY'
 import sys, time
 sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
@@ -1225,6 +1231,7 @@ do
     INAPP_STR="$(read_launch_field in_app_sec_string)"
     FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
     if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+      HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
       STAMPS_OK=1
       break
     fi
@@ -1242,28 +1249,49 @@ if (( STAMPS_OK == 0 )); then
   INAPP_STR="$(read_launch_field in_app_sec_string)"
   FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
   if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+    HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
     STAMPS_OK=1
   fi
 fi
-# Honest wall = app first-frame absolute epoch − host stamp at launch PID.
-WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" <<'PY'
+# Honest wall: app Date() when clocks agree; else host observation of stamp file (same ≤8s gate).
+WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" "${HOST_STAMPS_SEEN:-}" <<'PY'
 import sys
 host = (sys.argv[1] or "").strip()
 frame = (sys.argv[2] or "").strip()
-if not host or not frame:
-    print("missing")
-    raise SystemExit(0)
+seen = (sys.argv[3] or "").strip()
+if not host:
+    print("missing"); raise SystemExit(0)
 try:
-    dt = float(frame) - float(host)
+    h = float(host)
 except ValueError:
+    print("missing"); raise SystemExit(0)
+app_dt = None
+if frame:
+    try:
+        app_dt = float(frame) - h
+    except ValueError:
+        app_dt = None
+host_dt = None
+if seen:
+    try:
+        host_dt = float(seen) - h
+    except ValueError:
+        host_dt = None
+# Prefer app wall when clocks roughly agree; large negative/absurd = sim clock skew.
+if app_dt is not None and -0.5 <= app_dt <= 30.0:
+    print(f"{app_dt:.4f}")
+elif host_dt is not None:
+    print(f"{host_dt:.4f}")
+elif app_dt is not None:
+    print(f"{app_dt:.4f}")
+else:
     print("missing")
-    raise SystemExit(0)
-print(f"{dt:.4f}")
 PY
 )"
 {
   echo "host_launch_epoch=$HOST_LAUNCH_EPOCH"
   echo "first_frame_wall_epoch=${FRAME_EPOCH:-missing}"
+  echo "host_stamps_seen_epoch=${HOST_STAMPS_SEEN:-missing}"
   echo "wall_clock_launch_pid_to_first_frame_s=${WALL_DT}"
   echo "in_app_process_start_to_first_frame_s=${INAPP_RAW:-missing}"
   echo "in_app_process_start_to_first_frame_string=${INAPP_STR:-missing}"
@@ -1272,7 +1300,7 @@ PY
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
 printf '%s\n' "${WALL_DT}" > "$OUT_DIR/launch-wall-clock-seconds.txt"
 if (( STAMPS_OK == 0 )); then
-  echo "First SwiftUI frame stamps never arrived within 8s of launch-PID" >&2
+  echo "First SwiftUI frame stamps never arrived within 8s of launch invoke" >&2
   docs="$(launch_docs_path)"
   echo "docs_path=${docs:-missing}" >&2
   echo "docs=$(cat "$docs" 2>/dev/null || true)" >&2
@@ -1532,13 +1560,14 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   exit 1
 fi
 set -e
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/tmp/sim-launch-demo.out 2>&1 || true
 HOST_GAME_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/tmp/sim-launch-demo.out 2>&1 || true
 cat /tmp/sim-launch-demo.out >&2 || true
 # Gate PLAY→first real game frame: in-app ≤1.5s, wall ≤8s (never loosen).
 GAME_STAMPS_OK=0
 GAME_INAPP=""
 GAME_FRAME_EPOCH=""
+HOST_GAME_STAMPS_SEEN=""
 while python3 - "$HOST_GAME_LAUNCH_EPOCH" <<'PY'
 import sys, time
 sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
@@ -1549,24 +1578,43 @@ do
     GAME_INAPP="$(read_launch_field game_in_app_sec)"
     GAME_FRAME_EPOCH="$(read_launch_field game_first_frame_wall_epoch)"
     if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
+      HOST_GAME_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
       GAME_STAMPS_OK=1
       break
     fi
   fi
   sleep 0.1
 done
-GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" <<'PY'
+GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" "${HOST_GAME_STAMPS_SEEN:-}" <<'PY'
 import sys
-host=(sys.argv[1] or "").strip(); frame=(sys.argv[2] or "").strip()
-if not host or not frame:
+host=(sys.argv[1] or "").strip(); frame=(sys.argv[2] or "").strip(); seen=(sys.argv[3] or "").strip()
+if not host:
     print("missing"); raise SystemExit(0)
-try: print(f"{float(frame)-float(host):.4f}")
-except ValueError: print("missing")
+try: h=float(host)
+except ValueError:
+    print("missing"); raise SystemExit(0)
+app_dt=None
+if frame:
+    try: app_dt=float(frame)-h
+    except ValueError: pass
+host_dt=None
+if seen:
+    try: host_dt=float(seen)-h
+    except ValueError: pass
+if app_dt is not None and -0.5 <= app_dt <= 30.0:
+    print(f"{app_dt:.4f}")
+elif host_dt is not None:
+    print(f"{host_dt:.4f}")
+elif app_dt is not None:
+    print(f"{app_dt:.4f}")
+else:
+    print("missing")
 PY
 )"
 {
   echo "host_game_launch_epoch=$HOST_GAME_LAUNCH_EPOCH"
   echo "game_first_frame_wall_epoch=${GAME_FRAME_EPOCH:-missing}"
+  echo "host_game_stamps_seen_epoch=${HOST_GAME_STAMPS_SEEN:-missing}"
   echo "game_wall_clock_s=${GAME_WALL}"
   echo "game_in_app_sec=${GAME_INAPP:-missing}"
   echo "gates: game_in_app<=1.5s (after PLAY) AND game_wall<=8s"
@@ -1585,6 +1633,8 @@ print(f"Game-path in-app OK {dt:.3f}s")
 wdt=float(wall)
 if wdt > 8.0:
     raise SystemExit(f"Game-path wall {wdt:.3f}s exceeds 8s ceiling")
+if wdt < -1.0:
+    raise SystemExit(f"Game-path wall {wdt:.3f}s looks clock-skewed")
 print(f"Game-path wall OK {wdt:.3f}s")
 PY
 # Continuous autoplay (~35s): recycle/press/snatch/game-over beats without board teleport spam.

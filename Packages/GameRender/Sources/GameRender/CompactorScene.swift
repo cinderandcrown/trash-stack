@@ -33,7 +33,8 @@ public final class CompactorScene: SKScene {
     private var lastTime: TimeInterval = 0
     private var fpsSamples: [Double] = []
     private var didBuild = false
-    private let cellPad: CGFloat = 0.5
+    /// Near-zero pad so solid tiles cover ≥85% of occupied cell area (QA coverage metric).
+    private let cellPad: CGFloat = 0.0
     private var pendingShot: String?
     /// Continuous display coords (board space) — independent of discrete logic ticks.
     private var visualX: CGFloat = 0
@@ -55,7 +56,9 @@ public final class CompactorScene: SKScene {
     private var didFireFirstGameFrame = false
 
     public override func didMove(to view: SKView) {
-        backgroundColor = SKColor(red: 0.03, green: 0.03, blue: 0.07, alpha: 1)
+        let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
+        backgroundColor = charcoal
+        view.backgroundColor = charcoal
         preferredFPS = 60
         view.preferredFramesPerSecond = preferredFPS
         view.ignoresSiblingOrder = true
@@ -1057,7 +1060,7 @@ public final class CompactorScene: SKScene {
         case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.72, alpha: 1)
         case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)
         case .paper: return SKColor(red: 0.85, green: 0.7, blue: 0.35, alpha: 1)
-        case .glass: return SKColor(red: 0.2, green: 0.9, blue: 0.95, alpha: 0.9)
+        case .glass: return SKColor(red: 0.2, green: 0.9, blue: 0.95, alpha: 1)
         }
     }
 
