@@ -673,13 +673,16 @@ launch_shot() {
   local settle="${3:-4}"
   local attempts=0
   # Recycle juice / game boards need time past OS LaunchLogo after a hard terminate.
-  local max_attempts=3
+  local max_attempts=4
   case "$mode" in
     recycle|mkt-recycle|game|gameplay|compactor|press|revive|daily|demo|autoplay|mkt-play|mkt-crush|mkt-recycle|mkt-daily)
       if (( settle < 5 )); then settle=5; fi
       ;;
     ident|publisher)
       if (( settle < 4 )); then settle=4; fi
+      ;;
+    base|pass|shop|notif|share|streak|junkyard|mkt-base|mkt-pass|mkt-shop)
+      if (( settle < 3 )); then settle=3; fi
       ;;
   esac
   local shot_start=$SECONDS
@@ -715,14 +718,12 @@ launch_shot() {
       sleep 1
       continue
     fi
-    # Prefer a hard kill so -trashStackShot args apply on a fresh process.
-    # If terminate flakes, defaults + in-app smoke poll still switch the live UI.
-    ensure_app_terminated || true
-
     left=$(shot_budget_left "$shot_start")
     if (( left < 8 )); then sleep 1; continue; fi
     write_shot_defaults "$mode" "$left"
 
+    # Soft path first: write defaults + launch (no-op if already running). The in-app
+    # smoke poll switches UI without terminate — repeated killall was wedging simctl.
     left=$(shot_budget_left "$shot_start")
     if (( left < 5 )); then sleep 1; continue; fi
     local launch_lim="$SIMCTL_DEADLINE_S"
@@ -734,8 +735,25 @@ launch_shot() {
       with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     fi
     cat /tmp/sim-launch.out >&2 || true
-    # Give the in-app shot poll a beat when relaunch reused a live process.
-    sleep 0.7
+    sleep 0.9
+
+    # Only hard-kill when the soft switch failed on a prior attempt.
+    if (( attempts >= 2 )); then
+      echo "launch_shot: soft switch missed for '$mode' — hard terminate once" >&2
+      ensure_app_terminated || true
+      write_shot_defaults "$mode" "$(shot_budget_left "$shot_start")"
+      left=$(shot_budget_left "$shot_start")
+      launch_lim="$SIMCTL_DEADLINE_S"
+      (( left < launch_lim )) && launch_lim=$left
+      (( launch_lim < 2 )) && launch_lim=2
+      if [[ -n "$mode" ]]; then
+        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      else
+        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      fi
+      cat /tmp/sim-launch.out >&2 || true
+      sleep 0.8
+    fi
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 5 )); then sleep 1; continue; fi
@@ -761,7 +779,7 @@ launch_shot() {
       continue
     fi
     # Extra beat for SpriteKit board / juice after first SwiftUI paint.
-    sleep 1.2
+    sleep 1.0
     if ! shot "$outfile"; then
       echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
       sleep 0.5
