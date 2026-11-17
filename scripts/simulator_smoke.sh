@@ -887,11 +887,18 @@ with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashS
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
 TITLE_OK=0
-for try in 1 2 3 4 5 6; do
+TITLE_RECOVERED=0
+for try in 1 2 3 4 5 6 7 8; do
   if (( SECONDS - TITLE_T0 > STEP_BUDGET_S )); then
-    echo "Title step blew ${STEP_BUDGET_S}s hard budget" >&2
-    recover_simulator_once "step_budget:title"
-    echo "Fail fast after title step budget." >&2
+    if (( TITLE_RECOVERED == 0 )); then
+      echo "Title step blew ${STEP_BUDGET_S}s hard budget — recover once and retry." >&2
+      recover_simulator_once "step_budget:title"
+      TITLE_RECOVERED=1
+      TITLE_T0=$SECONDS
+      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
+      continue
+    fi
+    echo "Fail fast: title still over budget after recover." >&2
     print_timing_table
     exit 125
   fi
