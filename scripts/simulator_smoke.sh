@@ -329,9 +329,11 @@ import sys, struct, zlib, pathlib
 path = pathlib.Path(sys.argv[1])
 data = path.read_bytes()
 # OS LaunchLogo is a tiny neon card on black (~80–120 KB). Real in-app frames are >>200 KB.
-if len(data) < 80_000:
-    print(f"Frame too small ({len(data)} bytes): {path}", file=sys.stderr)
-    sys.exit(2)
+# Hard floor rejects LaunchLogo even when PNG sampling fails and we would otherwise
+# take the size-only OK path.
+if len(data) < 150_000:
+    print(f"Frame too small / likely OS LaunchLogo ({len(data)} bytes): {path}", file=sys.stderr)
+    sys.exit(6)
 
 samples = None
 try:
@@ -405,17 +407,13 @@ if samples is None:
                 samples.append((rows[y][i], rows[y][i + 1], rows[y][i + 2]))
 
 if not samples:
-    # Last resort: large enough PNG that survived simctl capture.
-    print(f"Frame OK {path} (size-only {len(data)} bytes)")
-    sys.exit(0)
+    print(f"Frame undecodable after size check: {path}", file=sys.stderr)
+    sys.exit(2)
 
 whites = sum(1 for r, g, b in samples if r > 245 and g > 245 and b > 245)
 beiges = sum(1 for r, g, b in samples if r > 90 and g > 70 and b < 160 and r > b + 15)
 darks = sum(1 for r, g, b in samples if r < 55 and g < 55 and b < 75)
-# OS LaunchLogo: near-black field + tiny neon mark (edge samples dark, tiny file).
-if darks >= 6 and len(data) < 200_000:
-    print(f"OS LaunchLogo / pre-SwiftUI frame: {path} (dark={darks} bytes={len(data)})", file=sys.stderr)
-    sys.exit(6)
+# Size floor already rejected LaunchLogo; do not reject charcoal ident (also very dark).
 if whites >= 7:
     print(f"Blank/white frame: {path}", file=sys.stderr)
     sys.exit(2)
@@ -713,19 +711,29 @@ launch_shot() {
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 5 )); then sleep 1; continue; fi
-    # Cap settle to remaining budget so a step cannot sleep past its ceiling.
-    local settle_use="$settle"
-    if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" || "$mode" == "ident" ]]; then
-      settle_use=$((settle + 1))
+    # Poll until past OS LaunchLogo / first real frame (fixed sleep alone is flaky on CI).
+    local poll_deadline=$((SECONDS + settle + 8))
+    local got_frame=0
+    while (( SECONDS < poll_deadline )); do
+      left=$(shot_budget_left "$shot_start")
+      if (( left < 5 )); then break; fi
+      if ! shot "$outfile"; then
+        sleep 0.6
+        continue
+      fi
+      if assert_app_frame "$outfile"; then
+        got_frame=1
+        break
+      fi
+      echo "Waiting past LaunchLogo/splash for mode='$mode' ($(stat -c%s "$outfile" 2>/dev/null || echo 0) bytes)" >&2
+      sleep 0.8
+    done
+    if (( got_frame == 0 )); then
+      echo "No post-LaunchLogo frame for mode='$mode' attempt=$attempts — retrying" >&2
+      continue
     fi
-    if (( settle_use > left - 4 )); then
-      settle_use=$((left - 4))
-    fi
-    if (( settle_use < 1 )); then settle_use=1; fi
-    sleep "$settle_use"
-
-    left=$(shot_budget_left "$shot_start")
-    if (( left < 5 )); then sleep 1; continue; fi
+    # Extra beat for SpriteKit board / juice after first SwiftUI paint.
+    sleep 1.2
     if ! shot "$outfile"; then
       echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
       sleep 0.5
@@ -743,46 +751,12 @@ launch_shot() {
       DEADLINE_FAILS=0
       return 0
     fi
-    echo "Bad frame for mode='$mode' attempt=$attempts — retrying" >&2
+    echo "Bad frame for mode='$mode' attempt=$attempts — retrying (no sim erase)" >&2
+    settle=$((settle + 2))
   done
   step_elapsed=$((SECONDS - shot_start))
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 1 "failed"
-  if (( SIM_RECOVERED == 0 )); then
-    echo "Shot '$mode' failed — erase/reboot once then retry step." >&2
-    recover_simulator_once "shot_failed:$mode"
-    STEP_NEEDS_RESET=0
-    attempts=0
-    shot_start=$SECONDS
-    note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "retry_after_recover"
-    while (( attempts < max_attempts )); do
-      attempts=$((attempts + 1))
-      if (( SECONDS - shot_start > STEP_BUDGET_S )); then
-        break
-      fi
-      smoke_budget
-      ensure_app_terminated || true
-      write_shot_defaults "$mode"
-      if [[ -n "$mode" ]]; then
-        with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-      else
-        with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-      fi
-      cat /tmp/sim-launch.out >&2 || true
-      if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" || "$mode" == "ident" ]]; then
-        sleep 1.2
-        sleep "$settle"
-      else
-        sleep "$settle"
-      fi
-      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
-      if ! shot "$outfile"; then continue; fi
-      if assert_app_frame "$outfile" && assert_shot_matches_mode "$mode" "$outfile"; then
-        note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - shot_start))" 0 "ok_after_recover"
-        echo "Wrote $outfile" >&2
-        return 0
-      fi
-    done
-  fi
+  # Do NOT erase/reinstall on bad frames — that hung CI (install timeout). Soft-fail the shot.
   echo "Failed to capture a valid app frame for mode='$mode' → $outfile" >&2
   print_timing_table
   exit 1
