@@ -1477,7 +1477,6 @@ if (( TITLE_OK == 0 )); then
   exit 1
 fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
-SOFT_SHOT_ONLY=1
 smoke_budget
 # Publisher ident — soft dedicated attempt only (never recover/erase for ident alone).
 if (( IDENT_CAPTURED == 0 )); then
@@ -1509,8 +1508,10 @@ assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
+# First gameplay shot may still need simctl launch; after it lands, soft-only.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
+SOFT_SHOT_ONLY=1
 launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 3
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
 # Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
