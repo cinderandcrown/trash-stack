@@ -32,35 +32,54 @@ note_timing() {
   echo "timing kind=$kind name=$name limit=${limit}s elapsed=${elapsed}s rc=$rc ${note}" >&2
 }
 
-# Raw deadline used inside recover (no wedge recursion).
+# Kill a process group tree (xcrun→simctl grandchildren ignore single-PID kills).
+_kill_tree() {
+  local pid="$1"
+  kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
+  sleep 0.3
+  kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+}
+
+# Run argv under a hard wall-clock deadline; kill the whole process group on expiry.
+# (Prior perl-alarm only signaled xcrun; simctl children kept running → 15s limits took 140s.)
+_run_deadline() {
+  local secs="$1"
+  shift
+  local rc=0 t0
+  t0=$(python3 -c 'import time; print(time.time())')
+  set -m
+  "$@" &
+  local pid=$!
+  set +m
+  while kill -0 "$pid" 2>/dev/null; do
+    if python3 - "$t0" "$secs" <<'PY'
+import sys, time
+sys.exit(0 if (time.time() - float(sys.argv[1])) >= float(sys.argv[2]) else 1)
+PY
+    then
+      _kill_tree "$pid"
+      wait "$pid" 2>/dev/null || true
+      return 124
+    fi
+    sleep 0.2
+  done
+  wait "$pid" 2>/dev/null || rc=$?
+  return "$rc"
+}
+
+# Raw deadline used inside recover / screenshot fallbacks (no wedge recursion).
 raw_deadline() {
   local secs="$1" rc=0
   shift
   local label t0 elapsed
   label="$(cmd_label "$@")"
   t0=$SECONDS
-  perl -e '
-    my $secs = shift @ARGV;
-    my $pid = fork();
-    if (!defined $pid) { exit 127; }
-    if ($pid == 0) { exec @ARGV; exit 127; }
-    my $timed_out = 0;
-    local $SIG{ALRM} = sub {
-      $timed_out = 1;
-      kill "TERM", $pid;
-      select undef, undef, undef, 0.4;
-      kill "KILL", $pid;
-    };
-    alarm $secs;
-    waitpid($pid, 0);
-    alarm 0;
-    if ($timed_out) { exit 124; }
-    my $status = $?;
-    if ($status == -1) { exit 127; }
-    if ($status & 127) { exit 128 + ($status & 127); }
-    exit($status >> 8);
-  ' "$secs" "$@" || rc=$?
+  _run_deadline "$secs" "$@" || rc=$?
   elapsed=$((SECONDS - t0))
+  # If wall elapsed >= limit, normalize to timeout even if signal status differs.
+  if (( elapsed >= secs && rc != 0 )); then
+    rc=124
+  fi
   note_timing deadline "$label" "$secs" "$elapsed" "$rc" "step=$CURRENT_STEP raw=1"
   if (( rc == 124 || rc == 142 || rc == 14 )); then
     return 124
@@ -159,36 +178,18 @@ on_deadline_timeout() {
 }
 
 # macOS-friendly deadline (GNU timeout is missing on xcode runners).
-# Perl child owns the alarm so bash never prints "Alarm clock: 14".
+# Kills the whole process group so hung simctl grandchildren cannot outlive the limit.
 with_deadline() {
   local secs="$1" rc=0
   shift
   local label t0 elapsed
   label="$(cmd_label "$@")"
   t0=$SECONDS
-  # Fork+exec under perl; on alarm TERM/KILL the child and exit 124 (no SIGALRM to bash).
-  perl -e '
-    my $secs = shift @ARGV;
-    my $pid = fork();
-    if (!defined $pid) { exit 127; }
-    if ($pid == 0) { exec @ARGV; exit 127; }
-    my $timed_out = 0;
-    local $SIG{ALRM} = sub {
-      $timed_out = 1;
-      kill "TERM", $pid;
-      select undef, undef, undef, 0.4;
-      kill "KILL", $pid;
-    };
-    alarm $secs;
-    waitpid($pid, 0);
-    alarm 0;
-    if ($timed_out) { exit 124; }
-    my $status = $?;
-    if ($status == -1) { exit 127; }
-    if ($status & 127) { exit 128 + ($status & 127); }
-    exit($status >> 8);
-  ' "$secs" "$@" || rc=$?
+  _run_deadline "$secs" "$@" || rc=$?
   elapsed=$((SECONDS - t0))
+  if (( elapsed >= secs && rc != 0 )); then
+    rc=124
+  fi
   note_timing deadline "$label" "$secs" "$elapsed" "$rc" "step=$CURRENT_STEP"
   if (( rc == 124 || rc == 142 || rc == 14 )); then
     on_deadline_timeout "$label"
@@ -528,21 +529,16 @@ except Exception as e:
 PY
 }
 
-# One simctl spawn for all defaults (cuts wedge surface vs 3 serial writes).
+# Defaults via discrete simctl spawn (simulator /bin/sh -c was returning 134).
 write_shot_defaults() {
   local mode="$1"
-  local script
-  script=$(cat <<EOF
-defaults write "$BUNDLE_ID" tutorialDone -bool true
-defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true
-EOF
-)
+  with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+  with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
   if [[ -n "$mode" ]]; then
-    script+=$'\n'"defaults write \"$BUNDLE_ID\" \"trashStack.shot\" -string \"$mode\""
+    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
   else
-    script+=$'\n'"defaults delete \"$BUNDLE_ID\" \"trashStack.shot\" >/dev/null 2>&1 || true"
+    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
   fi
-  with_deadline 12 xcrun simctl spawn "$DEVICE" /bin/sh -c "$script" >/dev/null 2>&1 || true
 }
 
 launch_shot() {
@@ -642,6 +638,50 @@ launch_shot() {
   done
   step_elapsed=$((SECONDS - shot_start))
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 1 "failed"
+  if (( SIM_RECOVERED == 0 )); then
+    echo "Shot '$mode' failed — erase/reboot once then retry step." >&2
+    recover_simulator_once "shot_failed:$mode"
+    STEP_NEEDS_RESET=0
+    attempts=0
+    shot_start=$SECONDS
+    budget_retries=1
+    note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "retry_after_recover"
+    while (( attempts < max_attempts )); do
+      attempts=$((attempts + 1))
+      if (( SECONDS - shot_start > STEP_BUDGET_S )); then
+        break
+      fi
+      smoke_budget
+      raw_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+      sleep 0.2
+      write_shot_defaults "$mode"
+      if [[ -n "$mode" ]]; then
+        with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      else
+        with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      fi
+      cat /tmp/sim-launch.out >&2 || true
+      local waited=0
+      while (( waited < 4 )); do
+        if app_running; then break; fi
+        sleep 0.25
+        waited=$((waited + 1))
+      done
+      if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
+        sleep 1.1
+        sleep "$settle"
+      else
+        sleep "$settle"
+      fi
+      if ! app_running; then continue; fi
+      if ! shot "$outfile"; then continue; fi
+      if assert_app_frame "$outfile"; then
+        note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - shot_start))" 0 "ok_after_recover"
+        echo "Wrote $outfile" >&2
+        return 0
+      fi
+    done
+  fi
   echo "Failed to capture a valid app frame for mode='$mode' → $outfile" >&2
   print_timing_table
   exit 1
