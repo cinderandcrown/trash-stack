@@ -125,33 +125,28 @@ recover_simulator_once() {
   killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
   killall -9 Simulator >/dev/null 2>&1 || true
   killall -9 simctl >/dev/null 2>&1 || true
-  sleep 2
-  # Prefer reusing the original UDID after service restart (erase+boot).
-  raw_deadline 40 xcrun simctl shutdown "$old_device" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 40 xcrun simctl erase "$old_device" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 40 xcrun simctl boot "$old_device" >>/tmp/sim-recover.log 2>&1 || true
-  if ! raw_deadline 75 xcrun simctl bootstatus "$old_device" -b >>/tmp/sim-recover.log 2>&1; then
-    echo "Original UDID still unhealthy — creating sibling device." >&2
-    local new_udid=""
-    rm -f /tmp/sim-new-udid.txt
-    raw_deadline 25 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 17" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
-    new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
-    if [[ -z "$new_udid" ]]; then
-      raw_deadline 25 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 16" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
-      new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
+  # Wait for launchd to bring CoreSimulatorService back.
+  local i
+  for i in 1 2 3 4 5 6 7 8; do
+    sleep 2
+    if raw_deadline 8 xcrun simctl list devices >/dev/null 2>&1; then
+      echo "CoreSimulatorService responsive after restart (try $i)" >&2
+      break
     fi
-    if [[ -n "$new_udid" && "$new_udid" != "$old_device" ]]; then
-      DEVICE="$new_udid"
-      echo "Recover DEVICE now $DEVICE" >&2
-      raw_deadline 40 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-      raw_deadline 75 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-    else
-      DEVICE="$old_device"
-    fi
-  else
-    DEVICE="$old_device"
+  done
+  DEVICE="$old_device"
+  raw_deadline 30 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 30 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 30 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 75 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+  if (( rc != 0 )); then
+    echo "Install on $DEVICE failed after service restart — trying once more." >&2
+    sleep 3
+    raw_deadline 30 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+    raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+    raw_deadline 75 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
   fi
-  raw_deadline 50 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
   raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
   note_timing step recover_simulator 180 "$((SECONDS - t0))" "$rc" "done:$reason"
@@ -224,6 +219,7 @@ app_running() {
 shot() {
   local out="$1" ok=0
   # Display fallbacks must NOT each count as a wedge timeout (3 displays ≠ wedged sim).
+  # Screenshot flakes also must NOT trigger erase/reboot — that burned 4+ minutes then failed.
   if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
     ok=1
   elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
@@ -235,8 +231,7 @@ shot() {
     DEADLINE_FAILS=0
     return 0
   fi
-  # Count the whole screenshot sequence as a single deadline failure toward wedge.
-  on_deadline_timeout "simctl io screenshot (all displays)"
+  echo "screenshot failed on all displays (not counting toward sim wedge)" >&2
   return 124
 }
 
@@ -616,6 +611,7 @@ launch_shot() {
       step_elapsed=$((SECONDS - shot_start))
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 0 "ok"
       echo "Wrote $outfile" >&2
+      DEADLINE_FAILS=0
       return 0
     fi
     echo "Bad frame for mode='$mode' attempt=$attempts — retrying" >&2
