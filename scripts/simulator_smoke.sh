@@ -32,8 +32,8 @@ note_timing() {
 }
 
 # Run argv under a hard wall-clock deadline; kill the whole process group on expiry.
-# Python wait(timeout=) returns after killpg — perl waitpid could block forever on a
-# wedged simctl tree (that burned the 35-minute smoke step with no further logs).
+# Use setpgrp (same session) — start_new_session + killpg gets EPERM on macOS CI and
+# leaves orphaned xcrun/simctl children that wedge the rest of the suite.
 _run_deadline() {
   local secs="$1" rc=0
   shift
@@ -42,27 +42,46 @@ import os, signal, subprocess, sys, time
 
 secs = float(sys.argv[1])
 cmd = sys.argv[2:]
-proc = subprocess.Popen(cmd, start_new_session=True)
+
+def nuke(pid: int) -> None:
+    """Kill pid and its process group / children. Never raise."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            return
+        except OSError:
+            # macOS can EPERM killpg in edge cases — fall back to pid + children.
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+            try:
+                out = subprocess.check_output(["pgrep", "-P", str(pid)], text=True, stderr=subprocess.DEVNULL)
+            except Exception:
+                out = ""
+            for line in out.split():
+                try:
+                    os.kill(int(line.strip()), sig)
+                except (OSError, ValueError):
+                    pass
+        if sig == signal.SIGTERM:
+            time.sleep(0.35)
+
+# New process group, SAME session (killpg works on macOS). Avoid start_new_session.
+proc = subprocess.Popen(cmd, preexec_fn=os.setpgrp)
 try:
     code = proc.wait(timeout=secs)
     sys.exit(code if code is not None else 0)
 except subprocess.TimeoutExpired:
-    try:
-        os.killpg(proc.pid, signal.SIGTERM)
-    except ProcessLookupError:
-        pass
-    time.sleep(0.4)
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
+    nuke(proc.pid)
     deadline = time.time() + 3.0
     while time.time() < deadline:
         try:
-            code = proc.wait(timeout=0.2)
+            proc.wait(timeout=0.2)
             break
         except subprocess.TimeoutExpired:
-            continue
+            nuke(proc.pid)
         except Exception:
             break
     sys.exit(124)
@@ -122,15 +141,15 @@ recover_simulator_once() {
   DEADLINE_FAILS=0
   IN_RECOVER=1
   local old_device="$DEVICE"
-  echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, then fail fast on next wedge." >&2
+  echo "Simulator wedge detected ($reason) — shutdown+erase old UDID, create fresh device, boot once." >&2
   note_timing step recover_simulator 240 0 0 "start:$reason"
   local t0=$SECONDS rc=0
   : >/tmp/sim-recover.log
-  # Kill the wedged daemon — create/boot hang until this is restarted.
+  # Kill wedged helpers/daemon so create/boot are not blocked by orphaned simctl.
   killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
   killall -9 Simulator >/dev/null 2>&1 || true
   killall -9 simctl >/dev/null 2>&1 || true
-  # Wait for launchd to bring CoreSimulatorService back (hard-capped).
+  killall -9 xcrun >/dev/null 2>&1 || true
   local i
   for i in 1 2 3 4 5 6; do
     sleep 2
@@ -145,50 +164,86 @@ recover_simulator_once() {
       exit 125
     fi
   done
-  DEVICE="$old_device"
-  # User-required recover path: shutdown → erase → boot once (all deadline-capped).
-  raw_deadline 20 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  sleep 1
-  if ! raw_deadline 45 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1; then
-    echo "simctl erase timed out or failed — fail fast (see /tmp/sim-recover.log)." >&2
+  # Shutdown + erase the wedged UDID (best-effort; same-UDID bootstatus after erase
+  # previously hung with SimError 405 on CI).
+  raw_deadline 15 xcrun simctl shutdown "$old_device" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 30 xcrun simctl erase "$old_device" >>/tmp/sim-recover.log 2>&1 || true
+  # Create a brand-new device cloned from the old one's type/runtime.
+  local new_device
+  new_device="$(python3 - "$old_device" <<'PY' 2>>/tmp/sim-recover.log
+import json, subprocess, sys, time
+old = sys.argv[1]
+data = json.loads(subprocess.check_output(
+    ["xcrun", "simctl", "list", "devices", "-j"], text=True))
+devtype = runtime = None
+for rt, items in data.get("devices", {}).items():
+    for d in items:
+        if d.get("udid") == old:
+            runtime = rt
+            devtype = d.get("deviceTypeIdentifier")
+            break
+    if runtime:
+        break
+if not runtime or not devtype:
+    # Fallback: prefer iPhone 16 / 15 on any iOS runtime.
+    for rt, items in data.get("devices", {}).items():
+        if "iOS" not in rt:
+            continue
+        for d in items:
+            name = d.get("name", "")
+            if name.startswith("iPhone") and "Duo" not in name and "Fold" not in name:
+                runtime = rt
+                devtype = d.get("deviceTypeIdentifier")
+                if devtype:
+                    break
+        if runtime and devtype:
+            break
+if not runtime or not devtype:
+    print("recover: cannot resolve deviceType/runtime", file=sys.stderr)
+    sys.exit(2)
+name = f"TrashStack-Smoke-{int(time.time())}"
+udid = subprocess.check_output(
+    ["xcrun", "simctl", "create", name, devtype, runtime], text=True).strip()
+print(udid)
+PY
+)" || new_device=""
+  if [[ -z "$new_device" ]]; then
+    echo "Failed to create fresh simulator after erase — fail fast." >&2
     cat /tmp/sim-recover.log >&2 || true
-    note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "erase_failed:$reason"
+    note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "create_failed:$reason"
     print_timing_table
     exit 125
   fi
+  DEVICE="$new_device"
+  echo "Recover created fresh device DEVICE=$DEVICE (old=$old_device)" >&2
+  note_timing step recover_new_device 0 0 0 "old=$old_device new=$DEVICE"
   if ! raw_deadline 40 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1; then
-    echo "simctl boot after erase failed — fail fast." >&2
+    echo "simctl boot of fresh device failed — fail fast." >&2
     cat /tmp/sim-recover.log >&2 || true
     note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "boot_failed:$reason"
     print_timing_table
     exit 125
   fi
   if ! raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1; then
-    echo "simctl bootstatus after erase hung/failed — fail fast." >&2
+    echo "simctl bootstatus of fresh device hung/failed — fail fast." >&2
     cat /tmp/sim-recover.log >&2 || true
     note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "bootstatus_failed:$reason"
     print_timing_table
     exit 125
   fi
   if ! raw_deadline 45 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1; then
-    echo "install after erase returned non-zero; checking app container" >&2
-    if raw_deadline 10 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data >/dev/null 2>&1; then
-      echo "App container present — continuing." >&2
-      rc=0
-    else
-      echo "Simulator recover reinstall failed — fail fast." >&2
-      cat /tmp/sim-recover.log >&2 || true
-      note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "install_failed:$reason"
-      print_timing_table
-      exit 125
-    fi
+    echo "install on fresh device failed — fail fast." >&2
+    cat /tmp/sim-recover.log >&2 || true
+    note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "install_failed:$reason"
+    print_timing_table
+    exit 125
   fi
   raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
-  note_timing step recover_simulator 240 "$((SECONDS - t0))" "$rc" "done:$reason"
+  note_timing step recover_simulator 240 "$((SECONDS - t0))" 0 "done:$reason"
   IN_RECOVER=0
   STEP_NEEDS_RESET=1
-  echo "Simulator recover OK (shutdown/erase/boot) — suite will retry the current step once." >&2
+  echo "Simulator recover OK (erase old + fresh device boot) — retry current step once." >&2
 }
 
 on_deadline_timeout() {
@@ -588,8 +643,6 @@ launch_shot() {
     max_attempts=2
     if (( settle < 4 )); then settle=4; fi
   fi
-  # One extra attempt window if we had to erase/reboot mid-step.
-  local budget_retries=0
   local shot_start=$SECONDS
   CURRENT_STEP="shot:$mode"
   STEP_NEEDS_RESET=0
@@ -599,7 +652,6 @@ launch_shot() {
     # Recover mid-step (via deadline timeouts) must not count against this step's budget.
     if (( STEP_NEEDS_RESET == 1 )); then
       STEP_NEEDS_RESET=0
-      budget_retries=1
       attempts=0
       shot_start=$SECONDS
       echo "Resetting step clock for '$mode' after simulator recover" >&2
@@ -610,16 +662,6 @@ launch_shot() {
     if (( step_elapsed > STEP_BUDGET_S )); then
       echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
-      if (( budget_retries == 0 )); then
-        # Soft retry first — full erase/reboot is a last resort (often fails install on CI).
-        budget_retries=1
-        attempts=0
-        shot_start=$SECONDS
-        DEADLINE_FAILS=0
-        echo "Soft-retrying '$mode' with fresh ${STEP_BUDGET_S}s budget (no erase)." >&2
-        note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "soft_retry"
-        continue
-      fi
       if (( SIM_RECOVERED == 0 )); then
         recover_simulator_once "step_budget:$mode"
         continue
@@ -631,6 +673,7 @@ launch_shot() {
     smoke_budget
     left=$(shot_budget_left "$shot_start")
     if (( left < 8 )); then
+      sleep 1
       continue
     fi
     # Prefer killall over simctl terminate — terminate is a known hang on wedged sims.
@@ -638,13 +681,14 @@ launch_shot() {
     sleep 0.15
 
     left=$(shot_budget_left "$shot_start")
-    if (( left < 8 )); then continue; fi
+    if (( left < 8 )); then sleep 1; continue; fi
     write_shot_defaults "$mode" "$left"
 
     left=$(shot_budget_left "$shot_start")
-    if (( left < 5 )); then continue; fi
+    if (( left < 5 )); then sleep 1; continue; fi
     local launch_lim="$SIMCTL_DEADLINE_S"
     (( left < launch_lim )) && launch_lim=$left
+    (( launch_lim < 2 )) && launch_lim=2
     if [[ -n "$mode" ]]; then
       with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     else
@@ -653,19 +697,23 @@ launch_shot() {
     cat /tmp/sim-launch.out >&2 || true
 
     left=$(shot_budget_left "$shot_start")
-    if (( left < settle + 3 )); then continue; fi
-    # Brief settle for paint — do not re-enter app_running (it can stall simctl).
+    if (( left < 5 )); then sleep 1; continue; fi
+    # Cap settle to remaining budget so a step cannot sleep past its ceiling.
+    local settle_use="$settle"
     if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-      sleep 1.0
-      sleep "$settle"
-    else
-      sleep "$settle"
+      settle_use=$((settle + 1))
     fi
+    if (( settle_use > left - 4 )); then
+      settle_use=$((left - 4))
+    fi
+    if (( settle_use < 1 )); then settle_use=1; fi
+    sleep "$settle_use"
 
     left=$(shot_budget_left "$shot_start")
-    if (( left < 5 )); then continue; fi
+    if (( left < 5 )); then sleep 1; continue; fi
     if ! shot "$outfile"; then
       echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
+      sleep 0.5
       continue
     fi
     if assert_app_frame "$outfile"; then
@@ -685,7 +733,6 @@ launch_shot() {
     STEP_NEEDS_RESET=0
     attempts=0
     shot_start=$SECONDS
-    budget_retries=1
     note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "retry_after_recover"
     while (( attempts < max_attempts )); do
       attempts=$((attempts + 1))
