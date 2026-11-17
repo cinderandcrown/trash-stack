@@ -22,12 +22,49 @@ echo -e "kind\tname\tlimit_s\telapsed_s\trc\tnote" >> "$TIMING_FILE"
 
 DEADLINE_FAILS=0
 SIM_RECOVERED=0
+IN_RECOVER=0
 CURRENT_STEP="init"
 
 note_timing() {
   local kind="$1" name="$2" limit="$3" elapsed="$4" rc="$5" note="${6:-}"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$name" "$limit" "$elapsed" "$rc" "$note" >> "$TIMING_FILE"
   echo "timing kind=$kind name=$name limit=${limit}s elapsed=${elapsed}s rc=$rc ${note}" >&2
+}
+
+# Raw deadline used inside recover (no wedge recursion).
+raw_deadline() {
+  local secs="$1" rc=0
+  shift
+  local label t0 elapsed
+  label="$(cmd_label "$@")"
+  t0=$SECONDS
+  perl -e '
+    my $secs = shift @ARGV;
+    my $pid = fork();
+    if (!defined $pid) { exit 127; }
+    if ($pid == 0) { exec @ARGV; exit 127; }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+      select undef, undef, undef, 0.4;
+      kill "KILL", $pid;
+    };
+    alarm $secs;
+    waitpid($pid, 0);
+    alarm 0;
+    if ($timed_out) { exit 124; }
+    my $status = $?;
+    if ($status == -1) { exit 127; }
+    if ($status & 127) { exit 128 + ($status & 127); }
+    exit($status >> 8);
+  ' "$secs" "$@" || rc=$?
+  elapsed=$((SECONDS - t0))
+  note_timing deadline "$label" "$secs" "$elapsed" "$rc" "step=$CURRENT_STEP raw=1"
+  if (( rc == 124 || rc == 142 || rc == 14 )); then
+    return 124
+  fi
+  return "$rc"
 }
 
 # Compact argv for logs (keep simctl verb visible).
@@ -47,44 +84,54 @@ cmd_label() {
   printf '%s' "${out:-cmd}"
 }
 
-# Recover a wedged CoreSimulator once, then fail fast on further wedges.
+# Recover a wedged CoreSimulator once; a second wedge fails fast.
 recover_simulator_once() {
   local reason="$1"
   if (( SIM_RECOVERED == 1 )); then
     echo "Simulator still wedged after one erase/reboot ($reason). Fail fast." >&2
     echo "See $TIMING_FILE for per-step / with_deadline timings." >&2
+    print_timing_table
     exit 125
   fi
   SIM_RECOVERED=1
   DEADLINE_FAILS=0
-  echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, reinstall." >&2
-  note_timing step recover_simulator 120 0 0 "start:$reason"
+  IN_RECOVER=1
+  echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, reinstall, then retry." >&2
+  note_timing step recover_simulator 180 0 0 "start:$reason"
   local t0=$SECONDS rc=0
-  xcrun simctl shutdown "$DEVICE" >/tmp/sim-recover.log 2>&1 || true
-  xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-  xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
-  xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
-  xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
-  note_timing step recover_simulator 120 "$((SECONDS - t0))" "$rc" "done:$reason"
+  : >/tmp/sim-recover.log
+  raw_deadline 45 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 60 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+  raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
+  note_timing step recover_simulator 180 "$((SECONDS - t0))" "$rc" "done:$reason"
+  IN_RECOVER=0
   if (( rc != 0 )); then
     echo "Simulator recover reinstall failed — fail fast." >&2
     cat /tmp/sim-recover.log >&2 || true
     print_timing_table
     exit 125
   fi
+  echo "Simulator recover OK — suite will retry the current step." >&2
 }
 
 on_deadline_timeout() {
   local label="$1"
+  if (( IN_RECOVER == 1 )); then
+    return 0
+  fi
   DEADLINE_FAILS=$((DEADLINE_FAILS + 1))
   echo "deadline TIMEOUT ($DEADLINE_FAILS/$CONSEC_DEADLINE_LIMIT) cmd=$label step=$CURRENT_STEP" >&2
   if (( DEADLINE_FAILS >= CONSEC_DEADLINE_LIMIT )); then
+    if (( SIM_RECOVERED == 1 )); then
+      echo "Fail fast: simulator wedged again after erase/reboot (cmd='$label' step='$CURRENT_STEP')." >&2
+      print_timing_table
+      exit 125
+    fi
     recover_simulator_once "consec_timeout:$label"
-    echo "Fail fast after one simulator erase/reboot — hung cmd='$label' step='$CURRENT_STEP'." >&2
-    print_timing_table
-    exit 125
   fi
 }
 
@@ -450,6 +497,23 @@ except Exception as e:
 PY
 }
 
+# One simctl spawn for all defaults (cuts wedge surface vs 3 serial writes).
+write_shot_defaults() {
+  local mode="$1"
+  local script
+  script=$(cat <<EOF
+defaults write "$BUNDLE_ID" tutorialDone -bool true
+defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true
+EOF
+)
+  if [[ -n "$mode" ]]; then
+    script+=$'\n'"defaults write \"$BUNDLE_ID\" \"trashStack.shot\" -string \"$mode\""
+  else
+    script+=$'\n'"defaults delete \"$BUNDLE_ID\" \"trashStack.shot\" >/dev/null 2>&1 || true"
+  fi
+  with_deadline 12 xcrun simctl spawn "$DEVICE" /bin/sh -c "$script" >/dev/null 2>&1 || true
+}
+
 launch_shot() {
   local mode="$1"
   local outfile="$2"
@@ -461,6 +525,8 @@ launch_shot() {
     max_attempts=3
     if (( settle < 7 )); then settle=7; fi
   fi
+  # One extra attempt window if we had to erase/reboot mid-step.
+  local budget_retries=0
   local shot_start=$SECONDS
   CURRENT_STEP="shot:$mode"
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
@@ -471,23 +537,26 @@ launch_shot() {
     if (( step_elapsed > STEP_BUDGET_S )); then
       echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
-      recover_simulator_once "step_budget:$mode"
-      echo "Fail fast after simulator recover — step '$mode' blew ${STEP_BUDGET_S}s budget." >&2
+      if (( budget_retries == 0 )); then
+        recover_simulator_once "step_budget:$mode"
+        budget_retries=1
+        attempts=0
+        shot_start=$SECONDS
+        continue
+      fi
+      echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget after recover." >&2
       print_timing_table
       exit 125
     fi
     smoke_budget
-    with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-    sleep 0.3
+    # Short terminate — if wedged, don't burn; launch will replace the process.
+    with_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 0.2
 
-    # Defaults + launch args (args are authoritative in PlayerProfile.shotArgument).
-    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+    write_shot_defaults "$mode"
     if [[ -n "$mode" ]]; then
-      with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" || true
       with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     else
-      with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
       with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     fi
     cat /tmp/sim-launch.out >&2 || true
@@ -495,12 +564,16 @@ launch_shot() {
     # Wait briefly for the process, then one settle for paint.
     local waited=0
     while (( waited < 4 )); do
+      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
       if app_running; then
         break
       fi
       sleep 0.25
       waited=$((waited + 1))
     done
+    if (( SECONDS - shot_start > STEP_BUDGET_S )); then
+      continue
+    fi
     # Extra settle after process is alive so SwiftUI/SpriteKit can paint.
     # Recycle: capture while hold-glow + RECYCLE/CHAIN banner are still up (~1.2s).
     if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
@@ -530,6 +603,7 @@ launch_shot() {
   step_elapsed=$((SECONDS - shot_start))
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 1 "failed"
   echo "Failed to capture a valid app frame for mode='$mode' → $outfile" >&2
+  print_timing_table
   exit 1
 }
 
