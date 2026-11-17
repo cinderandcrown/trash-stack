@@ -10,10 +10,10 @@ BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
 DISPLAY="${SIMCTL_DISPLAY:-internal}"
 SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Hard budgets (harness only — app launch gates stay 1.5s / 8s).
-STEP_BUDGET_S="${STEP_BUDGET_S:-90}"
+STEP_BUDGET_S="${STEP_BUDGET_S:-120}"
 SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-10}"
 SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
-CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-4}"
+CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-5}"
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
 TIMING_FILE="$OUT_DIR/smoke-step-timing.tsv"
@@ -135,17 +135,21 @@ recover_simulator_once() {
     fi
   done
   DEVICE="$old_device"
-  raw_deadline 30 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 30 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 30 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  # Shutdown + boot only (erase caused SimError 405 / long hangs on CI).
+  raw_deadline 25 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  sleep 2
+  raw_deadline 40 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 75 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
-  if (( rc != 0 )); then
-    echo "Install on $DEVICE failed after service restart — trying once more." >&2
-    sleep 3
-    raw_deadline 30 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-    raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-    raw_deadline 75 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+  # Install may report already-installed / invalid state — treat as soft failure.
+  if ! raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1; then
+    echo "install after recover returned non-zero; checking whether app container exists" >&2
+    if raw_deadline 15 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data >/dev/null 2>&1; then
+      echo "App container present — continuing." >&2
+      rc=0
+    else
+      sleep 3
+      raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+    fi
   fi
   raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
@@ -570,8 +574,17 @@ launch_shot() {
       echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
       if (( budget_retries == 0 )); then
+        # Soft retry first — full erase/reboot is a last resort (often fails install on CI).
+        budget_retries=1
+        attempts=0
+        shot_start=$SECONDS
+        DEADLINE_FAILS=0
+        echo "Soft-retrying '$mode' with fresh ${STEP_BUDGET_S}s budget (no erase)." >&2
+        note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "soft_retry"
+        continue
+      fi
+      if (( SIM_RECOVERED == 0 )); then
         recover_simulator_once "step_budget:$mode"
-        # Loop top will honor STEP_NEEDS_RESET with a fresh clock.
         continue
       fi
       echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget after recover." >&2
