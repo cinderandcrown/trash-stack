@@ -9,39 +9,156 @@ OUT_DIR="${3:-smoke-artifacts}"
 BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
 DISPLAY="${SIMCTL_DISPLAY:-internal}"
 SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# Hard budgets (harness only — app launch gates stay 1.5s / 8s).
+STEP_BUDGET_S="${STEP_BUDGET_S:-90}"
+SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-12}"
+SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-15}"
+CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-3}"
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
+TIMING_FILE="$OUT_DIR/smoke-step-timing.tsv"
+: > "$TIMING_FILE"
+echo -e "kind\tname\tlimit_s\telapsed_s\trc\tnote" >> "$TIMING_FILE"
 
-app_running() {
-  # Prefer launchctl list; fall back to simctl spawn ps.
-  if xcrun simctl spawn "$DEVICE" launchctl list 2>/dev/null | grep -q "$BUNDLE_ID"; then
-    return 0
+DEADLINE_FAILS=0
+SIM_RECOVERED=0
+CURRENT_STEP="init"
+
+note_timing() {
+  local kind="$1" name="$2" limit="$3" elapsed="$4" rc="$5" note="${6:-}"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$name" "$limit" "$elapsed" "$rc" "$note" >> "$TIMING_FILE"
+  echo "timing kind=$kind name=$name limit=${limit}s elapsed=${elapsed}s rc=$rc ${note}" >&2
+}
+
+# Compact argv for logs (keep simctl verb visible).
+cmd_label() {
+  local out="" arg
+  for arg in "$@"; do
+    case "$arg" in
+      "$DEVICE"|"$BUNDLE_ID"|"$APP_PATH"|"$OUT_DIR"/*|/tmp/*) continue ;;
+      -*) out+="$arg " ;;
+      *) out+="$arg " ;;
+    esac
+  done
+  out="${out% }"
+  if [[ ${#out} -gt 100 ]]; then
+    out="${out:0:97}..."
   fi
-  xcrun simctl spawn "$DEVICE" ps aux 2>/dev/null | grep -v grep | grep -q "TrashStack" || return 1
+  printf '%s' "${out:-cmd}"
+}
+
+# Recover a wedged CoreSimulator once, then fail fast on further wedges.
+recover_simulator_once() {
+  local reason="$1"
+  if (( SIM_RECOVERED == 1 )); then
+    echo "Simulator still wedged after one erase/reboot ($reason). Fail fast." >&2
+    echo "See $TIMING_FILE for per-step / with_deadline timings." >&2
+    exit 125
+  fi
+  SIM_RECOVERED=1
+  DEADLINE_FAILS=0
+  echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, reinstall." >&2
+  note_timing step recover_simulator 120 0 0 "start:$reason"
+  local t0=$SECONDS rc=0
+  xcrun simctl shutdown "$DEVICE" >/tmp/sim-recover.log 2>&1 || true
+  xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+  xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+  xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
+  xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
+  note_timing step recover_simulator 120 "$((SECONDS - t0))" "$rc" "done:$reason"
+  if (( rc != 0 )); then
+    echo "Simulator recover reinstall failed — fail fast." >&2
+    cat /tmp/sim-recover.log >&2 || true
+    print_timing_table
+    exit 125
+  fi
+}
+
+on_deadline_timeout() {
+  local label="$1"
+  DEADLINE_FAILS=$((DEADLINE_FAILS + 1))
+  echo "deadline TIMEOUT ($DEADLINE_FAILS/$CONSEC_DEADLINE_LIMIT) cmd=$label step=$CURRENT_STEP" >&2
+  if (( DEADLINE_FAILS >= CONSEC_DEADLINE_LIMIT )); then
+    recover_simulator_once "consec_timeout:$label"
+    echo "Fail fast after one simulator erase/reboot — hung cmd='$label' step='$CURRENT_STEP'." >&2
+    print_timing_table
+    exit 125
+  fi
 }
 
 # macOS-friendly deadline (GNU timeout is missing on xcode runners).
-# Must not abort the parent under `set -e` when the child dies on SIGALRM (status 142).
+# Perl child owns the alarm so bash never prints "Alarm clock: 14".
 with_deadline() {
   local secs="$1" rc=0
   shift
-  perl -e 'alarm shift @ARGV; exec @ARGV' "$secs" "$@" || rc=$?
-  # Normalize alarm / timeout to 124 (same spirit as GNU timeout).
-  if (( rc == 142 || rc == 14 )); then
+  local label t0 elapsed
+  label="$(cmd_label "$@")"
+  t0=$SECONDS
+  # Fork+exec under perl; on alarm TERM/KILL the child and exit 124 (no SIGALRM to bash).
+  perl -e '
+    my $secs = shift @ARGV;
+    my $pid = fork();
+    if (!defined $pid) { exit 127; }
+    if ($pid == 0) { exec @ARGV; exit 127; }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+      select undef, undef, undef, 0.4;
+      kill "KILL", $pid;
+    };
+    alarm $secs;
+    waitpid($pid, 0);
+    alarm 0;
+    if ($timed_out) { exit 124; }
+    my $status = $?;
+    if ($status == -1) { exit 127; }
+    if ($status & 127) { exit 128 + ($status & 127); }
+    exit($status >> 8);
+  ' "$secs" "$@" || rc=$?
+  elapsed=$((SECONDS - t0))
+  note_timing deadline "$label" "$secs" "$elapsed" "$rc" "step=$CURRENT_STEP"
+  if (( rc == 124 || rc == 142 || rc == 14 )); then
+    on_deadline_timeout "$label"
     return 124
+  fi
+  if (( rc == 0 )); then
+    DEADLINE_FAILS=0
   fi
   return "$rc"
 }
 
+app_running() {
+  # Prefer launchctl list; fall back to simctl spawn ps. Always deadline-wrapped
+  # (unbounded simctl spawn is what burned 25 minutes on wedged sims).
+  local tmp rc=0
+  tmp="$(mktemp -t smoke-app-running.XXXXXX)"
+  with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null || rc=$?
+  if (( rc == 0 )) && grep -q "$BUNDLE_ID" "$tmp"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rc=0
+  with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl spawn "$DEVICE" ps aux >"$tmp" 2>/dev/null || rc=$?
+  if (( rc == 0 )) && grep -v grep "$tmp" | grep -q "TrashStack"; then
+    rm -f "$tmp"
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
+}
+
 shot() {
   local out="$1"
-  if with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
+  if with_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
     return 0
   fi
-  if with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
+  if with_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
     return 0
   fi
-  with_deadline 20 xcrun simctl io "$DEVICE" screenshot "$out"
+  with_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out"
 }
 
 # Reject blank / springboard captures. Prefer Pillow; fall back to stdlib PNG decode.
@@ -240,8 +357,10 @@ PY
 # Resolve the live data container and Documents/launch-timing.txt every call
 # (path can lag right after install/launch; never cache a stale container).
 launch_docs_path() {
-  local container
-  container="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  local container=""
+  # Short deadline: stamp poll calls this repeatedly; a 15s hang would miss the 8s window.
+  container="$(with_deadline 5 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  container="$(echo "$container" | tr -d '[:space:]')"
   if [[ -n "$container" ]]; then
     printf '%s' "$container/Documents/launch-timing.txt"
   fi
@@ -268,7 +387,7 @@ read_launch_field() {
       first_frame_wall_epoch) defkey="trashStack.firstFrameWallEpochString" ;;
     esac
     if [[ -n "$defkey" ]]; then
-      v="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
+      v="$(with_deadline 8 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
       v="$(echo "$v" | tr -d '[:space:]' | tr -d '\"')"
     fi
   fi
@@ -343,31 +462,37 @@ launch_shot() {
     if (( settle < 7 )); then settle=7; fi
   fi
   local shot_start=$SECONDS
+  CURRENT_STEP="shot:$mode"
+  note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 
   while (( attempts < max_attempts )); do
     attempts=$((attempts + 1))
-    if (( SECONDS - shot_start > 70 )); then
-      echo "launch_shot deadline exceeded for mode='$mode'" >&2
-      break
+    local step_elapsed=$((SECONDS - shot_start))
+    if (( step_elapsed > STEP_BUDGET_S )); then
+      echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
+      note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
+      recover_simulator_once "step_budget:$mode"
+      echo "Fail fast after simulator recover — step '$mode' blew ${STEP_BUDGET_S}s budget." >&2
+      print_timing_table
+      exit 125
     fi
     smoke_budget
-    with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-    sleep 0.4
+    with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 0.3
 
     # Defaults + launch args (args are authoritative in PlayerProfile.shotArgument).
-    with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-    with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
     if [[ -n "$mode" ]]; then
-      with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" || true
-      with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" || true
+      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     else
-      with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
-      with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     fi
     cat /tmp/sim-launch.out >&2 || true
 
-    # Wait briefly for the process, then one settle for paint — do not burn
-    # `settle` twice (that blew the 1500s smoke budget on CI).
+    # Wait briefly for the process, then one settle for paint.
     local waited=0
     while (( waited < 4 )); do
       if app_running; then
@@ -390,13 +515,20 @@ launch_shot() {
       continue
     fi
 
-    shot "$outfile"
+    if ! shot "$outfile"; then
+      echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
+      continue
+    fi
     if assert_app_frame "$outfile"; then
+      step_elapsed=$((SECONDS - shot_start))
+      note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 0 "ok"
       echo "Wrote $outfile" >&2
       return 0
     fi
     echo "Bad frame for mode='$mode' attempt=$attempts — retrying" >&2
   done
+  step_elapsed=$((SECONDS - shot_start))
+  note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 1 "failed"
   echo "Failed to capture a valid app frame for mode='$mode' → $outfile" >&2
   exit 1
 }
@@ -411,7 +543,19 @@ smoke_budget() {
   local elapsed=$((SECONDS - SMOKE_START))
   if (( elapsed > 1500 )); then
     echo "Smoke watchdog exceeded ${elapsed}s — aborting" >&2
+    echo "---- smoke-step-timing.tsv ----" >&2
+    cat "$TIMING_FILE" >&2 || true
     exit 124
+  fi
+}
+
+print_timing_table() {
+  echo "---- smoke-step-timing.tsv ----" >&2
+  if [[ -f "$TIMING_FILE" ]]; then
+    column -t -s $'\t' "$TIMING_FILE" 2>/dev/null || cat "$TIMING_FILE"
+    # Also echo plain TSV for CI log scraping.
+    echo "---- smoke-step-timing.tsv (raw) ----" >&2
+    cat "$TIMING_FILE" >&2
   fi
 }
 
@@ -455,16 +599,18 @@ PY
 # 2) Wall-clock (honest): host epoch at simctl launch PID return → app first_frame_wall_epoch ≤ 8s.
 #    Do NOT use bash $SECONDS polling as the wall metric (that is harness overhead).
 # Do NOT raise the 8s ceiling.
-with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+CURRENT_STEP="cold_launch_timing"
+note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSecString" >/dev/null 2>&1 || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpoch" >/dev/null 2>&1 || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpochString" >/dev/null 2>&1 || true
-with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSecString" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpoch" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpochString" >/dev/null 2>&1 || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 # Host wall clock the instant launch returns its PID (same Mac clock as Date() in-sim).
 HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-cold.out >&2 || true
@@ -576,14 +722,24 @@ assert_app_frame "$OUT_DIR/00-publisher-ident.png"
 assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 echo "Wrote $OUT_DIR/00-publisher-ident.png (timing capture)" >&2
 # Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
-with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+CURRENT_STEP="title"
+note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
+TITLE_T0=$SECONDS
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
-with_deadline 10 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
-with_deadline 20 xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
 TITLE_OK=0
-for try in 1 2 3 4 5 6 7 8; do
+for try in 1 2 3 4 5 6; do
+  if (( SECONDS - TITLE_T0 > STEP_BUDGET_S )); then
+    echo "Title step blew ${STEP_BUDGET_S}s hard budget" >&2
+    recover_simulator_once "step_budget:title"
+    echo "Fail fast after title step budget." >&2
+    print_timing_table
+    exit 125
+  fi
   sleep 0.3
   shot "$OUT_DIR/01-title.png" || true
   if assert_app_frame "$OUT_DIR/01-title.png" && assert_title_not_splash "$OUT_DIR/01-title.png"; then
@@ -593,8 +749,10 @@ for try in 1 2 3 4 5 6 7 8; do
 done
 if (( TITLE_OK == 0 )); then
   echo "Title frame invalid or still LaunchLogo splash" >&2
+  print_timing_table
   exit 1
 fi
+note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 5
@@ -651,8 +809,11 @@ for f in files:
 print("Screenshot distinctness OK")
 PY
 
-xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
+CURRENT_STEP="record_video"
+note_timing step "$CURRENT_STEP" 120 0 0 "start"
+VIDEO_T0=$SECONDS
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
 VIDEO_RAW="$OUT_DIR/gameplay-demo-silent.mp4"
 VIDEO_OUT="$OUT_DIR/gameplay-demo.mp4"
 rm -f "$VIDEO_RAW" "$VIDEO_OUT"
@@ -669,10 +830,11 @@ fi
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo failed to start" >&2
   set -e
+  print_timing_table
   exit 1
 fi
 set -e
-xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
 # Continuous autoplay (~35s): recycle/press/snatch/game-over beats without board teleport spam.
 sleep 35
 kill -INT "$REC_PID" 2>/dev/null || true
@@ -684,6 +846,7 @@ if kill -0 "$REC_PID" 2>/dev/null; then
 fi
 wait "$REC_PID" 2>/dev/null || true
 sleep 2
+note_timing step "$CURRENT_STEP" 120 "$((SECONDS - VIDEO_T0))" 0 "ok"
 smoke_budget
 
 # simctl recordVideo cannot capture AVAudioEngine. Do NOT paste SFX at fixed adelay offsets
@@ -782,7 +945,12 @@ for f in 01-play.png 02-crush.png 03-recycle.png 04-junkyard.png 05-pass.png 06-
   path="$OUT_DIR/marketing/$f"
   if [[ ! -s "$path" ]]; then
     echo "Missing marketing shot: $path" >&2
+    print_timing_table
     exit 1
   fi
   echo "OK $path ($(wc -c < "$path") bytes)"
 done
+
+note_timing step suite_complete 1500 "$((SECONDS - SMOKE_START))" 0 "ok"
+print_timing_table
+echo "Smoke OK — timing table: $TIMING_FILE" >&2
