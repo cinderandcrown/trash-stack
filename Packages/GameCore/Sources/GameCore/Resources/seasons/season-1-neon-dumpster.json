@@ -1,0 +1,891 @@
+{
+  "id": 1,
+  "slug": "neon-dumpster",
+  "name": "Neon Dumpster",
+  "label": "Season 1 \u2014 Neon Dumpster",
+  "tiers": 100,
+  "xpPerTier": 100,
+  "theme": {
+    "tagline": "Night shift on the glowing docks.",
+    "primary": "#00f5ff",
+    "accent": "#ff2bd6"
+  },
+  "xpSources": [
+    "runs",
+    "daily_challenges",
+    "weekly_challenges"
+  ],
+  "premiumPurchase": {
+    "priceUsd": 9.99,
+    "gemCost": 450,
+    "productId": "com.cinderandcrown.trashstack.pass",
+    "stub": true
+  },
+  "bundle": {
+    "id": "pass_plus_25",
+    "label": "Pass + 25 tiers",
+    "priceUsd": 14.99,
+    "gemCost": 700,
+    "tierSkip": 25,
+    "productId": "com.cinderandcrown.trashstack.pass25",
+    "stub": true
+  },
+  "tierBuy": {
+    "enabled": true,
+    "gemsPerTier": 50,
+    "neverPushed": true,
+    "maxBuyPerSession": 10
+  },
+  "free": [
+    {
+      "at": 1,
+      "scrap": 50
+    },
+    {
+      "at": 2,
+      "scrap": 35
+    },
+    {
+      "at": 3,
+      "scrap": 40
+    },
+    {
+      "at": 4,
+      "scrap": 45
+    },
+    {
+      "at": 5,
+      "trail": "cyan"
+    },
+    {
+      "at": 6,
+      "scrap": 30
+    },
+    {
+      "at": 7,
+      "scrap": 35
+    },
+    {
+      "at": 8,
+      "scrap": 40
+    },
+    {
+      "at": 9,
+      "scrap": 45
+    },
+    {
+      "at": 10,
+      "bg": "rooftop"
+    },
+    {
+      "at": 11,
+      "scrap": 30
+    },
+    {
+      "at": 12,
+      "scrap": 35
+    },
+    {
+      "at": 13,
+      "scrap": 40
+    },
+    {
+      "at": 14,
+      "scrap": 45
+    },
+    {
+      "at": 15,
+      "scrap": 25
+    },
+    {
+      "at": 16,
+      "scrap": 30
+    },
+    {
+      "at": 17,
+      "scrap": 35
+    },
+    {
+      "at": 18,
+      "scrap": 40
+    },
+    {
+      "at": 19,
+      "scrap": 45
+    },
+    {
+      "at": 20,
+      "skin": "glass"
+    },
+    {
+      "at": 21,
+      "scrap": 30
+    },
+    {
+      "at": 22,
+      "scrap": 35
+    },
+    {
+      "at": 23,
+      "scrap": 40
+    },
+    {
+      "at": 24,
+      "scrap": 45
+    },
+    {
+      "at": 25,
+      "emote": "wave"
+    },
+    {
+      "at": 26,
+      "scrap": 30
+    },
+    {
+      "at": 27,
+      "scrap": 35
+    },
+    {
+      "at": 28,
+      "scrap": 40
+    },
+    {
+      "at": 29,
+      "scrap": 45
+    },
+    {
+      "at": 30,
+      "crushFx": "spark_pop"
+    },
+    {
+      "at": 31,
+      "scrap": 30
+    },
+    {
+      "at": 32,
+      "scrap": 35
+    },
+    {
+      "at": 33,
+      "scrap": 40
+    },
+    {
+      "at": 34,
+      "scrap": 45
+    },
+    {
+      "at": 35,
+      "scrap": 25
+    },
+    {
+      "at": 36,
+      "scrap": 30
+    },
+    {
+      "at": 37,
+      "scrap": 35
+    },
+    {
+      "at": 38,
+      "scrap": 40
+    },
+    {
+      "at": 39,
+      "scrap": 45
+    },
+    {
+      "at": 40,
+      "scrap": 25
+    },
+    {
+      "at": 41,
+      "scrap": 30
+    },
+    {
+      "at": 42,
+      "scrap": 35
+    },
+    {
+      "at": 43,
+      "scrap": 40
+    },
+    {
+      "at": 44,
+      "scrap": 45
+    },
+    {
+      "at": 45,
+      "scrap": 25
+    },
+    {
+      "at": 46,
+      "scrap": 30
+    },
+    {
+      "at": 47,
+      "scrap": 35
+    },
+    {
+      "at": 48,
+      "scrap": 40
+    },
+    {
+      "at": 49,
+      "scrap": 45
+    },
+    {
+      "at": 50,
+      "bg": "alley"
+    },
+    {
+      "at": 51,
+      "scrap": 30
+    },
+    {
+      "at": 52,
+      "scrap": 35
+    },
+    {
+      "at": 53,
+      "scrap": 40
+    },
+    {
+      "at": 54,
+      "scrap": 45
+    },
+    {
+      "at": 55,
+      "scrap": 25
+    },
+    {
+      "at": 56,
+      "scrap": 30
+    },
+    {
+      "at": 57,
+      "scrap": 35
+    },
+    {
+      "at": 58,
+      "scrap": 40
+    },
+    {
+      "at": 59,
+      "scrap": 45
+    },
+    {
+      "at": 60,
+      "scrap": 25
+    },
+    {
+      "at": 61,
+      "scrap": 30
+    },
+    {
+      "at": 62,
+      "scrap": 35
+    },
+    {
+      "at": 63,
+      "scrap": 40
+    },
+    {
+      "at": 64,
+      "scrap": 45
+    },
+    {
+      "at": 65,
+      "scrap": 25
+    },
+    {
+      "at": 66,
+      "scrap": 30
+    },
+    {
+      "at": 67,
+      "scrap": 35
+    },
+    {
+      "at": 68,
+      "scrap": 40
+    },
+    {
+      "at": 69,
+      "scrap": 45
+    },
+    {
+      "at": 70,
+      "crushFx": "hydraulic"
+    },
+    {
+      "at": 71,
+      "scrap": 30
+    },
+    {
+      "at": 72,
+      "scrap": 35
+    },
+    {
+      "at": 73,
+      "scrap": 40
+    },
+    {
+      "at": 74,
+      "scrap": 45
+    },
+    {
+      "at": 75,
+      "scrap": 25
+    },
+    {
+      "at": 76,
+      "scrap": 30
+    },
+    {
+      "at": 77,
+      "scrap": 35
+    },
+    {
+      "at": 78,
+      "scrap": 40
+    },
+    {
+      "at": 79,
+      "scrap": 45
+    },
+    {
+      "at": 80,
+      "scrap": 25
+    },
+    {
+      "at": 81,
+      "scrap": 30
+    },
+    {
+      "at": 82,
+      "scrap": 35
+    },
+    {
+      "at": 83,
+      "scrap": 40
+    },
+    {
+      "at": 84,
+      "scrap": 45
+    },
+    {
+      "at": 85,
+      "outfit": "visor"
+    },
+    {
+      "at": 86,
+      "scrap": 30
+    },
+    {
+      "at": 87,
+      "scrap": 35
+    },
+    {
+      "at": 88,
+      "scrap": 40
+    },
+    {
+      "at": 89,
+      "scrap": 45
+    },
+    {
+      "at": 90,
+      "scrap": 25
+    },
+    {
+      "at": 91,
+      "scrap": 30
+    },
+    {
+      "at": 92,
+      "scrap": 35
+    },
+    {
+      "at": 93,
+      "scrap": 40
+    },
+    {
+      "at": 94,
+      "scrap": 45
+    },
+    {
+      "at": 95,
+      "scrap": 25
+    },
+    {
+      "at": 96,
+      "scrap": 30
+    },
+    {
+      "at": 97,
+      "scrap": 35
+    },
+    {
+      "at": 98,
+      "scrap": 40
+    },
+    {
+      "at": 99,
+      "scrap": 45
+    },
+    {
+      "at": 100,
+      "scrap": 500
+    }
+  ],
+  "premium": [
+    {
+      "at": 1,
+      "gems": 25,
+      "scrap": 80
+    },
+    {
+      "at": 2,
+      "scrap": 70
+    },
+    {
+      "at": 3,
+      "scrap": 80
+    },
+    {
+      "at": 4,
+      "scrap": 50
+    },
+    {
+      "at": 5,
+      "scrap": 60
+    },
+    {
+      "at": 6,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 7,
+      "scrap": 80
+    },
+    {
+      "at": 8,
+      "gems": 30
+    },
+    {
+      "at": 9,
+      "scrap": 60
+    },
+    {
+      "at": 10,
+      "scrap": 70
+    },
+    {
+      "at": 11,
+      "scrap": 80
+    },
+    {
+      "at": 12,
+      "gems": 25
+    },
+    {
+      "at": 13,
+      "scrap": 60
+    },
+    {
+      "at": 14,
+      "scrap": 70
+    },
+    {
+      "at": 15,
+      "scrap": 80
+    },
+    {
+      "at": 16,
+      "scrap": 50
+    },
+    {
+      "at": 17,
+      "scrap": 60
+    },
+    {
+      "at": 18,
+      "gems": 30
+    },
+    {
+      "at": 19,
+      "scrap": 80
+    },
+    {
+      "at": 20,
+      "scrap": 50
+    },
+    {
+      "at": 21,
+      "scrap": 60
+    },
+    {
+      "at": 22,
+      "scrap": 70
+    },
+    {
+      "at": 23,
+      "scrap": 80
+    },
+    {
+      "at": 24,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 25,
+      "legendaryStyle": "neon_legend_base"
+    },
+    {
+      "at": 26,
+      "scrap": 70
+    },
+    {
+      "at": 27,
+      "scrap": 80
+    },
+    {
+      "at": 28,
+      "gems": 35
+    },
+    {
+      "at": 29,
+      "scrap": 60
+    },
+    {
+      "at": 30,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 31,
+      "scrap": 80
+    },
+    {
+      "at": 32,
+      "scrap": 50
+    },
+    {
+      "at": 33,
+      "scrap": 60
+    },
+    {
+      "at": 34,
+      "scrap": 70
+    },
+    {
+      "at": 35,
+      "gems": 40
+    },
+    {
+      "at": 36,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 37,
+      "scrap": 60
+    },
+    {
+      "at": 38,
+      "scrap": 70
+    },
+    {
+      "at": 39,
+      "scrap": 80
+    },
+    {
+      "at": 40,
+      "scrap": 50
+    },
+    {
+      "at": 41,
+      "scrap": 60
+    },
+    {
+      "at": 42,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 43,
+      "scrap": 80
+    },
+    {
+      "at": 44,
+      "scrap": 50
+    },
+    {
+      "at": 45,
+      "gems": 40
+    },
+    {
+      "at": 46,
+      "scrap": 70
+    },
+    {
+      "at": 47,
+      "scrap": 80
+    },
+    {
+      "at": 48,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 49,
+      "scrap": 60
+    },
+    {
+      "at": 50,
+      "legendaryStyle": "neon_legend_stripes",
+      "skinSet": "neon_alloy"
+    },
+    {
+      "at": 51,
+      "scrap": 80
+    },
+    {
+      "at": 52,
+      "scrap": 50
+    },
+    {
+      "at": 53,
+      "scrap": 60
+    },
+    {
+      "at": 54,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 55,
+      "gems": 45
+    },
+    {
+      "at": 56,
+      "scrap": 50
+    },
+    {
+      "at": 57,
+      "scrap": 60
+    },
+    {
+      "at": 58,
+      "scrap": 70
+    },
+    {
+      "at": 59,
+      "scrap": 80
+    },
+    {
+      "at": 60,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 61,
+      "scrap": 60
+    },
+    {
+      "at": 62,
+      "scrap": 70
+    },
+    {
+      "at": 63,
+      "scrap": 80
+    },
+    {
+      "at": 64,
+      "scrap": 50
+    },
+    {
+      "at": 65,
+      "gems": 50
+    },
+    {
+      "at": 66,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 67,
+      "scrap": 80
+    },
+    {
+      "at": 68,
+      "scrap": 50
+    },
+    {
+      "at": 69,
+      "scrap": 60
+    },
+    {
+      "at": 70,
+      "scrap": 70
+    },
+    {
+      "at": 71,
+      "scrap": 80
+    },
+    {
+      "at": 72,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 73,
+      "scrap": 60
+    },
+    {
+      "at": 74,
+      "scrap": 70
+    },
+    {
+      "at": 75,
+      "legendaryStyle": "neon_legend_chrome"
+    },
+    {
+      "at": 76,
+      "scrap": 50
+    },
+    {
+      "at": 77,
+      "scrap": 60
+    },
+    {
+      "at": 78,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 79,
+      "scrap": 80
+    },
+    {
+      "at": 80,
+      "gems": 55
+    },
+    {
+      "at": 81,
+      "scrap": 60
+    },
+    {
+      "at": 82,
+      "scrap": 70
+    },
+    {
+      "at": 83,
+      "scrap": 80
+    },
+    {
+      "at": 84,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 85,
+      "scrap": 60
+    },
+    {
+      "at": 86,
+      "scrap": 70
+    },
+    {
+      "at": 87,
+      "scrap": 80
+    },
+    {
+      "at": 88,
+      "scrap": 50
+    },
+    {
+      "at": 89,
+      "scrap": 60
+    },
+    {
+      "at": 90,
+      "gems": 60
+    },
+    {
+      "at": 91,
+      "scrap": 80
+    },
+    {
+      "at": 92,
+      "scrap": 50
+    },
+    {
+      "at": 93,
+      "scrap": 60
+    },
+    {
+      "at": 94,
+      "scrap": 70
+    },
+    {
+      "at": 95,
+      "scrap": 80
+    },
+    {
+      "at": 96,
+      "gems": 5,
+      "scrap": 40
+    },
+    {
+      "at": 97,
+      "scrap": 60
+    },
+    {
+      "at": 98,
+      "scrap": 70
+    },
+    {
+      "at": 99,
+      "scrap": 80
+    },
+    {
+      "at": 100,
+      "gems": 80,
+      "outfit": "neon_legend_raccoon",
+      "animated": true,
+      "legendary": true
+    }
+  ],
+  "legendary": {
+    "at": 100,
+    "track": "premium",
+    "id": "neon_legend_raccoon",
+    "kind": "outfit",
+    "animated": true,
+    "label": "Neon Legend Raccoon",
+    "styles": [
+      {
+        "id": "neon_legend_base",
+        "unlockAt": 25,
+        "label": "Base Glow"
+      },
+      {
+        "id": "neon_legend_stripes",
+        "unlockAt": 50,
+        "label": "Stripes"
+      },
+      {
+        "id": "neon_legend_chrome",
+        "unlockAt": 75,
+        "label": "Chrome"
+      },
+      {
+        "id": "neon_legend_finale",
+        "unlockAt": 100,
+        "label": "Finale Pulse"
+      }
+    ]
+  }
+}

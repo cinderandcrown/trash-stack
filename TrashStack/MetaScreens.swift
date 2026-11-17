@@ -1,0 +1,568 @@
+// Copyright © 2026 Cinder and Crown LLC. All rights reserved.
+
+import SwiftUI
+import Services
+import GameCore
+
+struct MetaChromeHeader: View {
+    let title: String
+    var titleColor: Color = NeonTheme.teal
+    var trailing: AnyView? = nil
+    let onClose: () -> Void
+
+    var body: some View {
+        // Title on its own row so long names (e.g. SEASON PASS) never truncate.
+        VStack(spacing: 8) {
+            HStack(spacing: 10) {
+                Button(action: onClose) {
+                    Text("Close")
+                        .font(.system(.subheadline, design: .rounded).weight(.bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(Color.white.opacity(0.1))
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(NeonTheme.teal.opacity(0.7), lineWidth: 1.2)
+                        )
+                }
+                .buttonStyle(.plain)
+
+                Spacer(minLength: 0)
+
+                if let trailing {
+                    trailing
+                }
+            }
+
+            Text(title)
+                .font(.system(.title2, design: .rounded).weight(.black))
+                .foregroundStyle(titleColor)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .frame(maxWidth: .infinity)
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal, 16)
+        // Extra top pad so Close clears Dynamic Island / status bar even if chrome sits in a full-bleed ZStack.
+        .padding(.top, 12)
+        .safeAreaPadding(.top, 12)
+    }
+}
+
+struct JunkyardView: View {
+    @Binding var screen: AppScreen
+    @EnvironmentObject var profile: PlayerProfile
+    private let buildings: [(id: String, label: String, blurb: String)] = [
+        ("recycler", "Recycler", "Boosts recycle Scrap"),
+        ("compactor", "Compactor", "Boosts crush Scrap"),
+        ("neonSign", "Neon Sign", "Pass XP glow"),
+        ("stashVault", "Stash Vault", "Faster crates"),
+    ]
+
+    var body: some View {
+        ZStack {
+            AlleyBackdrop()
+            VStack(spacing: 12) {
+                MetaChromeHeader(title: "JUNKYARD", trailing: AnyView(CurrencyChip(kind: .scrap, value: profile.scrap))) {
+                    screen = .title
+                }
+                BundleImage(name: "JunkyardScene")
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(NeonTheme.teal.opacity(0.5), lineWidth: 1)
+                    )
+                    .padding(.horizontal, 16)
+                Text("Tap a bay to upgrade. Timers tick. Gems only speed clocks — never buy score.")
+                    .font(.caption)
+                    .foregroundStyle(NeonTheme.muted)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                ScrollView {
+                    VStack(spacing: 10) {
+                        ForEach(buildings, id: \.id) { b in
+                            let lv = profile.baseLevels[b.id, default: 1]
+                            Button {
+                                profile.baseLevels[b.id] = min(8, lv + 1)
+                                profile.persist()
+                                HapticsService.shared.tap()
+                                AudioService.shared.playSFX("ui")
+                            } label: {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(b.label).font(.headline).foregroundStyle(.white)
+                                        Text(b.blurb).font(.caption).foregroundStyle(NeonTheme.muted)
+                                        Text("Level \(lv) · ~\(max(20, 90 - lv * 8))s remaining")
+                                            .font(.caption2.monospacedDigit())
+                                            .foregroundStyle(NeonTheme.teal)
+                                    }
+                                    Spacer()
+                                    Text("UPGRADE")
+                                        .font(.caption.weight(.black))
+                                        .foregroundStyle(.black)
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(NeonTheme.teal)
+                                        .clipShape(Capsule())
+                                }
+                                .padding(14)
+                                .background(NeonTheme.panel.opacity(0.9))
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                        .stroke(NeonTheme.magenta.opacity(0.35), lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            .padding(.bottom, 8)
+        }
+        .safeAreaPadding(.top, 8)
+    }
+}
+
+struct SeasonPassView: View {
+    @Binding var screen: AppScreen
+    @EnvironmentObject var profile: PlayerProfile
+    @State private var season: SeasonConfig?
+    @State private var selected = 1
+
+    var body: some View {
+        ZStack {
+            AlleyBackdrop()
+            VStack(spacing: 10) {
+                MetaChromeHeader(title: "SEASON PASS", titleColor: NeonTheme.magenta) {
+                    screen = .title
+                }
+
+                if let season {
+                    Text(season.label)
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text(season.theme?.tagline ?? "Free + Premium cosmetics · bin skins · chute FX · raccoon outfits")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(0.78))
+                    rewardCard(season)
+
+                    // Dual free / premium track
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 10) {
+                            ForEach(1...min(season.tiers, 40), id: \.self) { tier in
+                                tierColumn(season, tier: tier)
+                            }
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                    }
+
+                    // Progress
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Season XP \(profile.battlePassXP)")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.teal)
+                        GeometryReader { geo in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Color.white.opacity(0.12))
+                                Capsule()
+                                    .fill(LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
+                                    .frame(width: geo.size.width * min(1, CGFloat(profile.battlePassXP % 100) / 100))
+                            }
+                        }
+                        .frame(height: 8)
+                    }
+                    .padding(.horizontal, 20)
+
+                    NeonButton(title: "Unlock Premium Pass", style: .secondary) {}
+                        .disabled(true)
+                        .opacity(0.95)
+                        .padding(.horizontal, 16)
+                    NeonButton(title: "Pass + 25 Tiers", style: .secondary) {}
+                        .disabled(true)
+                        .opacity(0.95)
+                        .padding(.horizontal, 16)
+                    Text("Tier buys with Gems are optional and never pushed.")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.7))
+                } else {
+                    NeonPanel(title: "Neon Dumpster Pass") {
+                        Text("Free and Premium reward tracks unlock as you crush.")
+                            .foregroundStyle(Color.white.opacity(0.75))
+                    }
+                    .padding(.horizontal, 16)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.bottom, 8)
+            .task {
+                season = try? ConfigLoader.activeSeason()
+            }
+        }
+        .safeAreaPadding(.top, 8)
+    }
+
+    private func tierColumn(_ season: SeasonConfig, tier: Int) -> some View {
+        let free = season.free.first { $0.at == tier }
+        let premium = season.premium.first { $0.at == tier }
+        let locked = !profile.premiumPass
+        return Button {
+            selected = tier
+            AudioService.shared.playSFX("ui")
+        } label: {
+            VStack(spacing: 8) {
+                Text("T\(tier)")
+                    .font(.caption.weight(.black))
+                    .foregroundStyle(.white)
+                // Free row
+                rewardThumb(free, premium: false)
+                // Premium row
+                ZStack {
+                    rewardThumb(premium, premium: true)
+                    if locked {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(Color.black.opacity(0.45))
+                        Image(systemName: "lock.fill")
+                            .foregroundStyle(NeonTheme.magenta)
+                            .font(.caption.weight(.bold))
+                    }
+                }
+            }
+            .frame(width: 96)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 14)
+                    .fill(selected == tier ? NeonTheme.teal.opacity(0.2) : Color.white.opacity(0.06))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(selected == tier ? NeonTheme.teal : Color.white.opacity(0.12), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func rewardThumb(_ reward: SeasonReward?, premium: Bool) -> some View {
+        let art = rewardArt(reward, premium: premium)
+        return VStack(spacing: 4) {
+            Text(premium ? "PREMIUM" : "FREE")
+                .font(.system(size: 8, weight: .black))
+                .foregroundStyle(premium ? NeonTheme.magenta : NeonTheme.teal)
+            BundleImage(name: art)
+                .scaledToFit()
+                .frame(width: 44, height: 44)
+            Text(shortLabel(reward))
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(premium ? NeonTheme.magenta : NeonTheme.teal)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+        }
+        .frame(width: 88, height: 92)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.07))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(premium ? NeonTheme.magenta.opacity(0.5) : NeonTheme.teal.opacity(0.45), lineWidth: 1)
+                )
+        )
+    }
+
+    private func rewardArt(_ reward: SeasonReward?, premium: Bool) -> String {
+        guard let reward else { return premium ? "GemIcon" : "ScrapIcon" }
+        if reward.legendary == true { return "RaccoonCheer" }
+        if reward.outfit != nil { return "RaccoonIdle" }
+        if reward.gems != nil { return "GemIcon" }
+        if reward.scrap != nil { return "ScrapIcon" }
+        return premium ? "RaccoonCheer" : "ScrapIcon"
+    }
+
+    private func rewardCard(_ season: SeasonConfig) -> some View {
+        let reward = season.premium.first { $0.at == selected } ?? season.free.first { $0.at == selected }
+        return ZStack {
+            RoundedRectangle(cornerRadius: 18)
+                .fill(
+                    LinearGradient(colors: [NeonTheme.magenta.opacity(0.45), NeonTheme.teal.opacity(0.25)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                )
+                .frame(height: 120)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18)
+                        .stroke(NeonTheme.teal.opacity(0.6), lineWidth: 1.5)
+                )
+            HStack {
+                BundleImage(name: "RaccoonCheer")
+                    .scaledToFit()
+                    .frame(width: 72, height: 72)
+                VStack(alignment: .leading) {
+                    Text("Tier \(selected)").font(.headline).foregroundStyle(.white)
+                    Text(label(reward)).font(.subheadline).foregroundStyle(Color.white.opacity(0.8))
+                }
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    private func shortLabel(_ r: SeasonReward?) -> String {
+        guard let r else { return "·" }
+        if r.legendary == true { return "LEGEND" }
+        if let o = r.outfit { return o }
+        if let g = r.gems { return "◆\(g)" }
+        if let s = r.scrap { return "⚙\(s)" }
+        return "LOOK"
+    }
+
+    private func label(_ r: SeasonReward?) -> String {
+        guard let r else { return "Cosmetic reward" }
+        if r.legendary == true { return "Legendary animated skin" }
+        if let o = r.outfit { return "Outfit \(o)" }
+        if let g = r.gems { return "\(g) Neon Gems" }
+        if let s = r.scrap { return "\(s) Scrap" }
+        return "Cosmetic"
+    }
+}
+
+struct ShopView: View {
+    @Binding var screen: AppScreen
+    @EnvironmentObject var profile: PlayerProfile
+
+    private let packs: [(title: String, price: String, blurb: String, icon: String)] = [
+        ("Street Stash", "$0.99", "40 Neon Gems", "GemPackS"),
+        ("Alley Cache", "$4.99", "210 Neon Gems", "GemPackM"),
+        ("Dumpster Vault", "$9.99", "450 Neon Gems", "GemPackL"),
+        ("Neon Haul", "$19.99", "1,200 Neon Gems · not a loot crate", "GemPackXL"),
+        ("Neon Legend", "$49.99", "2,500 Neon Gems", "GemPackXXL"),
+    ]
+
+    var body: some View {
+        ZStack {
+            AlleyBackdrop()
+            VStack(spacing: 12) {
+                MetaChromeHeader(title: "GEM SHOP", trailing: AnyView(CurrencyChip(kind: .gems, value: profile.gems))) {
+                    screen = .title
+                }
+                Text("Looks live here — desire from play, never nag popups.")
+                    .font(.caption)
+                    .foregroundStyle(Color.white.opacity(0.75))
+                if !profile.sessionOfferShown {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Night Shift starter pack")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.white)
+                            Text("Optional · dismiss anytime · never mid-run")
+                                .font(.caption2)
+                                .foregroundStyle(Color.white.opacity(0.7))
+                        }
+                        Spacer()
+                        Button("Not now") {
+                            profile.sessionOfferShown = true
+                        }
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.teal)
+                    }
+                    .padding(12)
+                    .background(NeonTheme.panel.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal, 16)
+                }
+                ScrollView {
+                    VStack(spacing: 12) {
+                        ForEach(packs, id: \.title) { pack in
+                            HStack(spacing: 12) {
+                                BundleImage(name: pack.icon)
+                                    .scaledToFit()
+                                    .frame(width: 56, height: 56)
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(pack.title).font(.headline).foregroundStyle(.white)
+                                    Text(pack.blurb).font(.caption).foregroundStyle(Color.white.opacity(0.7))
+                                    Text("Purchases unlock when ASC product IDs land")
+                                        .font(.caption2)
+                                        .foregroundStyle(NeonTheme.muted)
+                                }
+                                Spacer()
+                                Text(pack.price)
+                                    .font(.subheadline.weight(.black))
+                                    .foregroundStyle(.white.opacity(0.55))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(NeonTheme.panel)
+                                    .clipShape(Capsule())
+                            }
+                            .padding(14)
+                            .background(NeonTheme.panel.opacity(0.92))
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                    .stroke(NeonTheme.magenta.opacity(0.4), lineWidth: 1)
+                            )
+                            .accessibilityLabel("\(pack.title), \(pack.price), coming soon")
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            .padding(.bottom, 8)
+        }
+        .safeAreaPadding(.top, 8)
+        // ATT/UMP/GAD only when the player opens Shop — never on launch or game-over.
+        .task {
+            let skip = ProcessInfo.processInfo.arguments.contains("-trashStackSkipAds")
+                || UserDefaults.standard.bool(forKey: "trashStack.skipAds")
+            if !skip {
+                await AdsBootstrap.start()
+            }
+        }
+    }
+}
+
+struct QuestsView: View {
+    @Binding var screen: AppScreen
+    @EnvironmentObject private var profile: PlayerProfile
+    @State private var lastLoot: (scrap: Int, gems: Int)? = nil
+
+    var body: some View {
+        ZStack {
+            AlleyBackdrop()
+            VStack(spacing: 12) {
+                MetaChromeHeader(title: "FREE CRATE") { screen = .title }
+                // Quests facade hidden for v1 — crate ceremony with odds only.
+                NeonPanel(title: "Free crate (every 4h · cap 2)") {
+                    Text(profile.cratesReady > 0
+                         ? "Ready · \(profile.cratesReady)/2 waiting"
+                         : "Next crate in \(crateCountdown)")
+                        .foregroundStyle(.white.opacity(0.9))
+                        .font(.subheadline)
+                    Text(CrateLoot.oddsDisplayLine)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(NeonTheme.muted)
+                        .fixedSize(horizontal: false, vertical: true)
+                    NeonButton(title: profile.cratesReady > 0 ? "Open Crate" : "Waiting…", style: profile.cratesReady > 0 ? .primary : .ghost) {
+                        profile.refreshCrateClock()
+                        if let loot = profile.openCrate() {
+                            lastLoot = loot
+                            AudioService.shared.playSFX("combo", pitch: 1.15)
+                        }
+                    }
+                    if let loot = lastLoot {
+                        Text("You got +\(loot.scrap) Scrap" + (loot.gems > 0 ? " · +\(loot.gems) Gems" : ""))
+                            .font(.headline.weight(.bold))
+                            .foregroundStyle(NeonTheme.teal)
+                            .padding(.top, 6)
+                    }
+                }
+                .padding(.horizontal, 16)
+                Text("Daily / weekly quests return when progress is wired.")
+                    .font(.caption2)
+                    .foregroundStyle(NeonTheme.muted)
+                Spacer()
+            }
+        }
+        .safeAreaPadding(.top, 8)
+        .onAppear { profile.refreshCrateClock() }
+    }
+
+    private var crateCountdown: String {
+        let rem = max(0, Int(profile.secondsUntilNextCrate))
+        return String(format: "%d:%02d", rem / 60, rem % 60)
+    }
+}
+
+struct SettingsView: View {
+    @Binding var screen: AppScreen
+    @EnvironmentObject var profile: PlayerProfile
+    @State private var muted = false
+
+    var body: some View {
+        ZStack {
+            AlleyBackdrop()
+            VStack(spacing: 12) {
+                MetaChromeHeader(title: "SETTINGS") { screen = .title }
+                NeonPanel(title: "How to play") {
+                    Text("Recycle 4+ touching cells of the same material. Fill the PRESS meter, then slam to crush the bottom rows into Scrap. Complete order tickets. Snatch once per run.")
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.8))
+                }
+                .padding(.horizontal, 16)
+                NeonPanel {
+                    Toggle(isOn: Binding(
+                        get: { !muted },
+                        set: { muted = !$0; AudioService.shared.setMuted(muted) }
+                    )) {
+                        Text("Sound").foregroundStyle(.white)
+                    }
+                    .tint(NeonTheme.teal)
+                    Toggle(isOn: Binding(
+                        get: { profile.classicButtons },
+                        set: { profile.classicButtons = $0; profile.persist() }
+                    )) {
+                        Text("Classic buttons").foregroundStyle(.white)
+                    }
+                    .tint(NeonTheme.magenta)
+                    Text("Local reminders")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.muted)
+                    ForEach(["Upgrade done", "Crate ready", "Daily reward", "Streak at risk", "Quiet hours 9pm–8am"], id: \.self) { label in
+                        HStack {
+                            Text(label).foregroundStyle(.white)
+                            Spacer()
+                            Image(systemName: "checkmark.circle.fill").foregroundStyle(NeonTheme.teal)
+                        }
+                        .font(.subheadline)
+                    }
+                    if profile.mayPromptNotifications {
+                        NeonButton(title: "Enable reminders") {
+                            Task {
+                                _ = await NotificationService.shared.requestAfterFirstWin()
+                                profile.notifAsked = true
+                                profile.persist()
+                            }
+                        }
+                    } else if profile.sessionCount < 2 {
+                        Text("Reminder prompt unlocks after your 2nd session.")
+                            .font(.caption2)
+                            .foregroundStyle(NeonTheme.muted)
+                    }
+                }
+                .padding(.horizontal, 16)
+                Spacer()
+            }
+        }
+        .safeAreaPadding(.top, 8)
+    }
+}
+
+struct NotifPromptView: View {
+    @Binding var show: Bool
+    @EnvironmentObject var profile: PlayerProfile
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+            NeonPanel(title: "Stay on the night shift?") {
+                Text("Local reminders only — upgrade done, crate ready, daily reward, streak at risk. Quiet hours 9pm–8am.")
+                    .foregroundStyle(Color.white.opacity(0.8))
+                NeonButton(title: "Enable reminders") {
+                    Task {
+                        _ = await NotificationService.shared.requestAfterFirstWin()
+                        profile.notifAsked = true
+                        profile.persist()
+                        show = false
+                    }
+                }
+                NeonButton(title: "Not now", style: .ghost) {
+                    profile.notifAsked = true
+                    profile.persist()
+                    show = false
+                }
+            }
+            .padding(24)
+        }
+    }
+}

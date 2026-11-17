@@ -1,0 +1,66 @@
+{
+  "identifier" : "Configuration",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "gems40",
+      "localizations" : [
+        {
+          "description" : "40 Neon Gems",
+          "displayName" : "40 Gems",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.cinderandcrown.trashstack.gems40",
+      "referenceName" : "Gems 40",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "9.99",
+      "familyShareable" : false,
+      "internalID" : "pass",
+      "localizations" : [
+        {
+          "description" : "Premium Season Pass",
+          "displayName" : "Premium Pass",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.cinderandcrown.trashstack.pass",
+      "referenceName" : "Season Pass",
+      "type" : "NonConsumable"
+    },
+    {
+      "displayPrice" : "4.99",
+      "familyShareable" : false,
+      "internalID" : "removeads",
+      "localizations" : [
+        {
+          "description" : "Remove Ads",
+          "displayName" : "Remove Ads",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "com.cinderandcrown.trashstack.removeads",
+      "referenceName" : "Remove Ads",
+      "type" : "NonConsumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+
+  ],
+  "version" : {
+    "major" : 3,
+    "minor" : 0
+  }
+}

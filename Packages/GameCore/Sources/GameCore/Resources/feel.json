@@ -1,0 +1,18 @@
+{
+  "gravityBaseSec": 0.62,
+  "gravityMinSec": 0.12,
+  "gravityLevelStep": 0.03,
+  "lockDelaySec": 0.45,
+  "fallLerpLateral": 18.0,
+  "fallLerpVertical": 14.0,
+  "recycleSuckSec": 0.5,
+  "settleBounceSec": 0.16,
+  "pressSlamDownSec": 0.18,
+  "pressSlamUpSec": 0.22,
+  "hitStopShortSec": 0.06,
+  "hitStopComboSec": 0.12,
+  "shakeRecycle": 10.0,
+  "shakePress": 16.0,
+  "flashCooldownSec": 0.1,
+  "nearMissRows": 3
+}

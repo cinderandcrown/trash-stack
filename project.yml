@@ -1,0 +1,124 @@
+# Copyright © 2026 Cinder and Crown LLC. All rights reserved.
+# Generated Xcode project source of truth. CI runs: xcodegen generate
+# Never commit a hand-made .xcodeproj.
+
+name: TrashStack
+options:
+  bundleIdPrefix: com.cinderandcrown
+  deploymentTarget:
+    iOS: "17.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    DEVELOPMENT_TEAM: GDNRT9DJ58
+    CODE_SIGN_STYLE: Automatic
+    APP_CODE_SIGN_IDENTITY: Apple Development
+    APP_AD_HOC_SIGNING: "NO"
+    PRODUCT_BUNDLE_IDENTIFIER: com.cinderandcrown.trashstack
+
+configs:
+  Debug:
+    settings:
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+      SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+  Release:
+    settings:
+      DEBUG_INFORMATION_FORMAT: dwarf-with-dsym
+
+targets:
+  TrashStack:
+    type: application
+    platform: iOS
+    sources:
+      - path: TrashStack
+        excludes:
+          # Keep .xcassets discoverable via sources (XcodeGen → asset catalog phase).
+          # Do not exclude Assets.xcassets or Resources — a898af3 smoke relied on this.
+          - "**/*.plist"
+          - "**/*.xcprivacy"
+          - "**/*.storekit"
+    resources:
+      - path: TrashStack/Assets.xcassets
+      - path: TrashStack/PrivacyInfo.xcprivacy
+      - path: TrashStack/Resources
+      - path: Config
+      - path: StoreKit/Configuration.storekit
+    settings:
+      base:
+        INFOPLIST_FILE: TrashStack/Info.plist
+        PRODUCT_BUNDLE_IDENTIFIER: com.cinderandcrown.trashstack
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: false
+        SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD: false
+        SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD: false
+        CODE_SIGN_IDENTITY: $(APP_CODE_SIGN_IDENTITY)
+        "AD_HOC_CODE_SIGNING_ALLOWED[sdk=iphoneos*]": $(APP_AD_HOC_SIGNING)
+    dependencies:
+      - package: GameCore
+      - package: GameRender
+      - package: Services
+      - package: GoogleMobileAds
+        product: GoogleMobileAds
+      - package: GoogleUserMessagingPlatform
+        product: GoogleUserMessagingPlatform
+      - sdk: SpriteKit.framework
+      - sdk: GameKit.framework
+      - sdk: StoreKit.framework
+      - sdk: CoreHaptics.framework
+      - sdk: AVFoundation.framework
+      - sdk: UserNotifications.framework
+      - sdk: AppTrackingTransparency.framework
+
+  TrashStackTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TrashStackTests
+    dependencies:
+      - target: TrashStack
+      - package: GameCore
+      - package: GameRender
+      - package: Services
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        # Host tests in the app so Assets.xcassets + Resources/Junk resolve.
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TrashStack.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TrashStack"
+
+packages:
+  GameCore:
+    path: Packages/GameCore
+  GameRender:
+    path: Packages/GameRender
+  Services:
+    path: Packages/Services
+  GoogleMobileAds:
+    url: https://github.com/googleads/swift-package-manager-google-mobile-ads
+    from: 11.13.0
+  GoogleUserMessagingPlatform:
+    url: https://github.com/googleads/swift-package-manager-google-user-messaging-platform
+    from: 2.7.0
+
+schemes:
+  TrashStack:
+    build:
+      targets:
+        TrashStack: all
+    run:
+      config: Debug
+      storeKitConfiguration: StoreKit/Configuration.storekit
+    test:
+      config: Debug
+      targets:
+        - TrashStackTests
+    archive:
+      config: Release

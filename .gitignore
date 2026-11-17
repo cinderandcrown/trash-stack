@@ -1,0 +1,46 @@
+
+*~
+android/
+artifacts/
+AuthKey_*.p8
+.build/
+capacitor.config.json
+# Capacitor leftovers (native rewrite — do not reintroduce)
+.claude/
+Config.xcconfig
+DerivedData/
+.DS_Store
+*.dSYM*
+*.hmap
+.idea/
+ios/App/
+*.ipa
+# Logs / tests
+node_modules/
+# OS / IDE
+*.p8
+package-lock.json
+Package.resolved
+Packages/*/.build/
+*.profdata
+*.profraw
+__pycache__/
+# Secrets
+simulator-recording*.mp4
+simulator-screenshot*.png
+smoke-artifacts/
+# Smoke artifacts (CI uploads these; do not commit)
+.swiftpm/
+# SwiftPM
+*.swp
+TestResults.xcresult
+tmp-smoke-review/
+tmp-verify/
+TrashStack.xcodeproj/
+.vscode/
+web/
+*.xcarchive
+xcodebuild*.log
+# Xcode / generated project (always regenerate with xcodegen)
+xcuserdata/
+*.xcworkspace/

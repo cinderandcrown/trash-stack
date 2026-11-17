@@ -1,0 +1,82 @@
+{
+  "commit": "54cf2ce07003ca327ef7cc9a5e04e6b3fbb72e01",
+  "branch": "cursor/trash-stack-native-swift-497e",
+  "pr": 2,
+  "verdict": "NO",
+  "overall": 5.1,
+  "weights_note": "Fun is weighted heaviest (~40%).",
+  "scores": {
+    "fun": 4.5,
+    "feel_juice": 4.0,
+    "readability": 4.5,
+    "onboarding_first_60s": 4.0,
+    "retention_hooks": 6.0,
+    "monetization_ethics": 7.5,
+    "performance": 6.0,
+    "distinct_from_falling_block_classics": 6.5,
+    "app_store_readiness": 3.0
+  },
+  "ci": {
+    "pr_ci": {
+      "id": 43788946315,
+      "conclusion": "success"
+    },
+    "pr_testflight_workflow": {
+      "id": 43788946359,
+      "conclusion": "success",
+      "note": "Sign/check/upload job succeeded on the pull_request workflow; this QA does not tag or ship TestFlight."
+    },
+    "push_ci": {
+      "id": 43788943943,
+      "conclusion": "failure",
+      "reason": "simulator_smoke.sh failed to capture a valid frame for mode=recycle (04-recycle-combo.png) after title/gameplay/compactor succeeded. Flaky capture / 55s per-shot deadline, same commit as the green PR run which did capture 04 and the 37s demo. Not a product regression."
+    }
+  },
+  "metrics": {
+    "screenshot_resolution_px": [
+      1206,
+      2622
+    ],
+    "points_per_pixel": 0.3333333333333333,
+    "play_button_height_pt": 46.0,
+    "play_button_width_pt": 232.0,
+    "tap_target_min_pt": 44,
+    "contrast_title_tagline": 5.23,
+    "contrast_title_wordmark": 4.47,
+    "contrast_title_footer": 5.57,
+    "contrast_game_hint": 5.94,
+    "contrast_order_tickets": 10.06,
+    "contrast_recycle_toast": 15.52,
+    "raccoon_transparent_pixels": 0,
+    "raccoon_opaque_pixels": 262144,
+    "junk_transparent_pixels": 0,
+    "app_icon_unique_colors": 2,
+    "app_icon_cyan_pct": 37.01,
+    "app_icon_navy_pct": 62.99,
+    "demo_duration_s": 37.086667,
+    "demo_avg_fps": 62.96,
+    "demo_frames": 2335,
+    "demo_audio_streams": 0,
+    "demo_packet_gaps_over_50ms": 33,
+    "demo_max_gap_ms": 2173.33,
+    "demo_launch_logo_hold_s": 4.75,
+    "demo_score_start_end": [
+      900,
+      19835
+    ],
+    "fail_vs_pr_ssim": {
+      "01-title": 0.9764,
+      "02-gameplay": 0.6096,
+      "03-compactor-clear": 0.8953
+    },
+    "sfx": {
+      "sample_rate_hz": 22050,
+      "channels": 1,
+      "recycle_s": 0.18,
+      "combo_s": 0.1,
+      "crush_s": 0.35,
+      "game_loop_s": 8.0,
+      "game_loop_rms_pct_fs": 10.1
+    }
+  }
+}

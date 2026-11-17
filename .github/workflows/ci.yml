@@ -1,0 +1,160 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, "cursor/**"]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  scripts:
+    name: Scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Script unit tests
+        run: python3 -m unittest discover -s scripts -v
+
+  gamecore-linux:
+    name: GameCore (Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Swift 6.2
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxml2 libncurses6 libcurl4 binutils
+          curl -fsSL "https://download.swift.org/swift-6.2-release/ubuntu2404/swift-6.2-RELEASE/swift-6.2-RELEASE-ubuntu24.04.tar.gz" -o /tmp/swift.tgz
+          sudo mkdir -p /opt/swift
+          sudo tar -xzf /tmp/swift.tgz -C /opt/swift --strip-components=1
+          echo /opt/swift/usr/bin >> "$GITHUB_PATH"
+          arch="$(uname -m)"
+          if [ ! -e "/usr/lib/${arch}-linux-gnu/libncurses.so.6" ] && [ -e "/usr/lib/${arch}-linux-gnu/libncursesw.so.6" ]; then
+            sudo ln -sf libncursesw.so.6 "/usr/lib/${arch}-linux-gnu/libncurses.so.6"
+          fi
+      - name: swift --version
+        run: swift --version
+      - name: GameCore tests
+        working-directory: Packages/GameCore
+        run: swift test
+      - name: Services tests
+        working-directory: Packages/Services
+        run: swift test
+      - name: GameRender tests (Linux-safe symbols)
+        working-directory: Packages/GameRender
+        run: swift test
+
+  build:
+    name: Build and test (iPhone)
+    # Magpie pattern: xcode-27 ships the iOS 26 SDK required by App Store Connect.
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          echo "Runner labels context: xcode-27"
+          xcodebuild -version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          echo "ImageOS=${ImageOS:-unknown} RUNNER_NAME=${RUNNER_NAME:-unknown}"
+
+      - name: Install XcodeGen + ffmpeg
+        run: |
+          brew install xcodegen ffmpeg
+          command -v ffmpeg
+          ffmpeg -version | head -1
+          # Smoke pixel checks use stdlib PNG decode only (no Pillow / no second Python).
+          python3 -c "import struct, zlib, sys; print('stdlib PNG OK', sys.version.split()[0])"
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build for simulator
+        run: |
+          set -o pipefail
+          xcodebuild build-for-testing \
+            -project TrashStack.xcodeproj \
+            -scheme TrashStack \
+            -destination 'generic/platform=iOS Simulator' \
+            -sdk iphonesimulator \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            DEVELOPMENT_TEAM= \
+          | tee xcodebuild.log \
+          | xcbeautify --renderer github-actions || (tail -n 80 xcodebuild.log; exit 1)
+
+      - name: Fail on TrashStack warnings/errors
+        if: always()
+        run: |
+          [ -f xcodebuild.log ] || exit 0
+          root="$PWD/"
+          errs=$(grep -E "^${root}(TrashStack|TrashStackTests|Packages)/[^:]+:[0-9]+:[0-9]+: error:" xcodebuild.log | awk '!seen[$0]++' || true)
+          warns=$(grep -E "^${root}(TrashStack|TrashStackTests|Packages)/[^:]+:[0-9]+:[0-9]+: warning:" xcodebuild.log | awk '!seen[$0]++' || true)
+          echo "Errors:"; echo "$errs"
+          echo "Warnings:"; echo "$warns"
+          if [ -n "$errs" ] || [ -n "$warns" ]; then exit 1; fi
+
+      - name: Unit tests
+        id: tests
+        timeout-minutes: 15
+        run: |
+          set -o pipefail
+          device="$(python3 scripts/pick_iphone_simulator.py)"
+          echo "device=$device" >> "$GITHUB_OUTPUT"
+          echo "Simulator: $device"
+          xcodebuild test-without-building \
+            -project TrashStack.xcodeproj \
+            -scheme TrashStack \
+            -destination "platform=iOS Simulator,id=$device" \
+            -derivedDataPath DerivedData \
+            -resultBundlePath TestResults.xcresult \
+            -parallel-testing-enabled NO \
+          | tee xcodebuild-test.log \
+          | xcbeautify --renderer github-actions || (tail -n 80 xcodebuild-test.log; exit 1)
+
+      - name: Simulator smoke (screenshots + 45–60s video)
+        # GitHub step timeout (macOS runners lack GNU `timeout`).
+        # scripts/simulator_smoke.sh uses per-command deadlines + an internal watchdog.
+        timeout-minutes: 35
+        env:
+          DEVICE: ${{ steps.tests.outputs.device }}
+        run: |
+          set -euo pipefail
+          app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
+          test -n "$app"
+          ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-store-review-evidence
+          path: smoke-artifacts/
+          if-no-files-found: warn
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-logs
+          path: |
+            xcodebuild.log
+            xcodebuild-test.log
+            TestResults.xcresult
+          if-no-files-found: ignore
