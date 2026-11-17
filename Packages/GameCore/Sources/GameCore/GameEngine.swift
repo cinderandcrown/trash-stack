@@ -637,13 +637,15 @@ public struct GameEngine: Sendable {
             state.pressMeter = 3
             events.append(.gameOver)
         case "game", "gameplay":
-            // Mid-run ~40% fill + active item + orders in progress.
-            let fillFrom = rows - 5
+            // Dense mid-run stack (~70% of visible rows) so the bin reads as a real
+            // game — solid tiles + icons with high coverage, not a sparse bottom strip.
+            let fillFrom = max(hid + 2, rows - 10)
             for y in fillFrom..<rows {
                 for x in 0..<cols {
-                    let peak = fillFrom + ((x * 5) % 3)
+                    // Jagged skyline: leave a few air pockets, never a flat carpet.
+                    let peak = fillFrom + ((x * 3 + 1) % 4)
                     if y < peak { continue }
-                    if (x + y) % 5 == 0 { continue }
+                    if (x + y * 2) % 11 == 0 { continue }
                     let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle, .bentPipe][(x + y * 3) % 7]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }

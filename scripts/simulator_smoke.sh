@@ -289,14 +289,13 @@ with_deadline() {
 
 app_running() {
   # Short raw deadline only — must never trip wedge recovery or hang the suite.
-  # (A hung launchctl list previously stalled recycle for ~15 minutes.)
-  # If launchctl itself times out/fails, assume still running (fail-safe) so
-  # ensure_app_terminated keeps killall -9'ing instead of relaunching over title.
-  local tmp rc=0
+  # On launchctl timeout, treat as NOT running so ensure_app_terminated exits
+  # after the killall -9 attempts instead of looping until the shot budget dies.
+  local tmp
   tmp="$(mktemp -t smoke-app-running.XXXXXX)"
-  if ! raw_deadline 3 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null; then
+  if ! raw_deadline 2 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null; then
     rm -f "$tmp"
-    return 0
+    return 1
   fi
   if grep -q "$BUNDLE_ID" "$tmp"; then
     rm -f "$tmp"
@@ -795,26 +794,24 @@ launch_shot() {
 # Terminate the app and confirm the process is gone before relaunch (P0-1).
 # killall alone returned rc=2 on CI and left the title process alive.
 ensure_app_terminated() {
-  local i
-  raw_deadline 6 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-  # Fallback: killall. Prefer -9 if a polite kill leaves the title process alive
-  # (simctl launch then returns the old PID and ignores fresh -trashStackShot args).
-  if app_running; then
-    raw_deadline 3 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-  fi
-  if app_running; then
-    raw_deadline 3 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
-  fi
-  for i in 1 2 3 4 5 6; do
+  # Hard wall so a wedged launchctl cannot burn the whole shot budget.
+  local t0=$SECONDS i
+  raw_deadline 4 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
+  for i in 1 2 3; do
+    if (( SECONDS - t0 > 12 )); then
+      echo "ensure_app_terminated: giving up after 12s — proceeding to launch" >&2
+      return 1
+    fi
     if ! app_running; then
       return 0
     fi
-    sleep 0.15
-    raw_deadline 4 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 0.1
     raw_deadline 2 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
   done
   if app_running; then
-    echo "ensure_app_terminated: app still running after terminate/killall -9" >&2
+    echo "ensure_app_terminated: app still running after killall -9" >&2
     return 1
   fi
   return 0
@@ -988,7 +985,8 @@ def band_stats(y0, y1, x0=0.15, x1=0.85):
 game = mode in {"game","gameplay","compactor","press","recycle","revive","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
 menu = mode in {"base","pass","shop","notif","share","streak","mkt-base","mkt-pass","mkt-shop"}
 if game:
-    var, mean = band_stats(0.35, 0.72)
+    # Board lives in the lower-mid of the phone frame (HUD above, controls below).
+    var, mean = band_stats(0.48, 0.78)
     if var < 180:
         print(f"Mode '{mode}' missing board-frame marker (var={var:.1f})", file=sys.stderr); sys.exit(4)
 elif menu:
