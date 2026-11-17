@@ -25,6 +25,7 @@ public final class CompactorScene: SKScene {
     private var cellNodes: [[SKSpriteNode?]] = []
     private var activeNodes: [SKSpriteNode] = []
     private var activeRoot: SKNode?
+    private var boardCrop: SKCropNode?
     private var fpsLabel: SKLabelNode?
     private var alleyNode: SKSpriteNode?
     private var pressPlate: SKSpriteNode?
@@ -63,11 +64,20 @@ public final class CompactorScene: SKScene {
         view.preferredFramesPerSecond = preferredFPS
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = false
-        // Decode critical textures before first paint so the bin never flashes flat gray.
-        for name in Self.requiredJunkTextureNames + ["AlleyBackground", "DumpsterFrame"] {
-            _ = tex(name)
-        }
+        // Paint the dark bin + solid tiles FIRST (no gray flash). Texture decode follows.
+        _ = tex("DumpsterFrame")
+        _ = tex("AlleyBackground")
         rebuild()
+        // Warm junk icons after first real frame so PLAY→board stays under 1.5s.
+        let names = Self.requiredJunkTextureNames
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for name in names {
+                _ = JunkTextureLoader.texture(named: name)
+            }
+            DispatchQueue.main.async {
+                self?.render(immediate: true)
+            }
+        }
     }
 
     private func noteFirstGameFrame() {
@@ -170,6 +180,7 @@ public final class CompactorScene: SKScene {
         cellNodes = []
         activeNodes = []
         activeRoot = nil
+        boardCrop = nil
         alleyNode = nil
         pressPlate = nil
         fpsLabel = nil
@@ -227,21 +238,23 @@ public final class CompactorScene: SKScene {
             addChild(rail)
         }
 
-        // Crop cells to the bin's inner rectangle so pieces never draw on the frame.
+        // Crop cells + active piece to the bin's inner rectangle (never over the frame).
         let crop = SKCropNode()
         crop.zPosition = 3
+        let inset: CGFloat = 6
         let mask = SKSpriteNode(
             color: .white,
-            size: CGSize(width: gridW - 2, height: gridH - 2)
+            size: CGSize(width: gridW - inset, height: gridH - inset)
         )
         mask.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2)
         crop.maskNode = mask
         addChild(crop)
+        boardCrop = crop
 
         // Dark board backdrop — never flat gray while textures load.
         let boardFill = SKSpriteNode(
             color: SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1),
-            size: CGSize(width: gridW - 2, height: gridH - 2)
+            size: CGSize(width: gridW - inset, height: gridH - inset)
         )
         boardFill.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2)
         boardFill.zPosition = 0
@@ -487,6 +500,11 @@ public final class CompactorScene: SKScene {
         for e in ev {
             switch e {
             case .locked:
+                // Satisfying drop thud: dust + tiny shake at the settle point.
+                let lockPt = positionFor(x: Int(visualX.rounded()), boardY: max(0, Int(visualY.rounded())))
+                spawnParticle(named: "DebrisMetal", at: lockPt, count: 7)
+                spawnParticle(named: "SparkTeal", at: lockPt, count: 4)
+                screenShake(strength: 3.5)
                 hasVisualPose = false
             case .recycled(_, let cells, let score, _, let material, let coords):
                 // Snapshot textures BEFORE render clears the cells (real item ghosts, not flat squares).
@@ -755,24 +773,27 @@ public final class CompactorScene: SKScene {
             let ghost: SKSpriteNode
             // Always build a solid material tile ghost; overlay icon when we have a snapshot.
             if let snap = snaps[c] {
-                ghost = SKSpriteNode(color: snap.color, size: snap.size)
+                ghost = SKSpriteNode(color: snap.color.withAlphaComponent(1), size: snap.size)
                 ghost.colorBlendFactor = 1
                 if let t = snap.texture {
-                    let icon = SKSpriteNode(texture: t, size: CGSize(width: snap.size.width * 0.58, height: snap.size.height * 0.58))
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: snap.size.width * 0.55, height: snap.size.height * 0.55))
                     icon.zPosition = 1
                     ghost.addChild(icon)
                 }
             } else if let existing = cellNodes[visY][c.x] {
-                ghost = SKSpriteNode(color: existing.color.withAlphaComponent(1), size: existing.size)
+                ghost = SKSpriteNode(color: fallbackColor(material), size: existing.size)
                 ghost.colorBlendFactor = 1
                 if let iconNode = existing.childNode(withName: "icon") as? SKSpriteNode, let t = iconNode.texture {
-                    let icon = SKSpriteNode(texture: t, size: CGSize(width: existing.size.width * 0.58, height: existing.size.height * 0.58))
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: existing.size.width * 0.55, height: existing.size.height * 0.55))
                     icon.zPosition = 1
                     ghost.addChild(icon)
                 }
             } else {
                 ghost = SKSpriteNode(color: fallbackColor(material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
             }
+            // Brighten so ghosts read as the recycled item flying to the chute — not flat gray.
+            ghost.alpha = 1
+            ghost.setScale(1.05)
             ghost.position = start
             ghost.zPosition = 57
             addChild(ghost)
@@ -1002,7 +1023,8 @@ public final class CompactorScene: SKScene {
         let root = SKNode()
         root.name = tag
         root.zPosition = 8
-        addChild(root)
+        // Keep the falling piece inside the bin crop so it never draws on the frame.
+        (boardCrop ?? self).addChild(root)
         activeRoot = root
         let cs = cellSize()
         let name = JunkCatalog.textureName(for: p.id)
@@ -1057,11 +1079,12 @@ public final class CompactorScene: SKScene {
     }
 
     private func fallbackColor(_ mat: Material) -> SKColor {
+        // Saturated solids so a near-full bin reads as ≥85% coverage, not silhouette stickers.
         switch mat {
-        case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.72, alpha: 1)
-        case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)
-        case .paper: return SKColor(red: 0.85, green: 0.7, blue: 0.35, alpha: 1)
-        case .glass: return SKColor(red: 0.2, green: 0.9, blue: 0.95, alpha: 1)
+        case .metal: return SKColor(red: 0.62, green: 0.70, blue: 0.82, alpha: 1)
+        case .plastic: return SKColor(red: 0.98, green: 0.22, blue: 0.72, alpha: 1)
+        case .paper: return SKColor(red: 0.95, green: 0.72, blue: 0.28, alpha: 1)
+        case .glass: return SKColor(red: 0.18, green: 0.92, blue: 0.96, alpha: 1)
         }
     }
 

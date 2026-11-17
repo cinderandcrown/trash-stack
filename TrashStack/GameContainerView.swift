@@ -491,6 +491,7 @@ struct GameContainerView: View {
         scene.scaleMode = .resizeFill
         scene.configureForProMotion(false)
         LaunchTiming.markPlayTap()
+        AudioService.shared.applyPersistedMute()
         // Demo/shot paths skip the ident — still warm textures before first board paint.
         AssetPreloader.preloadDuringIdent()
         let shot = UserDefaults.standard.string(forKey: "trashStack.shotActive")
@@ -519,27 +520,37 @@ struct GameContainerView: View {
                 if auto {
                     let playScene = scene
                     playScene.autoplay = true
+                    // Live-run near-miss / GO only — never swap score/level mid-demo.
                     playScene.startDemoChoreography {
                         Task { @MainActor in
+                            // Score already synced via onGameOver from the live top-out.
+                            hudScore = playScene.engine.state.score
+                            displayScore = playScene.engine.state.score
                             raccoonMood = .panic
                             showContinue = true
                             try? await Task.sleep(nanoseconds: 2_200_000_000)
                             showContinue = false
                             continued = true
                             playScene.revive()
-                            AudioService.shared.playSFX("levelup")
+                            if !AudioService.shared.isMuted {
+                                AudioService.shared.playSFX("levelup")
+                            }
                         }
                     }
                 }
-                AudioService.shared.playMusic("game_loop")
+                if !AudioService.shared.isMuted {
+                    AudioService.shared.playMusic("game_loop")
+                }
                 syncHUD()
                 displayScore = scene.engine.state.score
             }
         }
         scene.onGameOver = { state in
             Task { @MainActor in
+                // HUD and revive sheet must match the live run — never a staged 8,800.
                 hudScore = state.score
                 displayScore = state.score
+                syncHUD()
                 raccoonMood = .panic
                 await handleGameOver(state)
             }

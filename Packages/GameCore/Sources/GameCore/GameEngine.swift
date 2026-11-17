@@ -655,20 +655,20 @@ public struct GameEngine: Sendable {
             state.orders[0].progress = 7
             state.active = ActivePiece(id: .bottle, rot: 0, x: 3, y: hid + 1)
         case "demo", "autoplay":
-            // Start denser than before so the bin can climb into real tension.
-            for y in (rows - 6)..<rows {
+            // Dense start so the bin climbs into real tension. Level 1 only climbs — never rewinds.
+            for y in (rows - 7)..<rows {
                 for x in 0..<cols where (x + y) % 5 != 0 {
                     let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle][(x + y) % 6]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
-            // Seed a near-recycle metal pocket
+            // Seed a near-recycle metal pocket for an early satisfying clear.
             for y in (rows - 3)..<rows {
                 state.board[0, y] = Cell(piece: .can, material: .metal)
                 state.board[1, y] = Cell(piece: .pipe, material: .metal)
             }
-            state.score = 900
-            state.level = 2
+            state.score = 0
+            state.level = 1
             state.pressMeter = 4
             spawn()
         case "demo-nearmiss":
