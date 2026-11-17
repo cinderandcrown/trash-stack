@@ -25,6 +25,29 @@ SIM_RECOVERED=0
 IN_RECOVER=0
 STEP_NEEDS_RESET=0
 CURRENT_STEP="init"
+SHOT_COUNT=0
+
+# Soft bounce before CoreSimulator fully wedges (every N successful shots).
+maybe_soft_bounce() {
+  SHOT_COUNT=$((SHOT_COUNT + 1))
+  if (( SIM_RECOVERED == 1 )); then
+    return 0
+  fi
+  if (( SHOT_COUNT > 0 && SHOT_COUNT % 5 == 0 )); then
+    echo "Soft CoreSimulator bounce after $SHOT_COUNT shots (proactive)." >&2
+    note_timing step soft_bounce 60 0 0 "start:after_$SHOT_COUNT"
+    local t0=$SECONDS
+    killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
+    killall -9 simctl >/dev/null 2>&1 || true
+    sleep 1
+    raw_deadline 30 xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
+    raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >/dev/null 2>&1 || true
+    raw_deadline 40 xcrun simctl install "$DEVICE" "$APP_PATH" >/dev/null 2>&1 || true
+    raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+    raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
+    note_timing step soft_bounce 60 "$((SECONDS - t0))" 0 "done:after_$SHOT_COUNT"
+  fi
+}
 
 note_timing() {
   local kind="$1" name="$2" limit="$3" elapsed="$4" rc="$5" note="${6:-}"
@@ -50,8 +73,10 @@ _run_deadline() {
     local $SIG{ALRM} = sub {
       $timed_out = 1;
       kill "TERM", -$pid;
-      select undef, undef, undef, 0.5;
+      select undef, undef, undef, 0.3;
       kill "KILL", -$pid;
+      # Belt-and-suspenders: reap orphaned simctl helpers if pgid kill missed them.
+      system(q{pkill -9 -f "simctl" >/dev/null 2>&1});
     };
     alarm $secs;
     waitpid($pid, 0);
@@ -117,38 +142,43 @@ recover_simulator_once() {
   DEADLINE_FAILS=0
   IN_RECOVER=1
   local old_device="$DEVICE"
-  echo "Simulator wedge detected ($reason) — create fresh simulator, abandon wedged UDID=$old_device." >&2
+  echo "Simulator wedge detected ($reason) — restart CoreSimulatorService, boot fresh device." >&2
   note_timing step recover_simulator 180 0 0 "start:$reason"
   local t0=$SECONDS rc=0
   : >/tmp/sim-recover.log
-  # Abandon wedged device in the background — never block the suite on it.
-  ( xcrun simctl shutdown "$old_device" >/dev/null 2>&1 || true
-    xcrun simctl delete "$old_device" >/dev/null 2>&1 || true ) &
-  local new_udid=""
-  rm -f /tmp/sim-new-udid.txt
-  raw_deadline 30 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 17" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
-  new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
-  if [[ -z "$new_udid" ]]; then
-    raw_deadline 30 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 16" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
+  # Kill the wedged daemon — create/boot hang until this is restarted.
+  killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
+  killall -9 Simulator >/dev/null 2>&1 || true
+  killall -9 simctl >/dev/null 2>&1 || true
+  sleep 2
+  # Prefer reusing the original UDID after service restart (erase+boot).
+  raw_deadline 40 xcrun simctl shutdown "$old_device" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 40 xcrun simctl erase "$old_device" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 40 xcrun simctl boot "$old_device" >>/tmp/sim-recover.log 2>&1 || true
+  if ! raw_deadline 75 xcrun simctl bootstatus "$old_device" -b >>/tmp/sim-recover.log 2>&1; then
+    echo "Original UDID still unhealthy — creating sibling device." >&2
+    local new_udid=""
+    rm -f /tmp/sim-new-udid.txt
+    raw_deadline 25 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 17" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
     new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
+    if [[ -z "$new_udid" ]]; then
+      raw_deadline 25 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 16" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
+      new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
+    fi
+    if [[ -n "$new_udid" && "$new_udid" != "$old_device" ]]; then
+      DEVICE="$new_udid"
+      echo "Recover DEVICE now $DEVICE" >&2
+      raw_deadline 40 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+      raw_deadline 75 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+    else
+      DEVICE="$old_device"
+    fi
+  else
+    DEVICE="$old_device"
   fi
-  if [[ -z "$new_udid" ]]; then
-    # Last resort: pick any available iPhone UDID.
-    new_udid="$(xcrun simctl list devices available 2>/dev/null | awk -F '[()]' '/iPhone/ && /Shutdown|Booted/{gsub(/ /,"",$2); print $2; exit}' || true)"
-  fi
-  if [[ -z "$new_udid" ]]; then
-    echo "Could not create/find a recovery simulator — fail fast." >&2
-    cat /tmp/sim-recover.log >&2 || true
-    print_timing_table
-    exit 125
-  fi
-  DEVICE="$new_udid"
-  echo "Recover DEVICE now $DEVICE" >&2
-  raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
-  raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 50 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
+  raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
   note_timing step recover_simulator 180 "$((SECONDS - t0))" "$rc" "done:$reason"
   IN_RECOVER=0
   if (( rc != 0 )); then
@@ -633,6 +663,7 @@ launch_shot() {
       step_elapsed=$((SECONDS - shot_start))
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 0 "ok"
       echo "Wrote $outfile" >&2
+      maybe_soft_bounce
       return 0
     fi
     echo "Bad frame for mode='$mode' attempt=$attempts — retrying" >&2
