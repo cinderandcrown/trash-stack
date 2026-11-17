@@ -1015,11 +1015,15 @@ def band_stats(y0, y1, x0=0.15, x1=0.85):
 game = mode in {"game","gameplay","compactor","press","recycle","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
 menu = mode in {"base","pass","shop","notif","share","streak","mkt-base","mkt-pass","mkt-shop"}
 if mode == "revive":
-    # Game-over sheet covers most of the bin — require a non-dark lower sheet band,
-    # not the mid-board variance used for live play shots.
-    var, mean = band_stats(0.62, 0.92)
-    if mean < 28 and var < 60:
-        print(f"Mode '{mode}' missing revive-sheet marker (mean={mean:.1f} var={var:.1f})", file=sys.stderr); sys.exit(4)
+    # Look for magenta "SO CLOSE" / teal Revive CTA in the lower half (sheet).
+    mag = teal = 0
+    for fy in (0.52, 0.62, 0.72, 0.82):
+        for fx in (0.3, 0.5, 0.7):
+            r, g, b = sample(fx, fy)
+            if r > 160 and b > 120 and g < 130: mag += 1
+            if g > 140 and b > 140 and r < 120: teal += 1
+    if mag + teal < 2:
+        print(f"Mode '{mode}' missing revive-sheet colors (magenta={mag} teal={teal})", file=sys.stderr); sys.exit(4)
 elif game:
     # Board lives in the lower-mid of the phone frame (HUD above, controls below).
     var, mean = band_stats(0.48, 0.78)

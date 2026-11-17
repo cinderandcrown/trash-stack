@@ -508,8 +508,17 @@ struct GameContainerView: View {
             scene.applyShot(modeShot)
             if modeShot == "revive" {
                 scene.autoplay = false
-                showContinue = true
                 raccoonMood = .panic
+                nearMiss = true
+                // Sheet must match the staged board score (never a stale HUD 0).
+                hudScore = scene.engine.state.score
+                displayScore = scene.engine.state.score
+                syncHUD()
+                // Defer presentation — setting the sheet flag in the same turn as
+                // first appear often no-ops on soft smoke switches.
+                DispatchQueue.main.async {
+                    showContinue = true
+                }
             }
         } else if playMode == .daily {
             scene.applyShot("daily")
