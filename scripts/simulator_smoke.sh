@@ -1412,34 +1412,25 @@ if (( IDENT_CAPTURED == 0 )); then
   note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 1 "missed"
   echo "Cold-launch ident missed — will try soft dedicated shot (no recover)" >&2
 fi
-# Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
+# Real Trash Stack title — soft-switch off the held ident (no erase/recover).
 CURRENT_STEP="title"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 TITLE_T0=$SECONDS
-ensure_app_terminated || true
-sleep 0.2
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shotActive" >/dev/null 2>&1 || true
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
+write_shot_defaults "title" 8
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot title -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
+cat /tmp/sim-launch-title.out >&2 || true
+sleep 0.8
 TITLE_OK=0
-TITLE_RECOVERED=0
-for try in 1 2 3 4 5 6 7 8; do
+for try in 1 2 3 4 5 6 7 8 9 10; do
   if (( SECONDS - TITLE_T0 > STEP_BUDGET_S )); then
-    if (( TITLE_RECOVERED == 0 )); then
-      echo "Title step blew ${STEP_BUDGET_S}s hard budget — recover once and retry." >&2
-      recover_simulator_once "step_budget:title"
-      TITLE_RECOVERED=1
-      TITLE_T0=$SECONDS
-      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
-      continue
-    fi
-    echo "Fail fast: title still over budget after recover." >&2
-    print_timing_table
-    exit 125
+    echo "Title step blew ${STEP_BUDGET_S}s hard budget (no recover — soft switch only)." >&2
+    break
   fi
-  sleep 0.3
+  # Re-assert the title shot defaults in case the first write raced the live poll.
+  if (( try == 4 || try == 7 )); then
+    write_shot_defaults "title" 8
+  fi
+  sleep 0.4
   shot "$OUT_DIR/01-title.png" || true
   if assert_app_frame "$OUT_DIR/01-title.png" && assert_title_not_splash "$OUT_DIR/01-title.png"; then
     TITLE_OK=1
@@ -1447,7 +1438,7 @@ for try in 1 2 3 4 5 6 7 8; do
   fi
 done
 if (( TITLE_OK == 0 )); then
-  echo "Title frame invalid or still LaunchLogo splash" >&2
+  echo "Title frame invalid or still LaunchLogo/ident splash" >&2
   print_timing_table
   exit 1
 fi

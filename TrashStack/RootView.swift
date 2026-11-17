@@ -156,6 +156,11 @@ struct RootView: View {
         case "ident", "publisher":
             holdIdentShot = true
             showIdent = true
+        case "title":
+            // Soft switch off a held publisher ident without requiring process kill.
+            holdIdentShot = false
+            showIdent = false
+            screen = .title
         case "game", "gameplay", "compactor", "recycle", "revive", "press":
             showIdent = false
             playMode = .endless
