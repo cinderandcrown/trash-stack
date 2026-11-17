@@ -698,8 +698,11 @@ launch_shot() {
   # Recycle juice / game boards need time past OS LaunchLogo after a hard terminate.
   local max_attempts=4
   case "$mode" in
-    recycle|mkt-recycle|game|gameplay|compactor|press|revive|daily|demo|autoplay|mkt-play|mkt-crush|mkt-recycle|mkt-daily)
+    recycle|mkt-recycle|game|gameplay|compactor|press|daily|demo|autoplay|mkt-play|mkt-crush|mkt-recycle|mkt-daily)
       if (( settle < 5 )); then settle=5; fi
+      ;;
+    revive)
+      if (( settle < 7 )); then settle=7; fi
       ;;
     ident|publisher)
       if (( settle < 4 )); then settle=4; fi
@@ -758,22 +761,11 @@ launch_shot() {
     cat /tmp/sim-launch.out >&2 || true
     sleep 0.9
 
-    # Only hard-kill when the soft switch failed on a prior attempt.
+    # Soft re-nudge only — hard terminate was landing on LaunchLogo and wedging io.
     if (( attempts >= 2 )); then
-      echo "launch_shot: soft switch missed for '$mode' — hard terminate once" >&2
-      ensure_app_terminated || true
-      write_shot_defaults "$mode" "$(shot_budget_left "$shot_start")"
-      left=$(shot_budget_left "$shot_start")
-      launch_lim="$SIMCTL_DEADLINE_S"
-      (( left < launch_lim )) && launch_lim=$left
-      (( launch_lim < 2 )) && launch_lim=2
-      if [[ -n "$mode" ]]; then
-        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-      else
-        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-      fi
-      cat /tmp/sim-launch.out >&2 || true
-      sleep 0.8
+      echo "launch_shot: soft switch missed for '$mode' — rewrite smoke-shot + wait" >&2
+      write_smoke_shot_file "$mode" || write_shot_defaults "$mode" 4
+      sleep 1.6
     fi
 
     left=$(shot_budget_left "$shot_start")
@@ -1020,9 +1012,15 @@ def band_stats(y0, y1, x0=0.15, x1=0.85):
     var=sum((v-mean)**2 for v in vals)/len(vals)
     return var, mean
 
-game = mode in {"game","gameplay","compactor","press","recycle","revive","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
+game = mode in {"game","gameplay","compactor","press","recycle","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
 menu = mode in {"base","pass","shop","notif","share","streak","mkt-base","mkt-pass","mkt-shop"}
-if game:
+if mode == "revive":
+    # Game-over sheet covers most of the bin — require a non-dark lower sheet band,
+    # not the mid-board variance used for live play shots.
+    var, mean = band_stats(0.62, 0.92)
+    if mean < 28 and var < 60:
+        print(f"Mode '{mode}' missing revive-sheet marker (mean={mean:.1f} var={var:.1f})", file=sys.stderr); sys.exit(4)
+elif game:
     # Board lives in the lower-mid of the phone frame (HUD above, controls below).
     var, mean = band_stats(0.48, 0.78)
     if var < 180:
