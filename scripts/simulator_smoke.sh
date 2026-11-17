@@ -11,8 +11,8 @@ DISPLAY="${SIMCTL_DISPLAY:-internal}"
 SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Hard budgets (harness only — app launch gates stay 1.5s / 8s).
 STEP_BUDGET_S="${STEP_BUDGET_S:-90}"
-SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-12}"
-SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-15}"
+SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-10}"
+SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
 CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-4}"
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
@@ -32,38 +32,36 @@ note_timing() {
   echo "timing kind=$kind name=$name limit=${limit}s elapsed=${elapsed}s rc=$rc ${note}" >&2
 }
 
-# Kill a process group tree (xcrun→simctl grandchildren ignore single-PID kills).
-_kill_tree() {
-  local pid="$1"
-  kill -TERM "-$pid" 2>/dev/null || kill -TERM "$pid" 2>/dev/null || true
-  sleep 0.3
-  kill -KILL "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
-}
-
 # Run argv under a hard wall-clock deadline; kill the whole process group on expiry.
-# (Prior perl-alarm only signaled xcrun; simctl children kept running → 15s limits took 140s.)
+# Child setpgrp(0,0) so kill(-pgid) reaps xcrun→simctl grandchildren.
 _run_deadline() {
-  local secs="$1"
+  local secs="$1" rc=0
   shift
-  local rc=0 t0
-  t0=$(python3 -c 'import time; print(time.time())')
-  set -m
-  "$@" &
-  local pid=$!
-  set +m
-  while kill -0 "$pid" 2>/dev/null; do
-    if python3 - "$t0" "$secs" <<'PY'
-import sys, time
-sys.exit(0 if (time.time() - float(sys.argv[1])) >= float(sys.argv[2]) else 1)
-PY
-    then
-      _kill_tree "$pid"
-      wait "$pid" 2>/dev/null || true
-      return 124
-    fi
-    sleep 0.2
-  done
-  wait "$pid" 2>/dev/null || rc=$?
+  perl -e '
+    my $secs = shift @ARGV;
+    my $pid = fork();
+    die "fork: $!\n" unless defined $pid;
+    if ($pid == 0) {
+      setpgrp(0, 0);
+      exec @ARGV;
+      exit 127;
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", -$pid;
+      select undef, undef, undef, 0.5;
+      kill "KILL", -$pid;
+    };
+    alarm $secs;
+    waitpid($pid, 0);
+    alarm 0;
+    if ($timed_out) { exit 124; }
+    my $status = $?;
+    if ($status == -1) { exit 127; }
+    if ($status & 127) { exit 128 + ($status & 127); }
+    exit($status >> 8);
+  ' "$secs" "$@" || rc=$?
   return "$rc"
 }
 
@@ -105,6 +103,8 @@ cmd_label() {
 }
 
 # Recover a wedged CoreSimulator once; a second wedge fails fast.
+# Create a FRESH device immediately — do not wait on erase/bootstatus of the wedged UDID
+# (that previously burned 14+ minutes then still failed install).
 recover_simulator_once() {
   local reason="$1"
   if (( SIM_RECOVERED == 1 )); then
@@ -116,39 +116,40 @@ recover_simulator_once() {
   SIM_RECOVERED=1
   DEADLINE_FAILS=0
   IN_RECOVER=1
-  echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, reinstall, then retry." >&2
-  note_timing step recover_simulator 240 0 0 "start:$reason"
+  local old_device="$DEVICE"
+  echo "Simulator wedge detected ($reason) — create fresh simulator, abandon wedged UDID=$old_device." >&2
+  note_timing step recover_simulator 180 0 0 "start:$reason"
   local t0=$SECONDS rc=0
   : >/tmp/sim-recover.log
-  raw_deadline 45 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 60 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 120 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-  if ! raw_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1; then
-    echo "Erase/reboot install failed — creating a fresh simulator device." >&2
-    raw_deadline 45 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-    # Keep the old UDID around; create a sibling iPhone and switch DEVICE.
-    local new_udid=""
-    rm -f /tmp/sim-new-udid.txt
-    raw_deadline 45 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 17" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
+  # Abandon wedged device in the background — never block the suite on it.
+  ( xcrun simctl shutdown "$old_device" >/dev/null 2>&1 || true
+    xcrun simctl delete "$old_device" >/dev/null 2>&1 || true ) &
+  local new_udid=""
+  rm -f /tmp/sim-new-udid.txt
+  raw_deadline 30 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 17" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
+  new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
+  if [[ -z "$new_udid" ]]; then
+    raw_deadline 30 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 16" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
     new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
-    if [[ -z "$new_udid" ]]; then
-      raw_deadline 45 xcrun simctl create "TrashStack-Smoke-Recover" "iPhone 16" >/tmp/sim-new-udid.txt 2>>/tmp/sim-recover.log || true
-      new_udid="$(tr -d '[:space:]' </tmp/sim-new-udid.txt 2>/dev/null || true)"
-    fi
-    if [[ -n "$new_udid" ]]; then
-      DEVICE="$new_udid"
-      echo "Recover DEVICE now $DEVICE" >&2
-      raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-      raw_deadline 120 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-      raw_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
-    else
-      rc=1
-    fi
   fi
+  if [[ -z "$new_udid" ]]; then
+    # Last resort: pick any available iPhone UDID.
+    new_udid="$(xcrun simctl list devices available 2>/dev/null | awk -F '[()]' '/iPhone/ && /Shutdown|Booted/{gsub(/ /,"",$2); print $2; exit}' || true)"
+  fi
+  if [[ -z "$new_udid" ]]; then
+    echo "Could not create/find a recovery simulator — fail fast." >&2
+    cat /tmp/sim-recover.log >&2 || true
+    print_timing_table
+    exit 125
+  fi
+  DEVICE="$new_udid"
+  echo "Recover DEVICE now $DEVICE" >&2
+  raw_deadline 45 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
   raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 15 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
-  note_timing step recover_simulator 240 "$((SECONDS - t0))" "$rc" "done:$reason"
+  note_timing step recover_simulator 180 "$((SECONDS - t0))" "$rc" "done:$reason"
   IN_RECOVER=0
   if (( rc != 0 )); then
     echo "Simulator recover reinstall failed — fail fast." >&2
@@ -550,7 +551,7 @@ launch_shot() {
   local max_attempts=2
   if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
     max_attempts=3
-    if (( settle < 7 )); then settle=7; fi
+    if (( settle < 5 )); then settle=5; fi
   fi
   # One extra attempt window if we had to erase/reboot mid-step.
   local budget_retries=0
@@ -909,37 +910,37 @@ fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
-launch_shot "game" "$OUT_DIR/02-gameplay.png" 5
+launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
-launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 5
+launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 3
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
 # Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 7
+launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 4
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-launch_shot "base" "$OUT_DIR/06-base.png" 3
-launch_shot "pass" "$OUT_DIR/07-pass.png" 3
-launch_shot "shop" "$OUT_DIR/08-shop.png" 3
-launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 3
+launch_shot "base" "$OUT_DIR/06-base.png" 2
+launch_shot "pass" "$OUT_DIR/07-pass.png" 2
+launch_shot "shop" "$OUT_DIR/08-shop.png" 2
+launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
 smoke_budget
 # Retention evidence: Daily Dumpster, share card, streak reward.
-launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 4
+launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 3
 assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png"
-launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 3
-launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 3
+launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 2
+launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 2
 smoke_budget
 
-launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 4
+launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 3
 assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
-launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 5
+launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 3
 assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
 launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 5
 assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
-launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 3
-launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 3
-launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 3
-launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 4
+launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 2
+launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 2
+launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 2
+launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3
 assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
 smoke_budget
 
