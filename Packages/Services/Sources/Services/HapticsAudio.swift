@@ -154,19 +154,24 @@ public final class AudioService {
         if buffers[name] == nil, let buf = loadWav(named: name) {
             buffers[name] = buf
         }
-        guard let buffer = buffers[name], let player = borrowSFXPlayer() else {
+        guard let engine,
+              let buffer = buffers[name],
+              let player = borrowSFXPlayer() else {
             blip(frequency: 440 * pitch)
             return
         }
         player.stop()
+        // Pool nodes are attached with a nil (mixer) format; WAVs are often mono.
+        // Reconnect to the buffer's channel count before scheduleBuffer or AVFAudio asserts.
+        let playBuffer: AVAudioPCMBuffer
         if abs(pitch - 1) > 0.01, let pitched = timePitchBuffer(buffer, pitch: pitch) {
-            player.scheduleBuffer(pitched) { [weak self] in
-                Task { @MainActor in self?.releaseSFXPlayer(player) }
-            }
+            playBuffer = pitched
         } else {
-            player.scheduleBuffer(buffer) { [weak self] in
-                Task { @MainActor in self?.releaseSFXPlayer(player) }
-            }
+            playBuffer = buffer
+        }
+        engine.connect(player, to: engine.mainMixerNode, format: playBuffer.format)
+        player.scheduleBuffer(playBuffer) { [weak self] in
+            Task { @MainActor in self?.releaseSFXPlayer(player) }
         }
         player.play()
 #endif
