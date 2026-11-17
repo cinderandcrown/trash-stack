@@ -514,9 +514,9 @@ struct GameContainerView: View {
                 hudScore = scene.engine.state.score
                 displayScore = scene.engine.state.score
                 syncHUD()
-                // Defer presentation — setting the sheet flag in the same turn as
-                // first appear often no-ops on soft smoke switches.
-                DispatchQueue.main.async {
+                // Defer past first layout — same-turn sheet flags no-op on soft
+                // switches; a short beat keeps magenta/teal markers in the frame.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     showContinue = true
                 }
             }

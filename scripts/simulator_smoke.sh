@@ -673,6 +673,12 @@ write_shot_defaults() {
   (( rem > 8 )) && rem=8
   # Prefer host file write — simctl spawn defaults often wedges after a few shots.
   write_smoke_shot_file "$mode" || true
+  # Soft-only path: Documents file is authoritative. Skip simctl spawn — those
+  # 2s timeouts stack and wedge io screenshots before revive/meta frames land.
+  if (( SOFT_SHOT_ONLY == 1 )); then
+    _="$rem"
+    return 0
+  fi
   # Best-effort defaults mirror with a short deadline; file write is authoritative.
   raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
   raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
@@ -1508,7 +1514,7 @@ assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
-# First gameplay shot may still need simctl launch; after it lands, soft-only.
+# First gameplay shot may still need simctl launch; juice shots soft-switch.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
 SOFT_SHOT_ONLY=1
@@ -1517,8 +1523,12 @@ assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
 # Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
 launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
+# Revive sheet needs one launch (soft-only left LaunchLogo / wedged io on CI).
+SOFT_SHOT_ONLY=0
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
+# Meta screens soft-only — repeated launches wedge shop/pass on CI.
+SOFT_SHOT_ONLY=1
 launch_shot "base" "$OUT_DIR/06-base.png" 2
 launch_shot "pass" "$OUT_DIR/07-pass.png" 2
 launch_shot "shop" "$OUT_DIR/08-shop.png" 2
