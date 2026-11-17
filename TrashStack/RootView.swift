@@ -169,11 +169,21 @@ struct RootView: View {
         // Prefer a freshly written defaults / Documents shot (smoke soft-switch) over the
         // original process argument — `-trashStackShot ident` otherwise sticks
         // for the whole process and blocks title/game switches.
-        let shot = UserDefaults.standard.string(forKey: "trashStack.shot")
-            ?? Self.pendingSmokeShotFile()
+        let fromDefaults = UserDefaults.standard.string(forKey: "trashStack.shot")
+        let fromFile = Self.pendingSmokeShotFile()
+        let shot = fromDefaults
+            ?? fromFile
             ?? profile.consumeShotMode()
             ?? PlayerProfile.shotArgument()
         guard let shot, !shot.isEmpty else { return }
+        // Sticky `-trashStackShot ident` must not re-cover a soft-switched title/game
+        // when the poll only had a transient empty write.
+        if fromDefaults == nil && fromFile == nil,
+           (shot == "ident" || shot == "publisher"),
+           let active = UserDefaults.standard.string(forKey: "trashStack.shotActive"),
+           active != "ident", active != "publisher" {
+            return
+        }
         UserDefaults.standard.removeObject(forKey: "trashStack.shot")
         Self.clearSmokeShotFile()
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
@@ -183,9 +193,11 @@ struct RootView: View {
             showIdent = true
         case "title":
             // Soft switch off a held publisher ident without requiring process kill.
+            // Clear hold first so PublisherIdentView cannot re-stick over the title.
             holdIdentShot = false
             showIdent = false
             screen = .title
+            UserDefaults.standard.set("title", forKey: "trashStack.shotActive")
         case "game", "gameplay", "compactor", "recycle", "revive", "press":
             showIdent = false
             playMode = .endless
