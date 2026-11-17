@@ -614,10 +614,11 @@ public struct GameEngine: Sendable {
             state.combo = 1
             state.active = ActivePiece(id: .crate, x: 3, y: hid + 2)
         case "revive", "game-over":
-            // Believable topped-out bin from "real play" — jagged, mixed materials.
-            let skyline = [12, 11, 13, 12, 14, 13, 12, 11]
+            // Believable topped-out bin — dense solid tiles so the bin behind the
+            // revive sheet still reads as a real game, not a gray void.
+            let skyline = [14, 13, 15, 14, 16, 15, 14, 13]
             for x in 0..<cols {
-                let fill = min(skyline[x], rows - hid)
+                let fill = min(skyline[x % skyline.count], rows - hid)
                 for i in 0..<fill {
                     let y = rows - 1 - i
                     let id: JunkID = [.can, .bottle, .plank, .pipe, .crate, .tire, .bentPipe, .fridge][(x * 5 + i * 3) % 8]

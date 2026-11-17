@@ -10,10 +10,12 @@ BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
 DISPLAY="${SIMCTL_DISPLAY:-internal}"
 SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Hard budgets (harness only — app launch gates stay 1.5s / 8s).
-STEP_BUDGET_S="${STEP_BUDGET_S:-120}"
+STEP_BUDGET_S="${STEP_BUDGET_S:-150}"
 SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-10}"
 SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
 CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-5}"
+# After the title frame is captured, prefer Documents soft-switches only (no simctl launch).
+SOFT_SHOT_ONLY=0
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
 TIMING_FILE="$OUT_DIR/smoke-step-timing.tsv"
@@ -746,26 +748,27 @@ launch_shot() {
     if (( left < 8 )); then sleep 1; continue; fi
     write_shot_defaults "$mode" "$left"
 
-    # Soft path first: write defaults + launch (no-op if already running). The in-app
-    # smoke poll switches UI without terminate — repeated killall was wedging simctl.
-    left=$(shot_budget_left "$shot_start")
-    if (( left < 5 )); then sleep 1; continue; fi
-    local launch_lim="$SIMCTL_DEADLINE_S"
-    (( left < launch_lim )) && launch_lim=$left
-    (( launch_lim < 2 )) && launch_lim=2
-    if [[ -n "$mode" ]]; then
-      with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-    else
-      with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+    # Soft path: Documents/smoke-shot.txt + optional launch. After title is captured,
+    # skip simctl launch entirely — it wedges io on later meta shots (shop/pass).
+    if (( SOFT_SHOT_ONLY == 0 )); then
+      left=$(shot_budget_left "$shot_start")
+      if (( left < 5 )); then sleep 1; continue; fi
+      local launch_lim="$SIMCTL_DEADLINE_S"
+      (( left < launch_lim )) && launch_lim=$left
+      (( launch_lim < 2 )) && launch_lim=2
+      if [[ -n "$mode" ]]; then
+        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      else
+        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      fi
+      cat /tmp/sim-launch.out >&2 || true
     fi
-    cat /tmp/sim-launch.out >&2 || true
-    sleep 0.9
+    sleep 1.0
 
-    # Soft re-nudge only — hard terminate was landing on LaunchLogo and wedging io.
     if (( attempts >= 2 )); then
       echo "launch_shot: soft switch missed for '$mode' — rewrite smoke-shot + wait" >&2
-      write_smoke_shot_file "$mode" || write_shot_defaults "$mode" 4
-      sleep 1.6
+      write_smoke_shot_file "$mode" || true
+      sleep 1.8
     fi
 
     left=$(shot_budget_left "$shot_start")
@@ -1474,6 +1477,7 @@ if (( TITLE_OK == 0 )); then
   exit 1
 fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
+SOFT_SHOT_ONLY=1
 smoke_budget
 # Publisher ident — soft dedicated attempt only (never recover/erase for ident alone).
 if (( IDENT_CAPTURED == 0 )); then
