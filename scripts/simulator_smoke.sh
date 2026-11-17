@@ -1095,9 +1095,17 @@ if ! with_deadline 60 xcrun simctl bootstatus "$DEVICE" -b; then
 fi
 with_deadline 20 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 if ! with_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH"; then
-  echo "Fail fast: simctl install hung or failed." >&2
-  print_timing_table
-  exit 125
+  echo "simctl install failed — one reboot+retry before fail-fast" >&2
+  with_deadline 20 xcrun simctl shutdown "$DEVICE" >/dev/null 2>&1 || true
+  sleep 2
+  with_deadline 40 xcrun simctl boot "$DEVICE" || true
+  with_deadline 60 xcrun simctl bootstatus "$DEVICE" -b || true
+  with_deadline 20 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  if ! with_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH"; then
+    echo "Fail fast: simctl install hung or failed after retry." >&2
+    print_timing_table
+    exit 125
+  fi
 fi
 note_timing step boot_install 180 "$((SECONDS - SMOKE_START))" 0 "ok"
 smoke_budget
