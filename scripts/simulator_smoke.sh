@@ -23,6 +23,7 @@ echo -e "kind\tname\tlimit_s\telapsed_s\trc\tnote" >> "$TIMING_FILE"
 DEADLINE_FAILS=0
 SIM_RECOVERED=0
 IN_RECOVER=0
+STEP_NEEDS_RESET=0
 CURRENT_STEP="init"
 
 note_timing() {
@@ -115,7 +116,8 @@ recover_simulator_once() {
     print_timing_table
     exit 125
   fi
-  echo "Simulator recover OK — suite will retry the current step." >&2
+  STEP_NEEDS_RESET=1
+  echo "Simulator recover OK — suite will retry the current step with a fresh budget." >&2
 }
 
 on_deadline_timeout() {
@@ -529,9 +531,19 @@ launch_shot() {
   local budget_retries=0
   local shot_start=$SECONDS
   CURRENT_STEP="shot:$mode"
+  STEP_NEEDS_RESET=0
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 
   while (( attempts < max_attempts )); do
+    # Recover mid-step (via deadline timeouts) must not count against this step's budget.
+    if (( STEP_NEEDS_RESET == 1 )); then
+      STEP_NEEDS_RESET=0
+      budget_retries=1
+      attempts=0
+      shot_start=$SECONDS
+      echo "Resetting step clock for '$mode' after simulator recover" >&2
+      note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "reset_after_recover"
+    fi
     attempts=$((attempts + 1))
     local step_elapsed=$((SECONDS - shot_start))
     if (( step_elapsed > STEP_BUDGET_S )); then
@@ -539,9 +551,7 @@ launch_shot() {
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
       if (( budget_retries == 0 )); then
         recover_simulator_once "step_budget:$mode"
-        budget_retries=1
-        attempts=0
-        shot_start=$SECONDS
+        # Loop top will honor STEP_NEEDS_RESET with a fresh clock.
         continue
       fi
       echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget after recover." >&2
@@ -549,8 +559,9 @@ launch_shot() {
       exit 125
     fi
     smoke_budget
-    # Short terminate — if wedged, don't burn; launch will replace the process.
-    with_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    # Prefer killall over simctl terminate — terminate is a known hang on wedged sims.
+    with_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+    with_deadline 5 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
     sleep 0.2
 
     write_shot_defaults "$mode"
