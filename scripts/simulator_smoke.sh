@@ -715,12 +715,9 @@ launch_shot() {
       sleep 1
       continue
     fi
-    # Hard kill the old process so -trashStackShot args are actually applied.
-    if ! ensure_app_terminated; then
-      echo "launch_shot: could not confirm prior process gone for mode='$mode' — retrying" >&2
-      sleep 0.5
-      ensure_app_terminated || true
-    fi
+    # Prefer a hard kill so -trashStackShot args apply on a fresh process.
+    # If terminate flakes, defaults + in-app smoke poll still switch the live UI.
+    ensure_app_terminated || true
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 8 )); then sleep 1; continue; fi
@@ -737,6 +734,8 @@ launch_shot() {
       with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     fi
     cat /tmp/sim-launch.out >&2 || true
+    # Give the in-app shot poll a beat when relaunch reused a live process.
+    sleep 0.7
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 5 )); then sleep 1; continue; fi

@@ -127,6 +127,22 @@ struct RootView: View {
             }
             applyShotMode()
         }
+        // Smoke harness: if simctl relaunch reuses a live process, defaults-written
+        // `trashStack.shot` still arrives — pick it up without requiring a new PID.
+        .onReceive(Timer.publish(every: 0.45, on: .main, in: .common).autoconnect()) { _ in
+            guard Self.smokeHarnessActive else { return }
+            guard UserDefaults.standard.string(forKey: "trashStack.shot") != nil else { return }
+            applyShotMode()
+        }
+    }
+
+    /// True for CI / screenshot launches (skip-ads or an explicit shot argument).
+    private static var smokeHarnessActive: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-trashStackSkipAds") { return true }
+        if UserDefaults.standard.bool(forKey: "trashStack.skipAds") { return true }
+        if PlayerProfile.shotArgument() != nil { return true }
+        return false
     }
 
     private func applyShotMode() {
@@ -144,12 +160,12 @@ struct RootView: View {
             showIdent = false
             playMode = .endless
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         case "daily":
             showIdent = false
             playMode = .daily
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         case "streak":
             showIdent = false
             let r = profile.registerDailyActivity()
@@ -199,25 +215,25 @@ struct RootView: View {
             showIdent = false
             playMode = .endless
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         case "mkt-play":
             showIdent = false
             marketingCaption = "Night shift in a neon dumpster"
             UserDefaults.standard.set("game", forKey: "trashStack.shotActive")
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         case "mkt-crush":
             showIdent = false
             marketingCaption = "Slam the PRESS for scrap"
             UserDefaults.standard.set("compactor", forKey: "trashStack.shotActive")
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         case "mkt-recycle":
             showIdent = false
             marketingCaption = "Recycle 4+ matching materials"
             UserDefaults.standard.set("recycle", forKey: "trashStack.shotActive")
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         case "mkt-base":
             showIdent = false
             marketingCaption = "Build your Junkyard hideout"
@@ -236,10 +252,20 @@ struct RootView: View {
             playMode = .daily
             UserDefaults.standard.set("daily", forKey: "trashStack.shotActive")
             LaunchTiming.markPlayTap()
-            screen = .game
+            enterGameScreen()
         default:
             showIdent = false
             screen = .title
+        }
+    }
+
+    /// Enter gameplay, recreating GameContainerView when already on .game so shot boards re-seed.
+    private func enterGameScreen() {
+        if screen == .game {
+            screen = .title
+            DispatchQueue.main.async { screen = .game }
+        } else {
+            screen = .game
         }
     }
 
