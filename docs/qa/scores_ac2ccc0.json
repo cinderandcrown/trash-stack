@@ -1,0 +1,172 @@
+{
+  "commit": "ac2ccc08adfd3f48d9210e9cb5ee76827518372b",
+  "branch": "cursor/trash-stack-native-swift-497e",
+  "baseline": {
+    "286bb13": 5.0,
+    "54cf2ce": 5.1
+  },
+  "verdict": "NO",
+  "overall": 5.0,
+  "weights_note": "Fun 40%, the other 8 categories 7.5% each (same formula as 286bb13).",
+  "scores": {
+    "fun": 4.5,
+    "feel_juice": 5.0,
+    "readability": 3.0,
+    "onboarding_first_60s": 4.5,
+    "retention_hooks": 6.0,
+    "monetization_ethics": 7.5,
+    "performance": 5.5,
+    "distinct_from_falling_block_classics": 6.5,
+    "app_store_readiness": 4.5
+  },
+  "regressions_vs_286bb13": [
+    "onboarding_first_60s 5.0->4.5",
+    "performance 6.5->5.5",
+    "smoke screenshot evidence: 0 of 20 in-app shots show their target screen"
+  ],
+  "ci": {
+    "pr_ci": {
+      "id": 44076779739,
+      "conclusion": "success"
+    },
+    "push_ci": {
+      "id": 44076771965,
+      "conclusion": "success"
+    },
+    "pr_testflight": {
+      "id": 44076779680,
+      "conclusion": "success"
+    }
+  },
+  "metrics": {
+    "screenshots_total": 22,
+    "screenshots_in_app": 20,
+    "screenshots_showing_title_instead_of_target": 19,
+    "ident_screenshot_shows": "title screen (captured ~4 s after launch, ident already finished)",
+    "ssim_vs_01_title_excluding_status_bar": {
+      "00-publisher-ident.png": 0.9564,
+      "00-springboard-icon-crop.png": 0.1608,
+      "00-springboard.png": 0.1608,
+      "01-title.png": 1.0,
+      "02-gameplay.png": 0.9592,
+      "03-compactor-clear.png": 0.9551,
+      "04-recycle-combo.png": 0.9944,
+      "05-game-over-revive.png": 0.9916,
+      "06-base.png": 0.9549,
+      "07-pass.png": 0.9922,
+      "08-shop.png": 0.9545,
+      "09-notification-prompt.png": 0.954,
+      "10-daily-dumpster.png": 0.9554,
+      "11-daily-share-card.png": 0.9559,
+      "12-streak-reward.png": 0.9945,
+      "mkt-01-play.png": 0.993,
+      "mkt-02-crush.png": 0.9548,
+      "mkt-03-recycle.png": 0.9937,
+      "mkt-04-junkyard.png": 0.9569,
+      "mkt-05-pass.png": 0.9657,
+      "mkt-06-shop.png": 0.9935,
+      "mkt-07-daily.png": 0.9616
+    },
+    "sha256_unique_screenshots": "21 of 22 (springboard-icon-crop == springboard)",
+    "shot_kill_command": "simctl spawn killall TrashStack -> rc=2 on all 19 shots (silently ignored); prior process stays alive, simctl launch re-foregrounds it without new args",
+    "kill_change_commit": "a169cc8 (prefer killall over terminate)",
+    "assert_app_frame_md5": {
+      "286bb13": "37615e59",
+      "a169cc8": "37615e59",
+      "ac2ccc0": "25e48fc4 (only change: wrapped in raw_deadline 25)"
+    },
+    "assert_no_missing_textures_md5": {
+      "286bb13": "f1ad67ff",
+      "ac2ccc0": "f1ad67ff"
+    },
+    "launch_gates": {
+      "286bb13": {
+        "wall_s": 45,
+        "in_app": "none"
+      },
+      "ac2ccc0": {
+        "wall_s": 8.0,
+        "in_app_s": 1.5
+      }
+    },
+    "launch_claimed": {
+      "in_app_s": 0.426,
+      "wall_s": 3.7095
+    },
+    "launch_in_app_stamp_point": "RootView/PublisherIdentView .onAppear on a blank charcoal view (before logo decode); not a render-commit timestamp",
+    "demo_launch_measured_from_video_s": {
+      "app_zoom_start": 1.593,
+      "os_launch_screen_static_until": 8.682,
+      "gray_board_hud_from": 8.9,
+      "first_rendered_board": 11.193,
+      "tap_to_first_game_frame": 9.6,
+      "os_launch_screen_hold": 7.0,
+      "gray_board_hold": 2.3
+    },
+    "demo_path_in_app_stamp": "not measured (showIdent=false and TitleView never appears in shot=demo)",
+    "publisher_ident": {
+      "logo_md5_3x": "f4a3ffce2b58ddd4f12c010427782ac8 (matches spec)",
+      "logo_has_wordmark": false,
+      "title_text": "Cinder & Crown Creative Presents (exact)",
+      "extra_on_screen_text": "Cinder & Crown logo, (c) Cinder and Crown LLC, used by permission.",
+      "duration_code_s": "~1.9 (yield + 0.38 + 0.9 + 0.32 + 0.28 crossfade)",
+      "skippable": true,
+      "reduce_motion": true,
+      "cold_launch_only": true,
+      "prompts_during_ident": "none (notif prompt gated on !showIdent)",
+      "assets_preloaded_behind_ident": false,
+      "whoosh_respects_app_sound_setting": false,
+      "sound_setting_persisted": false,
+      "captured_in_smoke": false
+    },
+    "board_pixel_coverage_near_full_board_25_5s_pct": 23.1,
+    "board_fill_target_pct": 85,
+    "flat_color_recycle_ghosts_seen_s": [
+      12.1,
+      20.0,
+      28.0,
+      31.0
+    ],
+    "demo_level_display": "LVL2 (9,465) -> LVL1 (11,895, 14,936) -> LVL2 (16,855): level goes backwards when scripted scenarios swap state",
+    "demo_gameover_score": {
+      "hud_before": 21595,
+      "sheet": 8800
+    },
+    "demo_vfr_gaps_over_50ms": {
+      "total": 78,
+      "in_play_11.2_to_24s": 28,
+      "in_play_over_100ms": 9,
+      "max_in_play_ms": 253
+    },
+    "crate_odds": {
+      "display": "Scrap 40-80 (100%) · Gems: 0 (33%) / 1 (33%) / 2 (33%)",
+      "roll_source": "CrateLoot (shared)",
+      "match": true,
+      "displayed_sum_pct": 99
+    },
+    "raccoon_alpha": {
+      "Idle": {
+        "opaque_px": 121524,
+        "core_opaque_pct": 85.7
+      },
+      "Cheer": {
+        "opaque_px": 126388,
+        "core_opaque_pct": 95.1
+      },
+      "Panic": {
+        "opaque_px": 119153,
+        "core_opaque_pct": 95.3
+      },
+      "Idle_opaque_px_286bb13": 15445
+    },
+    "music_loop_s": {
+      "game_loop": 64.0,
+      "menu_loop": 64.0,
+      "286bb13": 8.0
+    },
+    "launch_logo": "600x600 @3x (was 512 @1x, clipped) - fixed",
+    "forbidden_word_hits_in_repo": "0 outside docs/qa (old QA reports 286bb13 had it; redacted on this branch)",
+    "junk_duplicate_alias_files": "deleted (bag/box/scrap/tube)",
+    "art_provenance": "LICENSES.md lists all rasters as Original; no tool/ownership terms recorded for painted raccoon/alley/dumpster rasters"
+  }
+}

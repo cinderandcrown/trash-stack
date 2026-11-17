@@ -1,0 +1,219 @@
+kind	name	limit_s	elapsed_s	rc	note
+step	boot_install	180	0	0	start
+deadline	xcrun simctl bootstatus -b	60	75	124	step=boot_install
+deadline	xcrun simctl boot	40	67	124	step=boot_install
+deadline	xcrun simctl bootstatus -b	60	53	0	step=boot_install
+deadline	xcrun simctl uninstall	20	3	0	step=boot_install
+deadline	xcrun simctl install	60	25	0	step=boot_install
+step	boot_install	180	225	0	ok
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	15	124	step=boot_install
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	16	124	step=boot_install
+deadline	xcrun simctl io screenshot --display=internal	20	24	124	step=boot_install
+deadline	xcrun simctl io screenshot	20	12	0	step=boot_install
+step	cold_launch_timing	120	0	0	start
+deadline	xcrun simctl terminate	12	1	3	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults delete trashStack.shot	8	0	1	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults delete trashStack.launchToTitleSec	8	1	1	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults delete trashStack.launchToTitleSecString	8	1	1	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults delete trashStack.firstFrameWallEpoch	8	1	1	step=cold_launch_timing
+deadline	xcrun simctl spawn defaults delete trashStack.firstFrameWallEpochString	8	1	1	step=cold_launch_timing
+deadline	xcrun simctl launch -trashStackSkipAds	12	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl get_app_container data	5	1	0	step=cold_launch_timing
+deadline	xcrun simctl io screenshot --display=internal	10	4	0	step=cold_launch_timing raw=1
+deadline	python3 -	25	1	0	step=cold_launch_timing raw=1
+step	title	120	0	0	start
+deadline	xcrun simctl terminate	12	2	0	step=title
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=title
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=title
+deadline	xcrun simctl spawn defaults delete trashStack.shot	8	0	1	step=title
+deadline	xcrun simctl launch -trashStackSkipAds -trashStackSkipIdent	12	0	0	step=title
+deadline	xcrun simctl io screenshot --display=internal	10	0	0	step=title raw=1
+deadline	python3 -	25	0	0	step=title raw=1
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=title raw=1
+deadline	python3 -	25	0	0	step=title raw=1
+step	title	120	40	0	ok
+step	shot:game	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	3	2	step=shot:game raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	5	0	step=shot:game
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:game
+deadline	xcrun simctl spawn defaults write trashStack.shot -string game	8	1	0	step=shot:game
+deadline	xcrun simctl launch -trashStackShot game -trashStackSkipAds	12	0	0	step=shot:game
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:game raw=1
+deadline	python3 -	25	1	0	step=shot:game raw=1
+step	shot:game	120	16	0	ok
+step	shot:compactor	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	0	2	step=shot:compactor raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:compactor
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:compactor
+deadline	xcrun simctl spawn defaults write trashStack.shot -string compactor	8	1	0	step=shot:compactor
+deadline	xcrun simctl launch -trashStackShot compactor -trashStackSkipAds	12	2	0	step=shot:compactor
+deadline	xcrun simctl io screenshot --display=internal	10	3	0	step=shot:compactor raw=1
+deadline	python3 -	25	0	0	step=shot:compactor raw=1
+step	shot:compactor	120	12	0	ok
+step	shot:recycle	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:recycle raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:recycle
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	8	124	step=shot:recycle
+deadline	xcrun simctl spawn defaults write trashStack.shot -string recycle	8	4	0	step=shot:recycle
+deadline	xcrun simctl launch -trashStackShot recycle -trashStackSkipAds	12	1	0	step=shot:recycle
+deadline	xcrun simctl io screenshot --display=internal	10	4	0	step=shot:recycle raw=1
+deadline	python3 -	25	0	0	step=shot:recycle raw=1
+step	shot:recycle	120	26	0	ok
+step	shot:revive	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:revive raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:revive
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	2	0	step=shot:revive
+deadline	xcrun simctl spawn defaults write trashStack.shot -string revive	8	2	0	step=shot:revive
+deadline	xcrun simctl launch -trashStackShot revive -trashStackSkipAds	12	1	0	step=shot:revive
+deadline	xcrun simctl io screenshot --display=internal	10	4	0	step=shot:revive raw=1
+deadline	python3 -	25	0	0	step=shot:revive raw=1
+step	shot:revive	120	16	0	ok
+step	shot:base	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:base raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:base
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	2	0	step=shot:base
+deadline	xcrun simctl spawn defaults write trashStack.shot -string base	8	1	0	step=shot:base
+deadline	xcrun simctl launch -trashStackShot base -trashStackSkipAds	12	1	0	step=shot:base
+deadline	xcrun simctl io screenshot --display=internal	10	3	0	step=shot:base raw=1
+deadline	python3 -	25	0	0	step=shot:base raw=1
+step	shot:base	120	12	0	ok
+step	shot:pass	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:pass raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:pass
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:pass
+deadline	xcrun simctl spawn defaults write trashStack.shot -string pass	8	1	0	step=shot:pass
+deadline	xcrun simctl launch -trashStackShot pass -trashStackSkipAds	12	1	0	step=shot:pass
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:pass raw=1
+deadline	python3 -	25	0	0	step=shot:pass raw=1
+step	shot:pass	120	8	0	ok
+step	shot:shop	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:shop raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:shop
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	2	0	step=shot:shop
+deadline	xcrun simctl spawn defaults write trashStack.shot -string shop	8	1	0	step=shot:shop
+deadline	xcrun simctl launch -trashStackShot shop -trashStackSkipAds	12	1	0	step=shot:shop
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:shop raw=1
+deadline	python3 -	25	0	0	step=shot:shop raw=1
+step	shot:shop	120	10	0	ok
+step	shot:notif	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:notif raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:notif
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:notif
+deadline	xcrun simctl spawn defaults write trashStack.shot -string notif	8	0	0	step=shot:notif
+deadline	xcrun simctl launch -trashStackShot notif -trashStackSkipAds	12	1	0	step=shot:notif
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:notif raw=1
+deadline	python3 -	25	1	0	step=shot:notif raw=1
+step	shot:notif	120	9	0	ok
+step	shot:daily	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	0	2	step=shot:daily raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:daily
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:daily
+deadline	xcrun simctl spawn defaults write trashStack.shot -string daily	8	2	0	step=shot:daily
+deadline	xcrun simctl launch -trashStackShot daily -trashStackSkipAds	12	0	0	step=shot:daily
+deadline	xcrun simctl io screenshot --display=internal	10	3	0	step=shot:daily raw=1
+deadline	python3 -	25	0	0	step=shot:daily raw=1
+step	shot:daily	120	12	0	ok
+step	shot:share	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:share raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:share
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:share
+deadline	xcrun simctl spawn defaults write trashStack.shot -string share	8	2	0	step=shot:share
+deadline	xcrun simctl launch -trashStackShot share -trashStackSkipAds	12	1	0	step=shot:share
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:share raw=1
+deadline	python3 -	25	0	0	step=shot:share raw=1
+step	shot:share	120	10	0	ok
+step	shot:streak	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:streak raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:streak
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	5	0	step=shot:streak
+deadline	xcrun simctl spawn defaults write trashStack.shot -string streak	8	1	0	step=shot:streak
+deadline	xcrun simctl launch -trashStackShot streak -trashStackSkipAds	12	1	0	step=shot:streak
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=shot:streak raw=1
+deadline	python3 -	25	0	0	step=shot:streak raw=1
+step	shot:streak	120	13	0	ok
+step	shot:mkt-play	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:mkt-play raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:mkt-play
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:mkt-play
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-play	8	1	0	step=shot:mkt-play
+deadline	xcrun simctl launch -trashStackShot mkt-play -trashStackSkipAds	12	2	0	step=shot:mkt-play
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=shot:mkt-play raw=1
+deadline	python3 -	25	0	0	step=shot:mkt-play raw=1
+step	shot:mkt-play	120	11	0	ok
+step	shot:mkt-crush	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:mkt-crush raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:mkt-crush
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:mkt-crush
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-crush	8	2	0	step=shot:mkt-crush
+deadline	xcrun simctl launch -trashStackShot mkt-crush -trashStackSkipAds	12	1	0	step=shot:mkt-crush
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:mkt-crush raw=1
+deadline	python3 -	25	0	0	step=shot:mkt-crush raw=1
+step	shot:mkt-crush	120	11	0	ok
+step	shot:mkt-recycle	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:mkt-recycle raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:mkt-recycle
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	2	0	step=shot:mkt-recycle
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-recycle	8	1	0	step=shot:mkt-recycle
+deadline	xcrun simctl launch -trashStackShot mkt-recycle -trashStackSkipAds	12	1	0	step=shot:mkt-recycle
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=shot:mkt-recycle raw=1
+deadline	python3 -	25	1	0	step=shot:mkt-recycle raw=1
+step	shot:mkt-recycle	120	15	0	ok
+step	shot:mkt-base	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:mkt-base raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	2	0	step=shot:mkt-base
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:mkt-base
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-base	8	2	0	step=shot:mkt-base
+deadline	xcrun simctl launch -trashStackShot mkt-base -trashStackSkipAds	12	0	0	step=shot:mkt-base
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=shot:mkt-base raw=1
+deadline	python3 -	25	1	0	step=shot:mkt-base raw=1
+step	shot:mkt-base	120	11	0	ok
+step	shot:mkt-pass	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	0	2	step=shot:mkt-pass raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:mkt-pass
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	2	0	step=shot:mkt-pass
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-pass	8	1	0	step=shot:mkt-pass
+deadline	xcrun simctl launch -trashStackShot mkt-pass -trashStackSkipAds	12	1	0	step=shot:mkt-pass
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=shot:mkt-pass raw=1
+deadline	python3 -	25	1	0	step=shot:mkt-pass raw=1
+step	shot:mkt-pass	120	11	0	ok
+step	shot:mkt-shop	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	0	2	step=shot:mkt-shop raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:mkt-shop
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	1	0	step=shot:mkt-shop
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-shop	8	2	0	step=shot:mkt-shop
+deadline	xcrun simctl launch -trashStackShot mkt-shop -trashStackSkipAds	12	1	0	step=shot:mkt-shop
+deadline	xcrun simctl io screenshot --display=internal	10	1	0	step=shot:mkt-shop raw=1
+deadline	python3 -	25	0	0	step=shot:mkt-shop raw=1
+step	shot:mkt-shop	120	10	0	ok
+step	shot:mkt-daily	120	0	0	start
+deadline	xcrun simctl spawn killall TrashStack	4	1	2	step=shot:mkt-daily raw=1
+deadline	xcrun simctl spawn defaults write tutorialDone -bool true	8	1	0	step=shot:mkt-daily
+deadline	xcrun simctl spawn defaults write trashStack.skipAds -bool true	8	2	0	step=shot:mkt-daily
+deadline	xcrun simctl spawn defaults write trashStack.shot -string mkt-daily	8	2	0	step=shot:mkt-daily
+deadline	xcrun simctl launch -trashStackShot mkt-daily -trashStackSkipAds	12	1	0	step=shot:mkt-daily
+deadline	xcrun simctl io screenshot --display=internal	10	2	0	step=shot:mkt-daily raw=1
+deadline	python3 -	25	0	0	step=shot:mkt-daily raw=1
+step	shot:mkt-daily	120	12	0	ok
+step	record_video	120	0	0	start
+deadline	xcrun simctl terminate	12	2	0	step=record_video
+deadline	xcrun simctl spawn defaults write trashStack.shot -string demo	8	1	0	step=record_video
+deadline	xcrun simctl launch -trashStackShot demo -trashStackSkipAds -autoplay	12	0	0	step=record_video
+deadline	recordVideo reap	8	43	0	step=record_video
+step	record_video	120	44	0	ok
+step	ffmpeg_mux	90	0	0	start
+deadline	/opt/homebrew/bin/ffmpeg -hide_banner -y -i -stream_loop -1 -i /Users/runner/work/trash-stack/tra...	45	4	0	step=ffmpeg_mux raw=1
+deadline	/opt/homebrew/bin/ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0	15	2	0	step=ffmpeg_mux raw=1
+deadline	/opt/homebrew/bin/ffmpeg -hide_banner -y -ss 20 -t 8 -i -c:v copy -c:a aac -b:a 128k	30	3	0	step=ffmpeg_mux raw=1
+deadline	/opt/homebrew/bin/ffprobe -v error -select_streams a -show_entries stream=codec_type -of csv=p=0	15	8	0	step=ffmpeg_mux raw=1
+step	ffmpeg_mux	90	17	0	ok
+deadline	xcrun simctl spawn defaults read trashStack.measuredFPS	8	3	1	step=ffmpeg_mux
+step	suite_complete	1500	648	0	ok

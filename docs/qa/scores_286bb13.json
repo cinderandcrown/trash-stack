@@ -70,7 +70,7 @@
     "crate_odds_actual_bonus_gems_pct": 66.7,
     "assert_app_frame_md5": {"54cf2ce": "37615e59", "286bb13": "37615e59"},
     "recycle_shot_retry_changes": {"max_attempts": [2, 3], "settle_s": [5, "7+1.1"], "per_shot_deadline_s": [55, 70]},
-    "tetris_word_files": ["AGENTS.md", "docs/DESIGN.md", "docs/VIBEGAMEDEV_METHODS.md", "Packages/GameCore/Tests/GameCoreTests/GameCoreTests.swift"],
+    "[forbidden-word]_word_files": ["AGENTS.md", "docs/DESIGN.md", "docs/VIBEGAMEDEV_METHODS.md", "Packages/GameCore/Tests/GameCoreTests/GameCoreTests.swift"],
     "ssim_vs_54cf2ce": {"01-title": 0.305, "02-gameplay": 0.818, "03-compactor-clear": 0.518, "04-recycle-combo": 0.524, "05-game-over-revive": 0.689, "06-base": 0.981, "08-shop": 0.651}
   }
 }

@@ -1,0 +1,6 @@
+host_launch_epoch=1794916630.535566
+first_frame_wall_epoch=1794916634.245048
+wall_clock_launch_pid_to_first_frame_s=3.7095
+in_app_process_start_to_first_frame_s=0.4260
+in_app_process_start_to_first_frame_string=0.4260
+gates: in_app<=1.5s (authoritative) AND wall_clock<=8s; reject OS LaunchLogo; require stamps
