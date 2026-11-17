@@ -290,10 +290,15 @@ with_deadline() {
 app_running() {
   # Short raw deadline only — must never trip wedge recovery or hang the suite.
   # (A hung launchctl list previously stalled recycle for ~15 minutes.)
-  local tmp
+  # If launchctl itself times out/fails, assume still running (fail-safe) so
+  # ensure_app_terminated keeps killall -9'ing instead of relaunching over title.
+  local tmp rc=0
   tmp="$(mktemp -t smoke-app-running.XXXXXX)"
-  if raw_deadline 3 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null \
-    && grep -q "$BUNDLE_ID" "$tmp"; then
+  if ! raw_deadline 3 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 0
+  fi
+  if grep -q "$BUNDLE_ID" "$tmp"; then
     rm -f "$tmp"
     return 0
   fi
@@ -521,29 +526,36 @@ PY
 # (path can lag right after install/launch; never cache a stale container).
 launch_docs_path() {
   local container=""
-  # Short deadline: stamp poll calls this repeatedly; a 15s hang would miss the 8s window.
-  container="$(with_deadline 5 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  # Short deadline: stamp poll calls this repeatedly; a hang would miss the 8s window.
+  container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
   container="$(echo "$container" | tr -d '[:space:]')"
   if [[ -n "$container" ]]; then
     printf '%s' "$container/Documents/launch-timing.txt"
   fi
 }
 
-# Read a key from Documents/launch-timing.txt (preferred) or UserDefaults.
+# Parse one key from an already-loaded Documents body (no simctl).
+docs_field_from_body() {
+  local body="$1" key="$2" v=""
+  v="$(printf '%s\n' "$body" | grep -E "^${key}=" | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+  if [[ -z "$v" && "$key" == "in_app_sec" ]] && ! printf '%s\n' "$body" | grep -q '='; then
+    v="$(printf '%s' "$body" | tr -d '[:space:]')"
+  fi
+  printf '%s' "$v"
+}
+
+# Read Documents/launch-timing.txt once. Optional second arg "defaults" enables a short
+# UserDefaults fallback (never use during the 8s stamp poll — that hung CI for minutes).
 read_launch_field() {
   local key="$1"
+  local allow_defaults="${2:-}"
   local v="" docs defkey="" body=""
   docs="$(launch_docs_path)"
   if [[ -n "$docs" && -f "$docs" ]]; then
-    # Re-read the file each time so host FS sync of the simulator mirror is visible.
     body="$(cat "$docs" 2>/dev/null || true)"
-    v="$(printf '%s\n' "$body" | grep -E "^${key}=" | head -1 | cut -d= -f2- | tr -d '[:space:]')"
-    # Legacy: plain Documents file that was only the dt string.
-    if [[ -z "$v" && "$key" == "in_app_sec" ]] && ! printf '%s\n' "$body" | grep -q '='; then
-      v="$(printf '%s' "$body" | tr -d '[:space:]')"
-    fi
+    v="$(docs_field_from_body "$body" "$key")"
   fi
-  if [[ -z "$v" ]]; then
+  if [[ -z "$v" && "$allow_defaults" == "defaults" ]]; then
     case "$key" in
       in_app_sec) defkey="trashStack.launchToTitleSec" ;;
       in_app_sec_string) defkey="trashStack.launchToTitleSecString" ;;
@@ -552,11 +564,29 @@ read_launch_field() {
       game_first_frame_wall_epoch) defkey="trashStack.firstGameFrameWallEpochString" ;;
     esac
     if [[ -n "$defkey" ]]; then
-      v="$(with_deadline 8 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
+      v="$(raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
       v="$(echo "$v" | tr -d '[:space:]' | tr -d '\"')"
     fi
   fi
   printf '%s' "$v"
+}
+
+# One-shot parse of the Documents stamp file (preferred during the 8s poll).
+read_launch_docs_snapshot() {
+  local docs body
+  docs="$(launch_docs_path)"
+  if [[ -z "$docs" || ! -f "$docs" ]]; then
+    return 1
+  fi
+  body="$(cat "$docs" 2>/dev/null || true)"
+  [[ -z "$body" ]] && return 1
+  INAPP_RAW="$(docs_field_from_body "$body" in_app_sec)"
+  if [[ -z "$INAPP_RAW" ]]; then
+    INAPP_RAW="$(docs_field_from_body "$body" in_app_sec_string)"
+  fi
+  INAPP_STR="$(docs_field_from_body "$body" in_app_sec_string)"
+  FRAME_EPOCH="$(docs_field_from_body "$body" first_frame_wall_epoch)"
+  [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]
 }
 
 read_inapp_launch_sec() {
@@ -766,20 +796,25 @@ launch_shot() {
 # killall alone returned rc=2 on CI and left the title process alive.
 ensure_app_terminated() {
   local i
-  raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-  # Fallback: killall, but check exit — rc=0 means something was killed.
+  raw_deadline 6 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  # Fallback: killall. Prefer -9 if a polite kill leaves the title process alive
+  # (simctl launch then returns the old PID and ignores fresh -trashStackShot args).
   if app_running; then
-    raw_deadline 4 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+    raw_deadline 3 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
   fi
-  for i in 1 2 3 4 5 6 7 8; do
+  if app_running; then
+    raw_deadline 3 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
+  fi
+  for i in 1 2 3 4 5 6; do
     if ! app_running; then
       return 0
     fi
-    sleep 0.2
-    raw_deadline 6 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    sleep 0.15
+    raw_deadline 4 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    raw_deadline 2 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
   done
   if app_running; then
-    echo "ensure_app_terminated: app still running after terminate/killall" >&2
+    echo "ensure_app_terminated: app still running after terminate/killall -9" >&2
     return 1
   fi
   return 0
@@ -1198,11 +1233,16 @@ if [[ -n "$_docs_cold" && -f "$_docs_cold" ]]; then
 fi
 # Wall metric = host time at simctl launch PID return → first frame (original honest definition).
 # Poll window also starts at PID return so simctl queue time is not charged against the 8s gate.
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
+# Hold the publisher ident so we can screenshot the real studio card from this cold launch
+# (avoids a later relaunch that often reused a still-alive title process).
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "ident" || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot ident -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-cold.out >&2 || true
 echo "host_launch_epoch=$HOST_LAUNCH_EPOCH (at launch PID return)" >&2
 # Poll Documents mirror until stamps appear. Window = 8s from PID return.
+# Docs-only during the poll — UserDefaults fallbacks previously hung simctl and
+# burned the window even when the stamp file was already written.
 STAMPS_OK=0
 INAPP_RAW=""
 INAPP_STR=""
@@ -1213,36 +1253,32 @@ import sys, time
 sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
 PY
 do
-  docs="$(launch_docs_path)"
-  if [[ -n "$docs" && -f "$docs" ]]; then
-    echo "launch_docs_path=$docs elapsed=$(host_since_launch)s" >&2
-    INAPP_RAW="$(read_launch_field in_app_sec)"
-    if [[ -z "$INAPP_RAW" ]]; then
-      INAPP_RAW="$(read_launch_field in_app_sec_string)"
-    fi
-    INAPP_STR="$(read_launch_field in_app_sec_string)"
-    FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
-    if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
-      HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
-      STAMPS_OK=1
-      break
-    fi
-  else
-    echo "launch_docs waiting path=${docs:-missing} elapsed=$(host_since_launch)s" >&2
+  if read_launch_docs_snapshot; then
+    echo "launch_docs stamps ready elapsed=$(host_since_launch)s in_app=$INAPP_RAW" >&2
+    HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+    STAMPS_OK=1
+    break
   fi
+  echo "launch_docs waiting elapsed=$(host_since_launch)s" >&2
   sleep 0.1
 done
 # One final Documents read after the window (handles last-moment sync).
 if (( STAMPS_OK == 0 )); then
-  INAPP_RAW="$(read_launch_field in_app_sec)"
-  if [[ -z "$INAPP_RAW" ]]; then
-    INAPP_RAW="$(read_launch_field in_app_sec_string)"
-  fi
-  INAPP_STR="$(read_launch_field in_app_sec_string)"
-  FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
-  if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+  if read_launch_docs_snapshot; then
     HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
     STAMPS_OK=1
+  else
+    # Last resort only — short defaults timeout, never during the poll loop.
+    INAPP_RAW="$(read_launch_field in_app_sec defaults)"
+    if [[ -z "$INAPP_RAW" ]]; then
+      INAPP_RAW="$(read_launch_field in_app_sec_string defaults)"
+    fi
+    INAPP_STR="$(read_launch_field in_app_sec_string defaults)"
+    FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch defaults)"
+    if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+      HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+      STAMPS_OK=1
+    fi
   fi
 fi
 # Honest wall from PID return. Clamp tiny negatives (frame painted before launch returned).
@@ -1324,19 +1360,38 @@ if wdt < -1.0:
 print(f"Wall-clock launch OK {wdt:.3f}s")
 PY
 # Frame evidence after stamps (LaunchLogo reject) — not part of the 8s stamp poll.
-# Keep a timing capture separately; the real ident is captured via -trashStackShot ident.
 shot "$OUT_DIR/00-timing-frame.png" || true
 assert_app_frame "$OUT_DIR/00-timing-frame.png" || true
 assert_not_launch_splash "$OUT_DIR/00-timing-frame.png" || true
+# Capture publisher ident from this cold launch (real studio card) before we
+# relaunch into title. A dedicated relaunch often hit a still-alive title process
+# and wrote the title screen as "ident".
+IDENT_CAPTURED=0
+CURRENT_STEP="shot:ident-cold"
+note_timing step "$CURRENT_STEP" 20 0 0 "start"
+IDENT_T0=$SECONDS
+# Ident is held (trashStackShot ident); wait for logo + credit pose past charcoal first paint.
+sleep 1.4
+if shot "$OUT_DIR/00-publisher-ident.png" \
+  && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
+  && assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"; then
+  IDENT_CAPTURED=1
+  note_timing step "$CURRENT_STEP" 20 "$((SECONDS - IDENT_T0))" 0 "ok"
+  echo "Publisher ident captured from cold launch" >&2
+else
+  note_timing step "$CURRENT_STEP" 20 "$((SECONDS - IDENT_T0))" 1 "retry_later"
+  echo "Cold-launch ident not ready — will retry dedicated shot" >&2
+fi
 # Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
 CURRENT_STEP="title"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 TITLE_T0=$SECONDS
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-sleep 0.3
+ensure_app_terminated || true
+sleep 0.2
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shotActive" >/dev/null 2>&1 || true
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
 TITLE_OK=0
 TITLE_RECOVERED=0
@@ -1368,9 +1423,12 @@ if (( TITLE_OK == 0 )); then
 fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
 smoke_budget
-# Publisher ident — dedicated shot mode that holds the final pose (not the timing frame).
-launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 3
+# Publisher ident — only relaunch if cold-launch capture missed the studio card.
+if (( IDENT_CAPTURED == 0 )); then
+  launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 3
+fi
 assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
+assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
@@ -1567,8 +1625,9 @@ PY
 do
   docs="$(launch_docs_path)"
   if [[ -n "$docs" && -f "$docs" ]]; then
-    GAME_INAPP="$(read_launch_field game_in_app_sec)"
-    GAME_FRAME_EPOCH="$(read_launch_field game_first_frame_wall_epoch)"
+    body="$(cat "$docs" 2>/dev/null || true)"
+    GAME_INAPP="$(docs_field_from_body "$body" game_in_app_sec)"
+    GAME_FRAME_EPOCH="$(docs_field_from_body "$body" game_first_frame_wall_epoch)"
     if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
       HOST_GAME_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
       GAME_STAMPS_OK=1
@@ -1577,6 +1636,14 @@ do
   fi
   sleep 0.1
 done
+if (( GAME_STAMPS_OK == 0 )); then
+  GAME_INAPP="$(read_launch_field game_in_app_sec defaults)"
+  GAME_FRAME_EPOCH="$(read_launch_field game_first_frame_wall_epoch defaults)"
+  if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
+    HOST_GAME_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+    GAME_STAMPS_OK=1
+  fi
+fi
 GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" "${HOST_GAME_STAMPS_SEEN:-}" <<'PY'
 import sys
 host=(sys.argv[1] or "").strip(); frame=(sys.argv[2] or "").strip(); seen=(sys.argv[3] or "").strip()
