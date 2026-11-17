@@ -16,6 +16,8 @@ SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
 CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-5}"
 # After the title frame is captured, prefer Documents soft-switches only (no simctl launch).
 SOFT_SHOT_ONLY=0
+# Cached host path to the app data container (avoids wedged get_app_container on soft writes).
+APP_DATA_CONTAINER=""
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
 TIMING_FILE="$OUT_DIR/smoke-step-timing.tsv"
@@ -651,10 +653,15 @@ PY
 write_smoke_shot_file() {
   local mode="$1"
   local docs container
-  container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
-  container="$(echo "$container" | tr -d '[:space:]')"
-  if [[ -z "$container" ]]; then
-    return 1
+  if [[ -n "$APP_DATA_CONTAINER" && -d "$APP_DATA_CONTAINER/Documents" ]]; then
+    container="$APP_DATA_CONTAINER"
+  else
+    container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+    container="$(echo "$container" | tr -d '[:space:]')"
+    if [[ -z "$container" ]]; then
+      return 1
+    fi
+    APP_DATA_CONTAINER="$container"
   fi
   docs="$container/Documents"
   mkdir -p "$docs" 2>/dev/null || true
@@ -774,7 +781,19 @@ launch_shot() {
     if (( attempts >= 2 )); then
       echo "launch_shot: soft switch missed for '$mode' — rewrite smoke-shot + wait" >&2
       write_smoke_shot_file "$mode" || true
-      sleep 1.8
+      # Soft-only miss with dead io: one terminate+launch refresh, then back to soft.
+      if (( SOFT_SHOT_ONLY == 1 )); then
+        echo "launch_shot: soft miss — one cold launch refresh for '$mode'" >&2
+        raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+        write_smoke_shot_file "$mode" || true
+        raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
+          -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+        cat /tmp/sim-launch.out >&2 || true
+        APP_DATA_CONTAINER=""  # container path may change after relaunch
+        sleep 1.0
+      else
+        sleep 1.8
+      fi
     fi
 
     left=$(shot_budget_left "$shot_start")
@@ -782,13 +801,22 @@ launch_shot() {
     # Poll until past OS LaunchLogo / first real frame (fixed sleep alone is flaky on CI).
     local poll_deadline=$((SECONDS + settle + 8))
     local got_frame=0
+    local shot_fail=0
     while (( SECONDS < poll_deadline )); do
       left=$(shot_budget_left "$shot_start")
       if (( left < 5 )); then break; fi
+      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
       if ! shot "$outfile"; then
+        shot_fail=$((shot_fail + 1))
+        # Don't burn the step budget on wedged io — bail this attempt fast.
+        if (( shot_fail >= 3 )); then
+          echo "screenshot wedged for mode='$mode' (fail=$shot_fail) — next attempt" >&2
+          break
+        fi
         sleep 0.6
         continue
       fi
+      shot_fail=0
       if assert_app_frame "$outfile"; then
         got_frame=1
         break
@@ -1542,7 +1570,10 @@ SOFT_SHOT_ONLY=1
 launch_shot "base" "$OUT_DIR/06-base.png" 2
 launch_shot "pass" "$OUT_DIR/07-pass.png" 2
 launch_shot "shop" "$OUT_DIR/08-shop.png" 2
+# Notif overlay: soft after shop left io/container wedged; one launch refreshes.
+SOFT_SHOT_ONLY=0
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
+SOFT_SHOT_ONLY=1
 smoke_budget
 # Retention evidence: Daily Dumpster, share card, streak reward.
 launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 3
