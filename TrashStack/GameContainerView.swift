@@ -31,6 +31,7 @@ struct GameContainerView: View {
     @State private var holdItem: JunkID? = nil
     @State private var nearMiss = false
     @State private var toastText: String? = nil
+    @State private var toastQueue: [String] = []
     @State private var toastTask: Task<Void, Never>? = nil
     @State private var snatchPressed = false
     @State private var completedOrderFlash: String? = nil
@@ -446,11 +447,22 @@ struct GameContainerView: View {
     }
 
     private func showToast(_ text: String) {
-        toastTask?.cancel()
-        toastText = text
+        // One banner at a time — queue extras instead of stacking.
+        toastQueue.append(text)
+        pumpToast()
+    }
+
+    private func pumpToast() {
+        guard toastTask == nil, let next = toastQueue.first else { return }
+        toastText = next
         toastTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_100_000_000)
-            if !Task.isCancelled { toastText = nil }
+            if !Task.isCancelled {
+                toastText = nil
+                if !toastQueue.isEmpty { toastQueue.removeFirst() }
+                toastTask = nil
+                pumpToast()
+            }
         }
     }
 
@@ -475,13 +487,20 @@ struct GameContainerView: View {
     private func bootstrap() {
         scene.scaleMode = .resizeFill
         scene.configureForProMotion(false)
+        LaunchTiming.markPlayTap()
         let shot = UserDefaults.standard.string(forKey: "trashStack.shotActive")
             ?? PlayerProfile.shotArgument()
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
         scene.autoplay = auto
+        scene.onFirstGameFrame = {
+            Task { @MainActor in
+                LaunchTiming.markFirstGameFrame()
+            }
+        }
         scene.onGameOver = { state in
             Task { @MainActor in
                 hudScore = state.score
+                displayScore = state.score
                 raccoonMood = .panic
                 await handleGameOver(state)
             }

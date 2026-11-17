@@ -545,6 +545,8 @@ read_launch_field() {
       in_app_sec) defkey="trashStack.launchToTitleSec" ;;
       in_app_sec_string) defkey="trashStack.launchToTitleSecString" ;;
       first_frame_wall_epoch) defkey="trashStack.firstFrameWallEpochString" ;;
+      game_in_app_sec) defkey="trashStack.launchToGameSecString" ;;
+      game_first_frame_wall_epoch) defkey="trashStack.firstGameFrameWallEpochString" ;;
     esac
     if [[ -n "$defkey" ]]; then
       v="$(with_deadline 8 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
@@ -677,9 +679,12 @@ launch_shot() {
       sleep 1
       continue
     fi
-    # Prefer killall over simctl terminate — terminate is a known hang on wedged sims.
-    raw_deadline 4 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-    sleep 0.15
+    # Hard kill the old process so -trashStackShot args are actually applied.
+    if ! ensure_app_terminated; then
+      echo "launch_shot: could not confirm prior process gone for mode='$mode' — retrying" >&2
+      sleep 0.5
+      ensure_app_terminated || true
+    fi
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 8 )); then sleep 1; continue; fi
@@ -701,7 +706,7 @@ launch_shot() {
     if (( left < 5 )); then sleep 1; continue; fi
     # Cap settle to remaining budget so a step cannot sleep past its ceiling.
     local settle_use="$settle"
-    if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
+    if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" || "$mode" == "ident" ]]; then
       settle_use=$((settle + 1))
     fi
     if (( settle_use > left - 4 )); then
@@ -722,7 +727,7 @@ launch_shot() {
       echo "launch_shot budget exceeded before assert for mode='$mode' (${step_elapsed}s)" >&2
       continue
     fi
-    if assert_app_frame "$outfile"; then
+    if assert_app_frame "$outfile" && assert_shot_matches_mode "$mode" "$outfile"; then
       step_elapsed=$((SECONDS - shot_start))
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 0 "ok"
       echo "Wrote $outfile" >&2
@@ -746,8 +751,7 @@ launch_shot() {
         break
       fi
       smoke_budget
-      raw_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-      sleep 0.2
+      ensure_app_terminated || true
       write_shot_defaults "$mode"
       if [[ -n "$mode" ]]; then
         with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
@@ -755,7 +759,7 @@ launch_shot() {
         with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
       fi
       cat /tmp/sim-launch.out >&2 || true
-      if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
+      if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" || "$mode" == "ident" ]]; then
         sleep 1.2
         sleep "$settle"
       else
@@ -763,7 +767,7 @@ launch_shot() {
       fi
       if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
       if ! shot "$outfile"; then continue; fi
-      if assert_app_frame "$outfile"; then
+      if assert_app_frame "$outfile" && assert_shot_matches_mode "$mode" "$outfile"; then
         note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - shot_start))" 0 "ok_after_recover"
         echo "Wrote $outfile" >&2
         return 0
@@ -773,6 +777,238 @@ launch_shot() {
   echo "Failed to capture a valid app frame for mode='$mode' → $outfile" >&2
   print_timing_table
   exit 1
+}
+
+# Terminate the app and confirm the process is gone before relaunch (P0-1).
+# killall alone returned rc=2 on CI and left the title process alive.
+ensure_app_terminated() {
+  local i
+  raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  # Fallback: killall, but check exit — rc=0 means something was killed.
+  if app_running; then
+    raw_deadline 4 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+  fi
+  for i in 1 2 3 4 5 6 7 8; do
+    if ! app_running; then
+      return 0
+    fi
+    sleep 0.2
+    raw_deadline 6 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  done
+  if app_running; then
+    echo "ensure_app_terminated: app still running after terminate/killall" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Average SSIM over a downscaled luminance grid (stdlib — no Pillow required).
+png_ssim() {
+  python3 - "$1" "$2" <<'PY'
+import struct, sys, zlib, pathlib, math
+
+def load_png_rgb(path):
+    data = pathlib.Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"not png: {path}")
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        ctype = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    if not width or bit_depth != 8 or color_type not in (2, 6):
+        raise SystemExit(f"unsupported png: {path}")
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start + 1:start + stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i - bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i - bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a, b, c):
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                if pa <= pb and pa <= pc: return a
+                if pb <= pc: return b
+                return c
+            for i in range(len(row)):
+                a = row[i - bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i - bpp] if i >= bpp else 0
+                row[i] = (row[i] + paeth(a, b, c)) & 255
+        rows.append(row)
+    return width, height, bpp, rows
+
+def lum_grid(path, gw=48, gh=96):
+    w, h, bpp, rows = load_png_rgb(path)
+    grid = []
+    for gy in range(gh):
+        y = min(h - 1, int((gy + 0.5) * h / gh))
+        row = rows[y]
+        for gx in range(gw):
+            x = min(w - 1, int((gx + 0.5) * w / gw))
+            i = x * bpp
+            r, g, b = row[i], row[i + 1], row[i + 2]
+            grid.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    return grid
+
+def ssim(a, b):
+    # Mean SSIM over 8x8 windows on the downscaled grid.
+    gw, gh = 48, 96
+    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    vals = []
+    for y0 in range(0, gh - 7, 8):
+        for x0 in range(0, gw - 7, 8):
+            wa, wb = [], []
+            for dy in range(8):
+                for dx in range(8):
+                    i = (y0 + dy) * gw + (x0 + dx)
+                    wa.append(a[i]); wb.append(b[i])
+            n = 64.0
+            ma = sum(wa) / n; mb = sum(wb) / n
+            va = sum((v - ma) ** 2 for v in wa) / (n - 1)
+            vb = sum((v - mb) ** 2 for v in wb) / (n - 1)
+            cov = sum((wa[i] - ma) * (wb[i] - mb) for i in range(64)) / (n - 1)
+            vals.append(((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma * ma + mb * mb + c1) * (va + vb + c2) + 1e-12))
+    return sum(vals) / max(1, len(vals))
+
+a = lum_grid(sys.argv[1]); b = lum_grid(sys.argv[2])
+print(f"{ssim(a, b):.6f}")
+PY
+}
+
+# Per-mode marker + SSIM-vs-title gate (P0-1). Title/ident skip the title-SSIM reject.
+assert_shot_matches_mode() {
+  local mode="$1" file="$2"
+  local title="$OUT_DIR/01-title.png"
+  # Marker checks (board / header / caption / charcoal).
+  if ! python3 - "$mode" "$file" <<'PY'
+import pathlib, struct, sys, zlib
+mode, path = sys.argv[1], pathlib.Path(sys.argv[2])
+data = path.read_bytes()
+pos = 8
+width = height = bit_depth = color_type = None
+idat = bytearray()
+while pos + 8 <= len(data):
+    length = struct.unpack(">I", data[pos:pos+4])[0]
+    ctype = data[pos+4:pos+8]
+    chunk = data[pos+8:pos+8+length]
+    pos += 12 + length
+    if ctype == b"IHDR":
+        width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+    elif ctype == b"IDAT":
+        idat.extend(chunk)
+    elif ctype == b"IEND":
+        break
+raw = zlib.decompress(bytes(idat))
+bpp = 3 if color_type == 2 else 4
+stride = width * bpp + 1
+rows = []
+for y in range(height):
+    start = y * stride
+    filt = raw[start]
+    row = bytearray(raw[start+1:start+stride])
+    prev = rows[-1] if rows else bytearray(len(row))
+    if filt == 1:
+        for i in range(len(row)):
+            row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+    elif filt == 2:
+        for i in range(len(row)):
+            row[i] = (row[i] + prev[i]) & 255
+    elif filt == 3:
+        for i in range(len(row)):
+            left = row[i-bpp] if i >= bpp else 0
+            row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+    elif filt == 4:
+        def paeth(a,b,c):
+            p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+            return a if pa<=pb and pa<=pc else b if pb<=pc else c
+        for i in range(len(row)):
+            a = row[i-bpp] if i>=bpp else 0
+            b = prev[i]
+            c = prev[i-bpp] if i>=bpp else 0
+            row[i] = (row[i] + paeth(a,b,c)) & 255
+    rows.append(row)
+
+def sample(fx, fy):
+    x = min(width-1, int(width*fx)); y = min(height-1, int(height*fy))
+    i = x * bpp
+    return rows[y][i], rows[y][i+1], rows[y][i+2]
+
+def band_stats(y0, y1, x0=0.15, x1=0.85):
+    vals=[]
+    for fy in (y0,(y0+y1)/2,y1):
+        for fx in (x0,(x0+x1)/2,x1):
+            r,g,b = sample(fx,fy)
+            vals.append((r+g+b)/3)
+    mean=sum(vals)/len(vals)
+    var=sum((v-mean)**2 for v in vals)/len(vals)
+    return var, mean
+
+game = mode in {"game","gameplay","compactor","press","recycle","revive","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
+menu = mode in {"base","pass","shop","notif","share","streak","mkt-base","mkt-pass","mkt-shop"}
+if game:
+    var, mean = band_stats(0.35, 0.72)
+    if var < 180:
+        print(f"Mode '{mode}' missing board-frame marker (var={var:.1f})", file=sys.stderr); sys.exit(4)
+elif menu:
+    var, mean = band_stats(0.08, 0.22, 0.1, 0.9)
+    if mean > 140 and var < 120:
+        print(f"Mode '{mode}' missing menu-header marker (mean={mean:.1f} var={var:.1f})", file=sys.stderr); sys.exit(4)
+elif mode in {"ident","publisher"}:
+    dark=sum(1 for fy in (0.2,0.4,0.6,0.8) for fx in (0.2,0.5,0.8)
+             if (lambda r,g,b: r<50 and g<50 and b<50)(*sample(fx,fy)))
+    if dark < 4:
+        print(f"Mode '{mode}' missing charcoal ident marker (dark={dark})", file=sys.stderr); sys.exit(4)
+if mode.startswith("mkt-"):
+    var, mean = band_stats(0.78, 0.92)
+    if mean > 170 and var < 50:
+        print(f"Mode '{mode}' missing marketing caption band", file=sys.stderr); sys.exit(4)
+print(f"Mode '{mode}' markers OK")
+PY
+  then
+    return 1
+  fi
+  # Non-title shots must not match the title (SSIM >= 0.85 fails).
+  # Ident/publisher are charcoal studio cards — skip the title SSIM reject.
+  if [[ "$mode" != "title" && "$mode" != "ident" && "$mode" != "publisher" && "$mode" != "" && -f "$title" ]]; then
+    local ssim
+    ssim="$(png_ssim "$file" "$title" 2>/dev/null || echo 1.0)"
+    if ! python3 - "$mode" "$ssim" <<'PY'
+import sys
+mode, s = sys.argv[1], float(sys.argv[2])
+if s >= 0.85:
+    print(f"Mode '{mode}' too similar to title (SSIM={s:.3f} >= 0.85)", file=sys.stderr)
+    sys.exit(5)
+print(f"Mode '{mode}' SSIM vs title={s:.3f} OK")
+PY
+    then
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # Overall watchdog (paired with the GitHub step timeout-minutes).
@@ -832,23 +1068,118 @@ with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashS
 with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$OUT_DIR/00-springboard.png" 2>/dev/null \
   || with_deadline 20 xcrun simctl io "$DEVICE" screenshot "$OUT_DIR/00-springboard.png" || true
 python3 - "$OUT_DIR/00-springboard.png" <<'PY'
-import pathlib, sys
+import pathlib, struct, sys, zlib
 src = pathlib.Path(sys.argv[1])
 out = src.with_name("00-springboard-icon-crop.png")
 if not src.exists():
     print("Springboard crop skipped: no screenshot")
     raise SystemExit(0)
+
+def load_png_rgb(path):
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"not png: {path}")
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos+4])[0]
+        ctype = data[pos+4:pos+8]
+        chunk = data[pos+8:pos+8+length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start+1:start+stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a,b,c):
+                p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+                return a if pa<=pb and pa<=pc else b if pb<=pc else c
+            for i in range(len(row)):
+                a = row[i-bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + paeth(a,b,c)) & 255
+        rows.append(row)
+    return width, height, bpp, rows
+
+def crop_and_write(w, h, bpp, rows, x0, y0, x1, y1):
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    cw, ch = x1 - x0, y1 - y0
+    if cw < 16 or ch < 16:
+        return False
+    # Write a simple 8-bit RGB PNG.
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+    raw = bytearray()
+    for y in range(y0, y1):
+        raw.append(0)
+        row = rows[y]
+        for x in range(x0, x1):
+            i = x * bpp
+            raw.extend(row[i:i+3])
+    ihdr = struct.pack(">IIBBBBB", cw, ch, 8, 2, 0, 0, 0)
+    out.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+    print("Springboard icon crop OK", (cw, ch), "at", (x0, y0))
+    return True
+
 try:
-    from PIL import Image
-    im = Image.open(src)
-    w, h = im.size
-    crop = im.crop((w // 2 - 120, h // 2 - 220, w // 2 + 120, h // 2 - 40))
-    crop.save(out)
-    print("Springboard icon crop OK", crop.size)
-except Exception:
-    # Fall back: copy full springboard as crop evidence (runners may lack Pillow).
+    w, h, bpp, rows = load_png_rgb(src)
+    # Score a coarse grid for neon/teal/magenta energy typical of AppIcon.
+    best = None
+    step = max(8, min(w, h) // 40)
+    box = max(48, min(w, h) // 8)
+    for y in range(0, h - box, step):
+        for x in range(0, w - box, step):
+            score = 0
+            samples = 0
+            for yy in range(y, y + box, max(4, box // 8)):
+                row = rows[yy]
+                for xx in range(x, x + box, max(4, box // 8)):
+                    i = xx * bpp
+                    r, g, b = row[i], row[i+1], row[i+2]
+                    samples += 1
+                    # Teal / magenta / neon dumpster cues.
+                    if g > 140 and b > 140 and r < 120:
+                        score += 3
+                    if r > 160 and b > 140 and g < 120:
+                        score += 3
+                    if r + g + b > 420:
+                        score += 1
+            if samples and (best is None or score > best[0]):
+                best = (score, x, y)
+    if best and best[0] >= 8:
+        _, x, y = best
+        pad = box // 6
+        crop_and_write(w, h, bpp, rows, x - pad, y - pad, x + box + pad, y + box + pad)
+    else:
+        # Fallback: upper-middle icon shelf region on iPhone springboard.
+        crop_and_write(w, h, bpp, rows, w // 2 - 90, h // 5 - 40, w // 2 + 90, h // 5 + 140)
+except Exception as e:
     out.write_bytes(src.read_bytes())
-    print("Springboard crop fallback: copied full frame (no Pillow)")
+    print(f"Springboard crop fallback: copied full frame ({e})")
 PY
 
 # Cold-launch timing (ads skipped):
@@ -973,11 +1304,10 @@ if wdt < -1.0:
 print(f"Wall-clock launch OK {wdt:.3f}s")
 PY
 # Frame evidence after stamps (LaunchLogo reject) — not part of the 8s stamp poll.
-# Reuse this capture as 00-publisher-ident.png (skip a full re-launch_shot).
-shot "$OUT_DIR/00-publisher-ident.png" || true
-assert_app_frame "$OUT_DIR/00-publisher-ident.png"
-assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
-echo "Wrote $OUT_DIR/00-publisher-ident.png (timing capture)" >&2
+# Keep a timing capture separately; the real ident is captured via -trashStackShot ident.
+shot "$OUT_DIR/00-timing-frame.png" || true
+assert_app_frame "$OUT_DIR/00-timing-frame.png" || true
+assert_not_launch_splash "$OUT_DIR/00-timing-frame.png" || true
 # Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
 CURRENT_STEP="title"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
@@ -1018,6 +1348,10 @@ if (( TITLE_OK == 0 )); then
 fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
 smoke_budget
+# Publisher ident — dedicated shot mode that holds the final pose (not the timing frame).
+launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 3
+assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
+smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
@@ -1053,31 +1387,130 @@ launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3
 assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
 smoke_budget
 
+# Pairwise SSIM distinctness (animated rain defeats byte-hash; SSIM < 0.95 required).
 python3 - "$OUT_DIR" <<'PY'
-import hashlib, pathlib, sys
+import pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 files = [
   "00-publisher-ident.png","01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
   "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png",
   "10-daily-dumpster.png","11-daily-share-card.png","12-streak-reward.png",
 ]
-hashes = {}
+paths = []
 for f in files:
-  p = root/f
+  p = root / f
   if not p.exists() or p.stat().st_size < 1000:
     print(f"Missing/small {p}", file=sys.stderr); sys.exit(1)
-  h = hashlib.sha256(p.read_bytes()).hexdigest()
-  if h in hashes:
-    print(f"Duplicate screenshot bytes: {hashes[h]} == {f}", file=sys.stderr); sys.exit(1)
-  hashes[h] = f
-print("Screenshot distinctness OK")
+  paths.append((f, p))
+
+# Inline SSIM helper (same algorithm as png_ssim).
+import struct, zlib
+
+def load_lum_grid(path, gw=48, gh=96):
+    data = path.read_bytes()
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos+4])[0]
+        ctype = data[pos+4:pos+8]
+        chunk = data[pos+8:pos+8+length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start+1:start+stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a,b,c):
+                p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+                return a if pa<=pb and pa<=pc else b if pb<=pc else c
+            for i in range(len(row)):
+                a = row[i-bpp] if i>=bpp else 0
+                b = prev[i]
+                c = prev[i-bpp] if i>=bpp else 0
+                row[i] = (row[i] + paeth(a,b,c)) & 255
+        rows.append(row)
+    grid = []
+    for gy in range(gh):
+        y = min(height-1, int((gy+0.5)*height/gh))
+        row = rows[y]
+        for gx in range(gw):
+            x = min(width-1, int((gx+0.5)*width/gw))
+            i = x * bpp
+            r,g,b = row[i], row[i+1], row[i+2]
+            grid.append(0.2126*r + 0.7152*g + 0.0722*b)
+    return grid
+
+def ssim(a, b, gw=48, gh=96):
+    c1, c2 = (0.01*255)**2, (0.03*255)**2
+    vals = []
+    for y0 in range(0, gh-7, 8):
+        for x0 in range(0, gw-7, 8):
+            wa, wb = [], []
+            for dy in range(8):
+                for dx in range(8):
+                    i = (y0+dy)*gw + (x0+dx)
+                    wa.append(a[i]); wb.append(b[i])
+            n = 64.0
+            ma = sum(wa)/n; mb = sum(wb)/n
+            va = sum((v-ma)**2 for v in wa)/(n-1)
+            vb = sum((v-mb)**2 for v in wb)/(n-1)
+            cov = sum((wa[i]-ma)*(wb[i]-mb) for i in range(64))/(n-1)
+            vals.append(((2*ma*mb+c1)*(2*cov+c2))/((ma*ma+mb*mb+c1)*(va+vb+c2)+1e-12))
+    return sum(vals)/max(1,len(vals))
+
+grids = [(f, load_lum_grid(p)) for f, p in paths]
+for i in range(len(grids)):
+    for j in range(i+1, len(grids)):
+        s = ssim(grids[i][1], grids[j][1])
+        if s >= 0.95:
+            print(f"Screenshots too similar: {grids[i][0]} ~ {grids[j][0]} SSIM={s:.3f}", file=sys.stderr)
+            sys.exit(1)
+print("Screenshot SSIM distinctness OK")
 PY
 
 CURRENT_STEP="record_video"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 VIDEO_T0=$SECONDS
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+ensure_app_terminated || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSec" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSecString" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpoch" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpochString" >/dev/null 2>&1 || true
+# Drop stale game_* lines from a prior gameplay shot so we don't accept old stamps.
+_docs_clear="$(launch_docs_path)"
+if [[ -n "$_docs_clear" && -f "$_docs_clear" ]]; then
+  python3 - "$_docs_clear" <<'PY' || true
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+lines = [ln for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines()
+         if not ln.startswith("game_") and not ln.startswith("stamp_kind_game")]
+p.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+PY
+fi
 VIDEO_RAW="$OUT_DIR/gameplay-demo-silent.mp4"
 VIDEO_OUT="$OUT_DIR/gameplay-demo.mp4"
 rm -f "$VIDEO_RAW" "$VIDEO_OUT"
@@ -1099,7 +1532,61 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   exit 1
 fi
 set -e
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/tmp/sim-launch-demo.out 2>&1 || true
+HOST_GAME_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+cat /tmp/sim-launch-demo.out >&2 || true
+# Gate PLAY→first real game frame: in-app ≤1.5s, wall ≤8s (never loosen).
+GAME_STAMPS_OK=0
+GAME_INAPP=""
+GAME_FRAME_EPOCH=""
+while python3 - "$HOST_GAME_LAUNCH_EPOCH" <<'PY'
+import sys, time
+sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
+PY
+do
+  docs="$(launch_docs_path)"
+  if [[ -n "$docs" && -f "$docs" ]]; then
+    GAME_INAPP="$(read_launch_field game_in_app_sec)"
+    GAME_FRAME_EPOCH="$(read_launch_field game_first_frame_wall_epoch)"
+    if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
+      GAME_STAMPS_OK=1
+      break
+    fi
+  fi
+  sleep 0.1
+done
+GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" <<'PY'
+import sys
+host=(sys.argv[1] or "").strip(); frame=(sys.argv[2] or "").strip()
+if not host or not frame:
+    print("missing"); raise SystemExit(0)
+try: print(f"{float(frame)-float(host):.4f}")
+except ValueError: print("missing")
+PY
+)"
+{
+  echo "host_game_launch_epoch=$HOST_GAME_LAUNCH_EPOCH"
+  echo "game_first_frame_wall_epoch=${GAME_FRAME_EPOCH:-missing}"
+  echo "game_wall_clock_s=${GAME_WALL}"
+  echo "game_in_app_sec=${GAME_INAPP:-missing}"
+  echo "gates: game_in_app<=1.5s (after PLAY) AND game_wall<=8s"
+} | tee -a "$OUT_DIR/launch-timing.txt"
+if (( GAME_STAMPS_OK == 0 )); then
+  echo "Game-path first-frame stamps never arrived within 8s of demo launch" >&2
+  exit 1
+fi
+python3 - "$GAME_INAPP" "$GAME_WALL" <<'PY'
+import sys
+in_app=(sys.argv[1] or "").strip(); wall=(sys.argv[2] or "").strip()
+dt=float(in_app)
+if dt > 1.5:
+    raise SystemExit(f"Game-path in-app {dt:.3f}s exceeds 1.5s after PLAY")
+print(f"Game-path in-app OK {dt:.3f}s")
+wdt=float(wall)
+if wdt > 8.0:
+    raise SystemExit(f"Game-path wall {wdt:.3f}s exceeds 8s ceiling")
+print(f"Game-path wall OK {wdt:.3f}s")
+PY
 # Continuous autoplay (~35s): recycle/press/snatch/game-over beats without board teleport spam.
 sleep 35
 kill -INT "$REC_PID" 2>/dev/null || true

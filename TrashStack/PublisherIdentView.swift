@@ -83,14 +83,6 @@ struct PublisherIdentView: View {
                         .opacity(titleOpacity)
                         .padding(.horizontal, 28)
 
-                    Text("Cinder & Crown logo, © Cinder and Crown LLC, used by permission.")
-                        .font(.system(size: 10, weight: .regular, design: .default))
-                        .tracking(0.4)
-                        .foregroundStyle(gold.opacity(0.55))
-                        .multilineTextAlignment(.center)
-                        .opacity(creditOpacity)
-                        .padding(.horizontal, 24)
-
                     Spacer(minLength: 48)
                 }
             }
@@ -105,6 +97,8 @@ struct PublisherIdentView: View {
     private func bootstrapFirstFrame() {
         // Honest first-frame stamp BEFORE decoding the mute logo.
         LaunchTiming.markFirstTitleFrame()
+        AudioService.shared.applyPersistedMute()
+        AssetPreloader.preloadDuringIdent()
         Task { @MainActor in
             await Task.yield()
             showLogoArt = true
@@ -137,7 +131,10 @@ struct PublisherIdentView: View {
         Task { @MainActor in
             await Task.yield()
             showEmbers = true
-            AudioService.shared.playSFX("ember_whoosh", pitch: 0.95)
+            // Whoosh respects the app Sound setting (persisted).
+            if !AudioService.shared.isMuted {
+                AudioService.shared.playSFX("ember_whoosh", pitch: 0.95)
+            }
             try? await Task.sleep(nanoseconds: 380_000_000)
             withAnimation(.easeOut(duration: 0.35)) {
                 titleOpacity = 1

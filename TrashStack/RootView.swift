@@ -135,10 +135,12 @@ struct RootView: View {
         case "game", "gameplay", "compactor", "recycle", "revive", "press":
             showIdent = false
             playMode = .endless
+            LaunchTiming.markPlayTap()
             screen = .game
         case "daily":
             showIdent = false
             playMode = .daily
+            LaunchTiming.markPlayTap()
             screen = .game
         case "streak":
             showIdent = false
@@ -188,21 +190,25 @@ struct RootView: View {
         case "demo", "autoplay":
             showIdent = false
             playMode = .endless
+            LaunchTiming.markPlayTap()
             screen = .game
         case "mkt-play":
             showIdent = false
             marketingCaption = "Night shift in a neon dumpster"
             UserDefaults.standard.set("game", forKey: "trashStack.shotActive")
+            LaunchTiming.markPlayTap()
             screen = .game
         case "mkt-crush":
             showIdent = false
             marketingCaption = "Slam the PRESS for scrap"
             UserDefaults.standard.set("compactor", forKey: "trashStack.shotActive")
+            LaunchTiming.markPlayTap()
             screen = .game
         case "mkt-recycle":
             showIdent = false
             marketingCaption = "Recycle 4+ matching materials"
             UserDefaults.standard.set("recycle", forKey: "trashStack.shotActive")
+            LaunchTiming.markPlayTap()
             screen = .game
         case "mkt-base":
             showIdent = false
@@ -221,6 +227,7 @@ struct RootView: View {
             marketingCaption = "Daily Dumpster — same seed worldwide"
             playMode = .daily
             UserDefaults.standard.set("daily", forKey: "trashStack.shotActive")
+            LaunchTiming.markPlayTap()
             screen = .game
         default:
             showIdent = false

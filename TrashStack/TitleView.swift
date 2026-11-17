@@ -43,14 +43,17 @@ struct TitleView: View {
                 NeonButton(title: "PLAY") {
                     AdsService.shared.noteRunStarted()
                     AudioService.shared.playMusic("game_loop")
+                    LaunchTiming.markPlayTap()
                     screen = .modes
                 }
                 .padding(.horizontal, 36)
 
                 HStack(spacing: 10) {
-                    Text("Streak \(profile.dailyStreak)d")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(NeonTheme.magenta)
+                    if profile.dailyStreak > 0 {
+                        Text("Streak \(profile.dailyStreak)d")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.magenta)
+                    }
                     if profile.cratesReady > 0 {
                         Text("Crate ×\(profile.cratesReady)")
                             .font(.caption.weight(.bold))

@@ -61,8 +61,13 @@ public final class AudioService {
     private var musicPlayer: AVAudioPlayerNode?
     private var musicBuffers: [String: AVAudioPCMBuffer] = [:]
     private var currentMusic: String?
+    /// Reused SFX nodes — creating/attaching per sound caused 50–250 ms frame gaps.
+    private var sfxPool: [AVAudioPlayerNode] = []
+    private var sfxBusy: Set<ObjectIdentifier> = []
+    private let sfxPoolSize = 8
 #endif
     private var muted = false
+    public var isMuted: Bool { muted }
 
     public func prepare() {
 #if canImport(AVFoundation)
@@ -71,7 +76,7 @@ public final class AudioService {
         _ = eng.mainMixerNode
         try? eng.start()
         engine = eng
-        // Buffers load lazily in playSFX / playMusic — keep prepare off the first-paint path.
+        warmSFXPool(on: eng)
 #endif
     }
 
@@ -81,10 +86,64 @@ public final class AudioService {
 #endif
     }
 
+#if canImport(AVFoundation)
+    private func warmSFXPool(on eng: AVAudioEngine) {
+        guard sfxPool.isEmpty else { return }
+        for _ in 0..<sfxPoolSize {
+            let player = AVAudioPlayerNode()
+            eng.attach(player)
+            eng.connect(player, to: eng.mainMixerNode, format: nil)
+            sfxPool.append(player)
+        }
+    }
+
+    private func borrowSFXPlayer() -> AVAudioPlayerNode? {
+        ensureEngine()
+        guard let engine else { return nil }
+        warmSFXPool(on: engine)
+        if let free = sfxPool.first(where: { !sfxBusy.contains(ObjectIdentifier($0)) }) {
+            sfxBusy.insert(ObjectIdentifier(free))
+            return free
+        }
+        // All busy — recycle the oldest pool slot.
+        if let player = sfxPool.first {
+            player.stop()
+            sfxBusy.insert(ObjectIdentifier(player))
+            return player
+        }
+        return nil
+    }
+
+    private func releaseSFXPlayer(_ player: AVAudioPlayerNode) {
+        sfxBusy.remove(ObjectIdentifier(player))
+    }
+#endif
+
     public func setMuted(_ on: Bool) {
+        muted = on
+        UserDefaults.standard.set(on, forKey: "trashStack.soundMuted")
+#if canImport(AVFoundation)
+        engine?.mainMixerNode.outputVolume = on ? 0 : 1
+#endif
+    }
+
+    /// Apply persisted mute before any whoosh / music.
+    public func applyPersistedMute() {
+        let on = UserDefaults.standard.bool(forKey: "trashStack.soundMuted")
         muted = on
 #if canImport(AVFoundation)
         engine?.mainMixerNode.outputVolume = on ? 0 : 1
+#endif
+    }
+
+    public func preloadCommonSFX() {
+        ensureEngine()
+#if canImport(AVFoundation)
+        for name in ["lock", "crush", "recycle", "combo", "levelup", "magnet", "ui", "ember_whoosh"] {
+            if buffers[name] == nil, let buf = loadWav(named: name) {
+                buffers[name] = buf
+            }
+        }
 #endif
     }
 
@@ -95,23 +154,21 @@ public final class AudioService {
         if buffers[name] == nil, let buf = loadWav(named: name) {
             buffers[name] = buf
         }
-        guard let engine, let buffer = buffers[name] else {
+        guard let buffer = buffers[name], let player = borrowSFXPlayer() else {
             blip(frequency: 440 * pitch)
             return
         }
-        let player = AVAudioPlayerNode()
-        engine.attach(player)
-        let format = buffer.format
-        engine.connect(player, to: engine.mainMixerNode, format: format)
+        player.stop()
         if abs(pitch - 1) > 0.01, let pitched = timePitchBuffer(buffer, pitch: pitch) {
-            player.scheduleBuffer(pitched, completionHandler: nil)
+            player.scheduleBuffer(pitched) { [weak self] in
+                Task { @MainActor in self?.releaseSFXPlayer(player) }
+            }
         } else {
-            player.scheduleBuffer(buffer, completionHandler: nil)
+            player.scheduleBuffer(buffer) { [weak self] in
+                Task { @MainActor in self?.releaseSFXPlayer(player) }
+            }
         }
         player.play()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak engine] in
-            engine?.detach(player)
-        }
 #endif
     }
 
@@ -153,6 +210,7 @@ public final class AudioService {
     public func blip(frequency: Double = 440, duration: Double = 0.05) {
         guard !muted else { return }
 #if canImport(AVFoundation)
+        ensureEngine()
         guard let engine else { return }
         let sampleRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
         let frameCount = AVAudioFrameCount(duration * sampleRate)
@@ -164,13 +222,12 @@ public final class AudioService {
             let t = Double(i) / sampleRate
             data[i] = Float(sin(2 * Double.pi * frequency * t) * 0.2 * (1 - t / duration))
         }
-        let player = AVAudioPlayerNode()
-        engine.attach(player)
+        guard let player = borrowSFXPlayer() else { return }
+        player.stop()
+        // Temporarily reconnect if format differs — pool nodes use nil format.
         engine.connect(player, to: engine.mainMixerNode, format: format)
-        player.scheduleBuffer(buffer) { [weak engine] in
-            Task { @MainActor in
-                if let engine { engine.detach(player) }
-            }
+        player.scheduleBuffer(buffer) { [weak self] in
+            Task { @MainActor in self?.releaseSFXPlayer(player) }
         }
         player.play()
 #endif

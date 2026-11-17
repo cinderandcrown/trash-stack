@@ -51,6 +51,8 @@ final class ServicesTests: XCTestCase {
         XCTAssertTrue(line.contains("0 ("))
         XCTAssertTrue(line.contains("1 ("))
         XCTAssertTrue(line.contains("2 ("))
+        // Equal gem outcomes → 33.3% each so the three sum to 100% on-screen.
+        XCTAssertTrue(line.contains("33.3%"), "crate odds must show 33.3% per gem outcome, got: \(line)")
         XCTAssertFalse(line.contains("18%"))
 
         var gemHistogram = [0: 0, 1: 0, 2: 0]
