@@ -32,36 +32,41 @@ note_timing() {
 }
 
 # Run argv under a hard wall-clock deadline; kill the whole process group on expiry.
-# Child setpgrp(0,0) so kill(-pgid) reaps xcrun→simctl grandchildren.
+# Python wait(timeout=) returns after killpg — perl waitpid could block forever on a
+# wedged simctl tree (that burned the 35-minute smoke step with no further logs).
 _run_deadline() {
   local secs="$1" rc=0
   shift
-  perl -e '
-    my $secs = shift @ARGV;
-    my $pid = fork();
-    die "fork: $!\n" unless defined $pid;
-    if ($pid == 0) {
-      setpgrp(0, 0);
-      exec @ARGV;
-      exit 127;
-    }
-    my $timed_out = 0;
-    local $SIG{ALRM} = sub {
-      $timed_out = 1;
-      kill "TERM", -$pid;
-      select undef, undef, undef, 0.3;
-      kill "KILL", -$pid;
-      # Belt-and-suspenders: reap orphaned simctl helpers if pgid kill missed them.
-    };
-    alarm $secs;
-    waitpid($pid, 0);
-    alarm 0;
-    if ($timed_out) { exit 124; }
-    my $status = $?;
-    if ($status == -1) { exit 127; }
-    if ($status & 127) { exit 128 + ($status & 127); }
-    exit($status >> 8);
-  ' "$secs" "$@" || rc=$?
+  python3 - "$secs" "$@" <<'PY' || rc=$?
+import os, signal, subprocess, sys, time
+
+secs = float(sys.argv[1])
+cmd = sys.argv[2:]
+proc = subprocess.Popen(cmd, start_new_session=True)
+try:
+    code = proc.wait(timeout=secs)
+    sys.exit(code if code is not None else 0)
+except subprocess.TimeoutExpired:
+    try:
+        os.killpg(proc.pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    time.sleep(0.4)
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    deadline = time.time() + 3.0
+    while time.time() < deadline:
+        try:
+            code = proc.wait(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            continue
+        except Exception:
+            break
+    sys.exit(124)
+PY
   return "$rc"
 }
 
@@ -117,52 +122,73 @@ recover_simulator_once() {
   DEADLINE_FAILS=0
   IN_RECOVER=1
   local old_device="$DEVICE"
-  echo "Simulator wedge detected ($reason) — restart CoreSimulatorService, boot fresh device." >&2
-  note_timing step recover_simulator 180 0 0 "start:$reason"
+  echo "Simulator wedge detected ($reason) — shutdown, erase, reboot once, then fail fast on next wedge." >&2
+  note_timing step recover_simulator 240 0 0 "start:$reason"
   local t0=$SECONDS rc=0
   : >/tmp/sim-recover.log
   # Kill the wedged daemon — create/boot hang until this is restarted.
   killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
   killall -9 Simulator >/dev/null 2>&1 || true
   killall -9 simctl >/dev/null 2>&1 || true
-  # Wait for launchd to bring CoreSimulatorService back.
+  # Wait for launchd to bring CoreSimulatorService back (hard-capped).
   local i
-  for i in 1 2 3 4 5 6 7 8; do
+  for i in 1 2 3 4 5 6; do
     sleep 2
     if raw_deadline 8 xcrun simctl list devices >/dev/null 2>&1; then
       echo "CoreSimulatorService responsive after restart (try $i)" >&2
       break
     fi
+    if (( i == 6 )); then
+      echo "CoreSimulatorService still unresponsive after restart — fail fast." >&2
+      note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "daemon_dead:$reason"
+      print_timing_table
+      exit 125
+    fi
   done
   DEVICE="$old_device"
-  # Shutdown + boot only (erase caused SimError 405 / long hangs on CI).
-  raw_deadline 25 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  sleep 2
-  raw_deadline 40 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1 || true
-  # Install may report already-installed / invalid state — treat as soft failure.
-  if ! raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1; then
-    echo "install after recover returned non-zero; checking whether app container exists" >&2
-    if raw_deadline 15 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data >/dev/null 2>&1; then
-      echo "App container present — continuing." >&2
-      rc=0
-    else
-      sleep 3
-      raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1 || rc=$?
-    fi
-  fi
-  raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
-  raw_deadline 12 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
-  note_timing step recover_simulator 180 "$((SECONDS - t0))" "$rc" "done:$reason"
-  IN_RECOVER=0
-  if (( rc != 0 )); then
-    echo "Simulator recover reinstall failed — fail fast." >&2
+  # User-required recover path: shutdown → erase → boot once (all deadline-capped).
+  raw_deadline 20 xcrun simctl shutdown "$DEVICE" >>/tmp/sim-recover.log 2>&1 || true
+  sleep 1
+  if ! raw_deadline 45 xcrun simctl erase "$DEVICE" >>/tmp/sim-recover.log 2>&1; then
+    echo "simctl erase timed out or failed — fail fast (see /tmp/sim-recover.log)." >&2
     cat /tmp/sim-recover.log >&2 || true
+    note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "erase_failed:$reason"
     print_timing_table
     exit 125
   fi
+  if ! raw_deadline 40 xcrun simctl boot "$DEVICE" >>/tmp/sim-recover.log 2>&1; then
+    echo "simctl boot after erase failed — fail fast." >&2
+    cat /tmp/sim-recover.log >&2 || true
+    note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "boot_failed:$reason"
+    print_timing_table
+    exit 125
+  fi
+  if ! raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >>/tmp/sim-recover.log 2>&1; then
+    echo "simctl bootstatus after erase hung/failed — fail fast." >&2
+    cat /tmp/sim-recover.log >&2 || true
+    note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "bootstatus_failed:$reason"
+    print_timing_table
+    exit 125
+  fi
+  if ! raw_deadline 45 xcrun simctl install "$DEVICE" "$APP_PATH" >>/tmp/sim-recover.log 2>&1; then
+    echo "install after erase returned non-zero; checking app container" >&2
+    if raw_deadline 10 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data >/dev/null 2>&1; then
+      echo "App container present — continuing." >&2
+      rc=0
+    else
+      echo "Simulator recover reinstall failed — fail fast." >&2
+      cat /tmp/sim-recover.log >&2 || true
+      note_timing step recover_simulator 240 "$((SECONDS - t0))" 125 "install_failed:$reason"
+      print_timing_table
+      exit 125
+    fi
+  fi
+  raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
+  note_timing step recover_simulator 240 "$((SECONDS - t0))" "$rc" "done:$reason"
+  IN_RECOVER=0
   STEP_NEEDS_RESET=1
-  echo "Simulator recover OK — suite will retry the current step with a fresh budget." >&2
+  echo "Simulator recover OK (shutdown/erase/boot) — suite will retry the current step once." >&2
 }
 
 on_deadline_timeout() {
@@ -723,16 +749,31 @@ print_timing_table() {
 }
 
 echo "Smoke on $DEVICE (display=$DISPLAY)"
-xcrun simctl bootstatus "$DEVICE" -b || xcrun simctl boot "$DEVICE" || true
-xcrun simctl bootstatus "$DEVICE" -b
-xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-xcrun simctl install "$DEVICE" "$APP_PATH"
+# Start the suite clock immediately so boot/install hangs cannot burn the job silently.
 SMOKE_START=$SECONDS
-echo "Smoke suite clock started after install (budget 1500s)" >&2
+CURRENT_STEP="boot_install"
+note_timing step "$CURRENT_STEP" 180 0 0 "start"
+echo "Smoke suite clock started before boot/install (budget 1500s)" >&2
+if ! with_deadline 60 xcrun simctl bootstatus "$DEVICE" -b; then
+  echo "bootstatus hung/failed — attempting boot" >&2
+  with_deadline 40 xcrun simctl boot "$DEVICE" || true
+  if ! with_deadline 60 xcrun simctl bootstatus "$DEVICE" -b; then
+    echo "Fail fast: simulator bootstatus never became ready." >&2
+    print_timing_table
+    exit 125
+  fi
+fi
+with_deadline 20 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+if ! with_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH"; then
+  echo "Fail fast: simctl install hung or failed." >&2
+  print_timing_table
+  exit 125
+fi
+note_timing step boot_install 180 "$((SECONDS - SMOKE_START))" 0 "ok"
 smoke_budget
 
-xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
 # Springboard icon crop (evidence for real AppIcon) — before timed launch.
 with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$OUT_DIR/00-springboard.png" 2>/dev/null \
@@ -980,7 +1021,7 @@ print("Screenshot distinctness OK")
 PY
 
 CURRENT_STEP="record_video"
-note_timing step "$CURRENT_STEP" 120 0 0 "start"
+note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 VIDEO_T0=$SECONDS
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
@@ -1000,6 +1041,7 @@ fi
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo failed to start" >&2
   set -e
+  note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - VIDEO_T0))" 1 "start_failed"
   print_timing_table
   exit 1
 fi
@@ -1009,14 +1051,44 @@ with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -t
 sleep 35
 kill -INT "$REC_PID" 2>/dev/null || true
 # Force-kill if simctl recordVideo ignores INT (known hang source).
+# Never bare-wait: a wedged recordVideo previously hung until the 35m step timeout.
 sleep 2
 if kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo still alive after INT — sending KILL" >&2
   kill -KILL "$REC_PID" 2>/dev/null || true
 fi
-wait "$REC_PID" 2>/dev/null || true
-sleep 2
-note_timing step "$CURRENT_STEP" 120 "$((SECONDS - VIDEO_T0))" 0 "ok"
+# Reap with a hard deadline (python wait, not bash wait).
+python3 - "$REC_PID" <<'PY' || true
+import os, signal, subprocess, sys, time
+pid = int(sys.argv[1])
+deadline = time.time() + 8
+while time.time() < deadline:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        # Already gone — try non-blocking wait via a short subprocess wait.
+        break
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        break
+    time.sleep(0.2)
+# Best-effort waitpid via os.waitpid if we are the parent; ignore errors.
+try:
+    os.waitpid(pid, os.WNOHANG)
+except Exception:
+    pass
+print(f"recordVideo reap done pid={pid}", flush=True)
+PY
+note_timing deadline "recordVideo reap" 8 "$((SECONDS - VIDEO_T0))" 0 "step=$CURRENT_STEP"
+sleep 1
+if (( SECONDS - VIDEO_T0 > STEP_BUDGET_S )); then
+  echo "Fail fast: record_video exceeded ${STEP_BUDGET_S}s step budget." >&2
+  note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - VIDEO_T0))" 124 "budget_exceeded"
+  print_timing_table
+  exit 125
+fi
+note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - VIDEO_T0))" 0 "ok"
 smoke_budget
 
 # simctl recordVideo cannot capture AVAudioEngine. Do NOT paste SFX at fixed adelay offsets
@@ -1055,18 +1127,21 @@ looped under the silent capture — no synthetic SFX adelay offsets.
 In-app SFX/music fire during the recorded play but are not on the simctl track.
 Demo script includes a near-miss beat (~14s) and a real game-over (~24s).
 EOF
+CURRENT_STEP="ffmpeg_mux"
+note_timing step "$CURRENT_STEP" 90 0 0 "start"
+FFMPEG_T0=$SECONDS
 echo "Muxing music bed only with $FFMPEG_BIN ($(wc -c < "$VIDEO_RAW") byte silent capture)" >&2
-"$FFMPEG_BIN" -y -i "$VIDEO_RAW" -i "$MUSIC" \
+if ! with_deadline 60 "$FFMPEG_BIN" -y -i "$VIDEO_RAW" -i "$MUSIC" \
   -filter_complex "[1:a]volume=0.34,aloop=loop=-1:size=2e+09,atrim=0:50,apad=whole_dur=50[aout]" \
   -map 0:v -map "[aout]" -c:v libx264 -pix_fmt yuv420p -crf 28 -preset veryfast -c:a aac -b:a 128k \
   -movflags +faststart -shortest "$VIDEO_OUT" \
-  >/tmp/ffmpeg-mux.log 2>&1 || {
-    echo "ffmpeg mux failed; keeping silent video as gameplay-demo.mp4" >&2
+  >/tmp/ffmpeg-mux.log 2>&1; then
+    echo "ffmpeg mux failed/timed out; keeping silent video as gameplay-demo.mp4" >&2
     cat /tmp/ffmpeg-mux.log >&2 || true
     mv -f "$VIDEO_RAW" "$VIDEO_OUT"
-  }
+fi
 rm -f "$VIDEO_RAW"
-if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
+if ! with_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
   echo "Gameplay video missing audio track after mux" >&2
   cat /tmp/ffmpeg-mux.log >&2 || true
   exit 1
@@ -1074,23 +1149,26 @@ fi
 bytes=$(wc -c < "$VIDEO_OUT")
 if (( bytes > 150000000 )); then
   echo "Gameplay video too large ($bytes bytes); recompressing" >&2
-  "$FFMPEG_BIN" -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1
-  mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
+  with_deadline 45 "$FFMPEG_BIN" -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1 || true
+  if [[ -s "$OUT_DIR/gameplay-demo-small.mp4" ]]; then
+    mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
+  fi
 fi
 echo "Muxed game_loop bed onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
 # Near-miss / GO window for evidence (~t=20–28s).
-"$FFMPEG_BIN" -y -ss 20 -t 8 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
-  "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1 || {
-    echo "tension clip failed" >&2
+if ! with_deadline 45 "$FFMPEG_BIN" -y -ss 20 -t 8 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
+  "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1; then
+    echo "tension clip failed/timed out" >&2
     cat /tmp/ffmpeg-clip.log >&2 || true
     exit 1
-  }
-if ! "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
+fi
+if ! with_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
   echo "recycle-chain-clip.mp4 missing audio" >&2
   exit 1
 fi
+note_timing step "$CURRENT_STEP" 90 "$((SECONDS - FFMPEG_T0))" 0 "ok"
 
-fps="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.measuredFPS 2>/dev/null || echo 0)"
+fps="$(with_deadline 8 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.measuredFPS 2>/dev/null || echo 0)"
 echo "Measured FPS sample: $fps" >&2
 python3 - <<PY
 fps=float("$fps" or 0)
