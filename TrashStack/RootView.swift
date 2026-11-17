@@ -127,11 +127,13 @@ struct RootView: View {
             }
             applyShotMode()
         }
-        // Smoke harness: if simctl relaunch reuses a live process, defaults-written
-        // `trashStack.shot` still arrives — pick it up without requiring a new PID.
+        // Smoke harness: pick up shot switches from defaults or Documents/smoke-shot.txt
+        // without requiring a new PID (simctl relaunch often reuses the live process).
         .onReceive(Timer.publish(every: 0.45, on: .main, in: .common).autoconnect()) { _ in
             guard Self.smokeHarnessActive else { return }
-            guard UserDefaults.standard.string(forKey: "trashStack.shot") != nil else { return }
+            let hasDefaults = UserDefaults.standard.string(forKey: "trashStack.shot") != nil
+            let hasFile = Self.pendingSmokeShotFile() != nil
+            guard hasDefaults || hasFile else { return }
             applyShotMode()
         }
     }
@@ -145,15 +147,35 @@ struct RootView: View {
         return false
     }
 
+    /// Host-written Documents/smoke-shot.txt — survives when `simctl spawn defaults` wedges.
+    private static func pendingSmokeShotFile() -> String? {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let url = docs.appendingPathComponent("smoke-shot.txt")
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let shot = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return shot.isEmpty ? nil : shot
+    }
+
+    private static func clearSmokeShotFile() {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        try? FileManager.default.removeItem(at: docs.appendingPathComponent("smoke-shot.txt"))
+    }
+
     private func applyShotMode() {
-        // Prefer a freshly written defaults shot (smoke soft-switch) over the
+        // Prefer a freshly written defaults / Documents shot (smoke soft-switch) over the
         // original process argument — `-trashStackShot ident` otherwise sticks
         // for the whole process and blocks title/game switches.
         let shot = UserDefaults.standard.string(forKey: "trashStack.shot")
+            ?? Self.pendingSmokeShotFile()
             ?? profile.consumeShotMode()
             ?? PlayerProfile.shotArgument()
         guard let shot, !shot.isEmpty else { return }
         UserDefaults.standard.removeObject(forKey: "trashStack.shot")
+        Self.clearSmokeShotFile()
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
         switch shot {
         case "ident", "publisher":

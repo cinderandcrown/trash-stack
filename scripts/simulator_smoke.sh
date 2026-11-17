@@ -645,18 +645,41 @@ PY
 }
 
 # Defaults via discrete simctl spawn (simulator /bin/sh -c was returning 134).
+# Write Documents/smoke-shot.txt via the host-mirrored container (no simctl spawn).
+write_smoke_shot_file() {
+  local mode="$1"
+  local docs container
+  container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  container="$(echo "$container" | tr -d '[:space:]')"
+  if [[ -z "$container" ]]; then
+    return 1
+  fi
+  docs="$container/Documents"
+  mkdir -p "$docs" 2>/dev/null || true
+  if [[ -n "$mode" ]]; then
+    printf '%s\n' "$mode" > "$docs/smoke-shot.txt" 2>/dev/null || return 1
+  else
+    rm -f "$docs/smoke-shot.txt" 2>/dev/null || true
+  fi
+  return 0
+}
+
 write_shot_defaults() {
   local mode="$1"
   local rem="${2:-8}"
   (( rem < 2 )) && rem=2
   (( rem > 8 )) && rem=8
-  with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
-  with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
+  # Prefer host file write — simctl spawn defaults often wedges after a few shots.
+  write_smoke_shot_file "$mode" || true
+  # Best-effort defaults mirror with a short deadline; file write is authoritative.
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
   if [[ -n "$mode" ]]; then
-    with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
+    raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
   else
-    with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+    raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
   fi
+  _="$rem" # keep rem available for callers; spawn timeouts no longer consume it
 }
 
 # Seconds left in the current launch_shot budget (0 if exhausted).
@@ -704,13 +727,11 @@ launch_shot() {
     if (( step_elapsed > STEP_BUDGET_S )); then
       echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
-      if (( SIM_RECOVERED == 0 )); then
-        recover_simulator_once "step_budget:$mode"
-        continue
-      fi
-      echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget after recover." >&2
+      # Do not erase/recreate the sim here — recover was failing bootstatus and
+      # wiping good earlier evidence. Fail this shot cleanly instead.
+      echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget (no recover)." >&2
       print_timing_table
-      exit 125
+      exit 1
     fi
     smoke_budget
     left=$(shot_budget_left "$shot_start")
