@@ -25,30 +25,6 @@ SIM_RECOVERED=0
 IN_RECOVER=0
 STEP_NEEDS_RESET=0
 CURRENT_STEP="init"
-SHOT_COUNT=0
-
-# Soft bounce before CoreSimulator fully wedges (every N successful shots).
-maybe_soft_bounce() {
-  SHOT_COUNT=$((SHOT_COUNT + 1))
-  if (( SIM_RECOVERED == 1 )); then
-    return 0
-  fi
-  if (( SHOT_COUNT > 0 && SHOT_COUNT % 5 == 0 )); then
-    echo "Soft CoreSimulator bounce after $SHOT_COUNT shots (proactive)." >&2
-    note_timing step soft_bounce 60 0 0 "start:after_$SHOT_COUNT"
-    local t0=$SECONDS
-    killall -9 com.apple.CoreSimulator.CoreSimulatorService >/dev/null 2>&1 || true
-    killall -9 simctl >/dev/null 2>&1 || true
-    sleep 1
-    raw_deadline 30 xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
-    raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >/dev/null 2>&1 || true
-    raw_deadline 40 xcrun simctl install "$DEVICE" "$APP_PATH" >/dev/null 2>&1 || true
-    raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
-    raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
-    note_timing step soft_bounce 60 "$((SECONDS - t0))" 0 "done:after_$SHOT_COUNT"
-  fi
-}
-
 note_timing() {
   local kind="$1" name="$2" limit="$3" elapsed="$4" rc="$5" note="${6:-}"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$kind" "$name" "$limit" "$elapsed" "$rc" "$note" >> "$TIMING_FILE"
@@ -76,7 +52,6 @@ _run_deadline() {
       select undef, undef, undef, 0.3;
       kill "KILL", -$pid;
       # Belt-and-suspenders: reap orphaned simctl helpers if pgid kill missed them.
-      system(q{pkill -9 -f "simctl" >/dev/null 2>&1});
     };
     alarm $secs;
     waitpid($pid, 0);
@@ -233,18 +208,12 @@ with_deadline() {
 }
 
 app_running() {
-  # Prefer launchctl list; fall back to simctl spawn ps. Always deadline-wrapped
-  # (unbounded simctl spawn is what burned 25 minutes on wedged sims).
-  local tmp rc=0
+  # Short raw deadline only — must never trip wedge recovery or hang the suite.
+  # (A hung launchctl list previously stalled recycle for ~15 minutes.)
+  local tmp
   tmp="$(mktemp -t smoke-app-running.XXXXXX)"
-  with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null || rc=$?
-  if (( rc == 0 )) && grep -q "$BUNDLE_ID" "$tmp"; then
-    rm -f "$tmp"
-    return 0
-  fi
-  rc=0
-  with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl spawn "$DEVICE" ps aux >"$tmp" 2>/dev/null || rc=$?
-  if (( rc == 0 )) && grep -v grep "$tmp" | grep -q "TrashStack"; then
+  if raw_deadline 3 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null \
+    && grep -q "$BUNDLE_ID" "$tmp"; then
     rm -f "$tmp"
     return 0
   fi
@@ -628,33 +597,17 @@ launch_shot() {
     fi
     cat /tmp/sim-launch.out >&2 || true
 
-    # Wait briefly for the process, then one settle for paint.
-    local waited=0
-    while (( waited < 4 )); do
-      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
-      if app_running; then
-        break
-      fi
-      sleep 0.25
-      waited=$((waited + 1))
-    done
-    if (( SECONDS - shot_start > STEP_BUDGET_S )); then
-      continue
-    fi
-    # Extra settle after process is alive so SwiftUI/SpriteKit can paint.
-    # Recycle: capture while hold-glow + RECYCLE/CHAIN banner are still up (~1.2s).
+    # Brief settle for paint — do not re-enter app_running (it can stall simctl).
     if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-      sleep 1.1
+      sleep 1.2
       sleep "$settle"
     else
       sleep "$settle"
     fi
 
-    if ! app_running; then
-      echo "App not running after launch (mode='$mode' attempt=$attempts)" >&2
+    if (( SECONDS - shot_start > STEP_BUDGET_S )); then
       continue
     fi
-
     if ! shot "$outfile"; then
       echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
       continue
@@ -663,7 +616,6 @@ launch_shot() {
       step_elapsed=$((SECONDS - shot_start))
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 0 "ok"
       echo "Wrote $outfile" >&2
-      maybe_soft_bounce
       return 0
     fi
     echo "Bad frame for mode='$mode' attempt=$attempts — retrying" >&2
@@ -693,19 +645,13 @@ launch_shot() {
         with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
       fi
       cat /tmp/sim-launch.out >&2 || true
-      local waited=0
-      while (( waited < 4 )); do
-        if app_running; then break; fi
-        sleep 0.25
-        waited=$((waited + 1))
-      done
       if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-        sleep 1.1
+        sleep 1.2
         sleep "$settle"
       else
         sleep "$settle"
       fi
-      if ! app_running; then continue; fi
+      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
       if ! shot "$outfile"; then continue; fi
       if assert_app_frame "$outfile"; then
         note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - shot_start))" 0 "ok_after_recover"
