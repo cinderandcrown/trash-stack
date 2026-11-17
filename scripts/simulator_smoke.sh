@@ -21,10 +21,16 @@ app_running() {
 }
 
 # macOS-friendly deadline (GNU timeout is missing on xcode runners).
+# Must not abort the parent under `set -e` when the child dies on SIGALRM (status 142).
 with_deadline() {
-  local secs="$1"
+  local secs="$1" rc=0
   shift
-  perl -e 'alarm shift @ARGV; exec @ARGV' "$secs" "$@"
+  perl -e 'alarm shift @ARGV; exec @ARGV' "$secs" "$@" || rc=$?
+  # Normalize alarm / timeout to 124 (same spirit as GNU timeout).
+  if (( rc == 142 || rc == 14 )); then
+    return 124
+  fi
+  return "$rc"
 }
 
 shot() {
@@ -360,13 +366,15 @@ launch_shot() {
     fi
     cat /tmp/sim-launch.out >&2 || true
 
+    # Wait briefly for the process, then one settle for paint — do not burn
+    # `settle` twice (that blew the 1500s smoke budget on CI).
     local waited=0
-    while (( waited < settle )); do
-      sleep 1
-      waited=$((waited + 1))
+    while (( waited < 4 )); do
       if app_running; then
         break
       fi
+      sleep 0.25
+      waited=$((waited + 1))
     done
     # Extra settle after process is alive so SwiftUI/SpriteKit can paint.
     # Recycle: capture while hold-glow + RECYCLE/CHAIN banner are still up (~1.2s).
@@ -394,8 +402,12 @@ launch_shot() {
 }
 
 # Overall watchdog (paired with the GitHub step timeout-minutes).
-SMOKE_START=$SECONDS
+# Starts after simulator boot/install so boot latency is not counted against the suite.
+SMOKE_START=0
 smoke_budget() {
+  if (( SMOKE_START == 0 )); then
+    return 0
+  fi
   local elapsed=$((SECONDS - SMOKE_START))
   if (( elapsed > 1500 )); then
     echo "Smoke watchdog exceeded ${elapsed}s — aborting" >&2
@@ -408,6 +420,8 @@ xcrun simctl bootstatus "$DEVICE" -b || xcrun simctl boot "$DEVICE" || true
 xcrun simctl bootstatus "$DEVICE" -b
 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 xcrun simctl install "$DEVICE" "$APP_PATH"
+SMOKE_START=$SECONDS
+echo "Smoke suite clock started after install (budget 1500s)" >&2
 smoke_budget
 
 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
@@ -556,11 +570,11 @@ if wdt < -1.0:
 print(f"Wall-clock launch OK {wdt:.3f}s")
 PY
 # Frame evidence after stamps (LaunchLogo reject) — not part of the 8s stamp poll.
+# Reuse this capture as 00-publisher-ident.png (skip a full re-launch_shot).
 shot "$OUT_DIR/00-publisher-ident.png" || true
 assert_app_frame "$OUT_DIR/00-publisher-ident.png"
 assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
-# Held publisher-ident screenshot for review evidence (timing already gated above).
-launch_shot "ident" "$OUT_DIR/00-publisher-ident.png" 2
+echo "Wrote $OUT_DIR/00-publisher-ident.png (timing capture)" >&2
 # Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
 with_deadline 12 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
