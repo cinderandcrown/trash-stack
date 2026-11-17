@@ -6,31 +6,26 @@ import Services
 import GameRender
 
 /// Warm textures + audio during the publisher ident so PLAY → first board is fast.
+@MainActor
 enum AssetPreloader {
     private static var started = false
 
-    @MainActor
     static func preloadDuringIdent() {
         guard !started else { return }
         started = true
-        Task.detached(priority: .userInitiated) {
-            let names = CompactorScene.requiredJunkTextureNames + [
-                "AlleyBackground", "DumpsterFrame",
-                "RaccoonIdle", "RaccoonCheer", "RaccoonPanic",
-                "SparkGold", "SparkTeal", "SparkMagenta",
-                "DebrisMetal", "DebrisNeon", "MagnetIcon",
-            ]
+        let names = CompactorScene.requiredJunkTextureNames + [
+            "AlleyBackground", "DumpsterFrame",
+            "RaccoonIdle", "RaccoonCheer", "RaccoonPanic",
+            "SparkGold", "SparkTeal", "SparkMagenta",
+            "DebrisMetal", "DebrisNeon", "MagnetIcon",
+        ]
+        // Decode off the critical path without SKTexture.preload(_:) (Swift 6 warns on the callback form).
+        Task(priority: .userInitiated) { @MainActor in
             for name in names {
-                if let tex = JunkTextureLoader.texture(named: name) {
-                    tex.preload {}
-                } else {
-                    SKTexture(imageNamed: name).preload {}
-                }
+                _ = JunkTextureLoader.texture(named: name) ?? SKTexture(imageNamed: name)
             }
-            await MainActor.run {
-                AudioService.shared.prepare()
-                AudioService.shared.preloadCommonSFX()
-            }
+            AudioService.shared.prepare()
+            AudioService.shared.preloadCommonSFX()
         }
     }
 }
