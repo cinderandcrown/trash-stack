@@ -321,9 +321,10 @@ shot() {
 }
 
 # Reject blank / springboard captures. Prefer Pillow; fall back to stdlib PNG decode.
+# Hard-capped — a wedged Pillow/PNG decode previously made notif look like 299s.
 assert_app_frame() {
   local file="$1"
-  python3 - "$file" <<'PY'
+  raw_deadline 25 python3 - "$file" <<'PY'
 import sys, struct, zlib, pathlib
 path = pathlib.Path(sys.argv[1])
 data = path.read_bytes()
@@ -714,6 +715,11 @@ launch_shot() {
     if ! shot "$outfile"; then
       echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
       sleep 0.5
+      continue
+    fi
+    step_elapsed=$((SECONDS - shot_start))
+    if (( step_elapsed > STEP_BUDGET_S )); then
+      echo "launch_shot budget exceeded before assert for mode='$mode' (${step_elapsed}s)" >&2
       continue
     fi
     if assert_app_frame "$outfile"; then
@@ -1178,38 +1184,71 @@ CURRENT_STEP="ffmpeg_mux"
 note_timing step "$CURRENT_STEP" 90 0 0 "start"
 FFMPEG_T0=$SECONDS
 echo "Muxing music bed only with $FFMPEG_BIN ($(wc -c < "$VIDEO_RAW") byte silent capture)" >&2
-if ! with_deadline 60 "$FFMPEG_BIN" -y -i "$VIDEO_RAW" -i "$MUSIC" \
-  -filter_complex "[1:a]volume=0.34,aloop=loop=-1:size=2e+09,atrim=0:50,apad=whole_dur=50[aout]" \
-  -map 0:v -map "[aout]" -c:v libx264 -pix_fmt yuv420p -crf 28 -preset veryfast -c:a aac -b:a 128k \
-  -movflags +faststart -shortest "$VIDEO_OUT" \
+# Copy video (no libx264 re-encode) — re-encoding 1206x2622@45fps blew the 60s
+# deadline on CI (~0.5x realtime). Audio-only encode finishes in seconds.
+# Use raw_deadline so a mux flake does not trip simulator wedge recovery.
+if ! raw_deadline 45 "$FFMPEG_BIN" -hide_banner -y \
+  -i "$VIDEO_RAW" -stream_loop -1 -i "$MUSIC" \
+  -filter_complex "[1:a]volume=0.34,atrim=0:45[aout]" \
+  -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 128k -ac 1 \
+  -shortest -movflags +faststart "$VIDEO_OUT" \
   >/tmp/ffmpeg-mux.log 2>&1; then
-    echo "ffmpeg mux failed/timed out; keeping silent video as gameplay-demo.mp4" >&2
+    echo "ffmpeg stream-copy mux failed; trying ultrafast re-encode fallback" >&2
     cat /tmp/ffmpeg-mux.log >&2 || true
-    mv -f "$VIDEO_RAW" "$VIDEO_OUT"
+    if ! raw_deadline 90 "$FFMPEG_BIN" -hide_banner -y \
+      -i "$VIDEO_RAW" -stream_loop -1 -i "$MUSIC" \
+      -filter_complex "[1:a]volume=0.34,atrim=0:45[aout]" \
+      -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 32 -pix_fmt yuv420p \
+      -c:a aac -b:a 96k -ac 1 -shortest -movflags +faststart "$VIDEO_OUT" \
+      >/tmp/ffmpeg-mux.log 2>&1; then
+      echo "ffmpeg mux failed entirely" >&2
+      cat /tmp/ffmpeg-mux.log >&2 || true
+      note_timing step "$CURRENT_STEP" 90 "$((SECONDS - FFMPEG_T0))" 1 "mux_failed"
+      print_timing_table
+      exit 1
+    fi
 fi
 rm -f "$VIDEO_RAW"
-if ! with_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" | grep -q audio; then
+AUDIO_OK=0
+if raw_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" >/tmp/ffprobe-audio.txt 2>/dev/null \
+  && grep -q audio /tmp/ffprobe-audio.txt; then
+  AUDIO_OK=1
+fi
+if (( AUDIO_OK != 1 )); then
   echo "Gameplay video missing audio track after mux" >&2
   cat /tmp/ffmpeg-mux.log >&2 || true
+  note_timing step "$CURRENT_STEP" 90 "$((SECONDS - FFMPEG_T0))" 1 "no_audio"
+  print_timing_table
   exit 1
 fi
 bytes=$(wc -c < "$VIDEO_OUT")
 if (( bytes > 150000000 )); then
   echo "Gameplay video too large ($bytes bytes); recompressing" >&2
-  with_deadline 45 "$FFMPEG_BIN" -y -i "$VIDEO_OUT" -c:v libx264 -crf 32 -preset veryfast -c:a aac -b:a 96k "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1 || true
+  raw_deadline 90 "$FFMPEG_BIN" -hide_banner -y -i "$VIDEO_OUT" \
+    -c:v libx264 -preset ultrafast -crf 32 -c:a aac -b:a 96k \
+    "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1 || true
   if [[ -s "$OUT_DIR/gameplay-demo-small.mp4" ]]; then
     mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
   fi
 fi
 echo "Muxed game_loop bed onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
-# Near-miss / GO window for evidence (~t=20–28s).
-if ! with_deadline 45 "$FFMPEG_BIN" -y -ss 20 -t 8 -i "$VIDEO_OUT" -c:v libx264 -pix_fmt yuv420p -c:a aac -b:a 128k \
-  "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1; then
+# Near-miss / GO window for evidence (~t=20–28s). Prefer stream copy of the window.
+if ! raw_deadline 30 "$FFMPEG_BIN" -hide_banner -y -ss 20 -t 8 -i "$VIDEO_OUT" \
+  -c:v copy -c:a aac -b:a 128k "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1; then
+  if ! raw_deadline 45 "$FFMPEG_BIN" -hide_banner -y -ss 20 -t 8 -i "$VIDEO_OUT" \
+    -c:v libx264 -preset ultrafast -crf 32 -pix_fmt yuv420p -c:a aac -b:a 128k \
+    "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1; then
     echo "tension clip failed/timed out" >&2
     cat /tmp/ffmpeg-clip.log >&2 || true
     exit 1
+  fi
 fi
-if ! with_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" | grep -q audio; then
+CLIP_AUDIO_OK=0
+if raw_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffprobe-clip.txt 2>/dev/null \
+  && grep -q audio /tmp/ffprobe-clip.txt; then
+  CLIP_AUDIO_OK=1
+fi
+if (( CLIP_AUDIO_OK != 1 )); then
   echo "recycle-chain-clip.mp4 missing audio" >&2
   exit 1
 fi
