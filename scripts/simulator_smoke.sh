@@ -531,13 +531,24 @@ PY
 # Defaults via discrete simctl spawn (simulator /bin/sh -c was returning 134).
 write_shot_defaults() {
   local mode="$1"
-  with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
-  with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
+  local rem="${2:-8}"
+  (( rem < 2 )) && rem=2
+  (( rem > 8 )) && rem=8
+  with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+  with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
   if [[ -n "$mode" ]]; then
-    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
+    with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
   else
-    with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+    with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
   fi
+}
+
+# Seconds left in the current launch_shot budget (0 if exhausted).
+shot_budget_left() {
+  local start="$1"
+  local left=$((STEP_BUDGET_S - (SECONDS - start)))
+  if (( left < 0 )); then left=0; fi
+  printf '%s' "$left"
 }
 
 launch_shot() {
@@ -548,8 +559,8 @@ launch_shot() {
   # Recycle juice is longer (~0.5s suck + held glow/banner) — more attempts, not a looser assert.
   local max_attempts=2
   if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-    max_attempts=3
-    if (( settle < 5 )); then settle=5; fi
+    max_attempts=2
+    if (( settle < 4 )); then settle=4; fi
   fi
   # One extra attempt window if we had to erase/reboot mid-step.
   local budget_retries=0
@@ -592,30 +603,41 @@ launch_shot() {
       exit 125
     fi
     smoke_budget
+    left=$(shot_budget_left "$shot_start")
+    if (( left < 8 )); then
+      continue
+    fi
     # Prefer killall over simctl terminate — terminate is a known hang on wedged sims.
-    # killall timeout when the app is already dead must not trip the wedge counter.
-    raw_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-    sleep 0.2
+    raw_deadline 4 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+    sleep 0.15
 
-    write_shot_defaults "$mode"
+    left=$(shot_budget_left "$shot_start")
+    if (( left < 8 )); then continue; fi
+    write_shot_defaults "$mode" "$left"
+
+    left=$(shot_budget_left "$shot_start")
+    if (( left < 5 )); then continue; fi
+    local launch_lim="$SIMCTL_DEADLINE_S"
+    (( left < launch_lim )) && launch_lim=$left
     if [[ -n "$mode" ]]; then
-      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     else
-      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
     fi
     cat /tmp/sim-launch.out >&2 || true
 
+    left=$(shot_budget_left "$shot_start")
+    if (( left < settle + 3 )); then continue; fi
     # Brief settle for paint — do not re-enter app_running (it can stall simctl).
     if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-      sleep 1.2
+      sleep 1.0
       sleep "$settle"
     else
       sleep "$settle"
     fi
 
-    if (( SECONDS - shot_start > STEP_BUDGET_S )); then
-      continue
-    fi
+    left=$(shot_budget_left "$shot_start")
+    if (( left < 5 )); then continue; fi
     if ! shot "$outfile"; then
       echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
       continue
