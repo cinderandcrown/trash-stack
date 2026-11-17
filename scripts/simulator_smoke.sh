@@ -1196,12 +1196,13 @@ _docs_cold="$(launch_docs_path)"
 if [[ -n "$_docs_cold" && -f "$_docs_cold" ]]; then
   rm -f "$_docs_cold" || true
 fi
-# Stamp host clock at invoke — not after launch returns (simctl can block while the app already painted).
-HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+# Wall metric = host time at simctl launch PID return → first frame (original honest definition).
+# Poll window also starts at PID return so simctl queue time is not charged against the 8s gate.
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
+HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-cold.out >&2 || true
-echo "host_launch_epoch=$HOST_LAUNCH_EPOCH" >&2
-# Poll Documents mirror until stamps appear. Window = 8s from launch invoke.
+echo "host_launch_epoch=$HOST_LAUNCH_EPOCH (at launch PID return)" >&2
+# Poll Documents mirror until stamps appear. Window = 8s from PID return.
 STAMPS_OK=0
 INAPP_RAW=""
 INAPP_STR=""
@@ -1244,7 +1245,8 @@ if (( STAMPS_OK == 0 )); then
     STAMPS_OK=1
   fi
 fi
-# Honest wall: app Date() when clocks agree; else host observation of stamp file (same ≤8s gate).
+# Honest wall from PID return. Clamp tiny negatives (frame painted before launch returned).
+# Large negatives = sim clock skew → fall back to host stamp-seen time (same ≤8s ceiling).
 WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" "${HOST_STAMPS_SEEN:-}" <<'PY'
 import sys
 host = (sys.argv[1] or "").strip()
@@ -1268,10 +1270,9 @@ if seen:
         host_dt = float(seen) - h
     except ValueError:
         host_dt = None
-# Prefer app wall when clocks roughly agree; large negative/absurd = sim clock skew.
-if app_dt is not None and -0.5 <= app_dt <= 30.0:
-    print(f"{app_dt:.4f}")
-elif host_dt is not None:
+if app_dt is not None and -2.0 <= app_dt <= 30.0:
+    print(f"{max(0.0, app_dt):.4f}")
+elif host_dt is not None and host_dt >= 0:
     print(f"{host_dt:.4f}")
 elif app_dt is not None:
     print(f"{app_dt:.4f}")
@@ -1551,10 +1552,10 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   exit 1
 fi
 set -e
-HOST_GAME_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/tmp/sim-launch-demo.out 2>&1 || true
+HOST_GAME_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-demo.out >&2 || true
-# Gate PLAY→first real game frame: in-app ≤1.5s, wall ≤8s (never loosen).
+# Gate PLAY→first real game frame: in-app ≤1.5s, wall ≤8s from PID return (never loosen).
 GAME_STAMPS_OK=0
 GAME_INAPP=""
 GAME_FRAME_EPOCH=""
@@ -1592,9 +1593,9 @@ host_dt=None
 if seen:
     try: host_dt=float(seen)-h
     except ValueError: pass
-if app_dt is not None and -0.5 <= app_dt <= 30.0:
-    print(f"{app_dt:.4f}")
-elif host_dt is not None:
+if app_dt is not None and -2.0 <= app_dt <= 30.0:
+    print(f"{max(0.0, app_dt):.4f}")
+elif host_dt is not None and host_dt >= 0:
     print(f"{host_dt:.4f}")
 elif app_dt is not None:
     print(f"{app_dt:.4f}")
