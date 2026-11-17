@@ -328,6 +328,7 @@ assert_app_frame() {
 import sys, struct, zlib, pathlib
 path = pathlib.Path(sys.argv[1])
 data = path.read_bytes()
+# OS LaunchLogo is a tiny neon card on black (~80–120 KB). Real in-app frames are >>200 KB.
 if len(data) < 80_000:
     print(f"Frame too small ({len(data)} bytes): {path}", file=sys.stderr)
     sys.exit(2)
@@ -411,6 +412,10 @@ if not samples:
 whites = sum(1 for r, g, b in samples if r > 245 and g > 245 and b > 245)
 beiges = sum(1 for r, g, b in samples if r > 90 and g > 70 and b < 160 and r > b + 15)
 darks = sum(1 for r, g, b in samples if r < 55 and g < 55 and b < 75)
+# OS LaunchLogo: near-black field + tiny neon mark (edge samples dark, tiny file).
+if darks >= 6 and len(data) < 200_000:
+    print(f"OS LaunchLogo / pre-SwiftUI frame: {path} (dark={darks} bytes={len(data)})", file=sys.stderr)
+    sys.exit(6)
 if whites >= 7:
     print(f"Blank/white frame: {path}", file=sys.stderr)
     sys.exit(2)
@@ -640,12 +645,16 @@ launch_shot() {
   local outfile="$2"
   local settle="${3:-4}"
   local attempts=0
-  # Recycle juice is longer (~0.5s suck + held glow/banner) — more attempts, not a looser assert.
-  local max_attempts=2
-  if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-    max_attempts=2
-    if (( settle < 4 )); then settle=4; fi
-  fi
+  # Recycle juice / game boards need time past OS LaunchLogo after a hard terminate.
+  local max_attempts=3
+  case "$mode" in
+    recycle|mkt-recycle|game|gameplay|compactor|press|revive|daily|demo|autoplay|mkt-play|mkt-crush|mkt-recycle|mkt-daily)
+      if (( settle < 5 )); then settle=5; fi
+      ;;
+    ident|publisher)
+      if (( settle < 4 )); then settle=4; fi
+      ;;
+  esac
   local shot_start=$SECONDS
   CURRENT_STEP="shot:$mode"
   STEP_NEEDS_RESET=0
@@ -982,6 +991,15 @@ elif mode in {"ident","publisher"}:
              if (lambda r,g,b: r<50 and g<50 and b<50)(*sample(fx,fy)))
     if dark < 4:
         print(f"Mode '{mode}' missing charcoal ident marker (dark={dark})", file=sys.stderr); sys.exit(4)
+    # Reject title screen mistaken for ident (neon wordmark teal/magenta in upper third).
+    teal=magenta=0
+    for fy in (0.18,0.28,0.38):
+        for fx in (0.3,0.5,0.7):
+            r,g,b=sample(fx,fy)
+            if g>140 and b>140 and r<120: teal+=1
+            if r>160 and b>140 and g<120: magenta+=1
+    if teal+magenta >= 3:
+        print(f"Mode '{mode}' looks like title wordmark (teal={teal} magenta={magenta})", file=sys.stderr); sys.exit(4)
 if mode.startswith("mkt-"):
     var, mean = band_stats(0.78, 0.92)
     if mean > 170 and var < 50:
@@ -991,9 +1009,8 @@ PY
   then
     return 1
   fi
-  # Non-title shots must not match the title (SSIM >= 0.85 fails).
-  # Ident/publisher are charcoal studio cards — skip the title SSIM reject.
-  if [[ "$mode" != "title" && "$mode" != "ident" && "$mode" != "publisher" && "$mode" != "" && -f "$title" ]]; then
+  # Non-title shots must not match the title (SSIM >= 0.85 fails), including ident.
+  if [[ "$mode" != "title" && "$mode" != "" && -f "$title" ]]; then
     local ssim
     ssim="$(png_ssim "$file" "$title" 2>/dev/null || echo 1.0)"
     if ! python3 - "$mode" "$ssim" <<'PY'

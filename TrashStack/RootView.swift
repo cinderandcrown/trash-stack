@@ -32,7 +32,12 @@ struct RootView: View {
     @State private var shareCardText = ""
     @State private var shareScore = 0
     @State private var showIdent = PublisherIdentGate.shouldPresent()
-    @State private var holdIdentShot = false
+    /// Must be true from first paint for ident shots — if this starts false, the sequence finishes into title before onAppear can flip it.
+    @State private var holdIdentShot: Bool = {
+        let shot = PlayerProfile.shotArgument()
+            ?? UserDefaults.standard.string(forKey: "trashStack.shot")
+        return shot == "ident" || shot == "publisher"
+    }()
 
     var body: some View {
         ZStack {

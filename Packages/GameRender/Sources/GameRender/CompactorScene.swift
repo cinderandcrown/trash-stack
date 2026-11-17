@@ -824,6 +824,7 @@ public final class CompactorScene: SKScene {
         ])
         let up = SKAction.moveTo(y: restY, duration: feel.pressSlamUpSec)
         up.timingMode = .easeOut
+        // Hold the slam pose ~1.2s so smoke/screenshots catch a readable pressed board.
         plate.run(SKAction.sequence([
             down,
             SKAction.run { [weak self] in
@@ -836,7 +837,7 @@ public final class CompactorScene: SKScene {
                 self.spawnParticle(named: "SparkGold", at: CGPoint(x: midX, y: slamY + 6), count: 8)
             },
             squash,
-            SKAction.wait(forDuration: 0.08),
+            SKAction.wait(forDuration: 1.2),
             up,
         ]))
     }
