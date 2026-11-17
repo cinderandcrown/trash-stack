@@ -146,9 +146,12 @@ struct RootView: View {
     }
 
     private func applyShotMode() {
-        let shot = profile.consumeShotMode()
+        // Prefer a freshly written defaults shot (smoke soft-switch) over the
+        // original process argument — `-trashStackShot ident` otherwise sticks
+        // for the whole process and blocks title/game switches.
+        let shot = UserDefaults.standard.string(forKey: "trashStack.shot")
+            ?? profile.consumeShotMode()
             ?? PlayerProfile.shotArgument()
-            ?? UserDefaults.standard.string(forKey: "trashStack.shot")
         guard let shot, !shot.isEmpty else { return }
         UserDefaults.standard.removeObject(forKey: "trashStack.shot")
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
