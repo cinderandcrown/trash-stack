@@ -781,19 +781,9 @@ launch_shot() {
     if (( attempts >= 2 )); then
       echo "launch_shot: soft switch missed for '$mode' — rewrite smoke-shot + wait" >&2
       write_smoke_shot_file "$mode" || true
-      # Soft-only miss with dead io: one terminate+launch refresh, then back to soft.
-      if (( SOFT_SHOT_ONLY == 1 )); then
-        echo "launch_shot: soft miss — one cold launch refresh for '$mode'" >&2
-        raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-        write_smoke_shot_file "$mode" || true
-        raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
-          -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-        cat /tmp/sim-launch.out >&2 || true
-        APP_DATA_CONTAINER=""  # container path may change after relaunch
-        sleep 1.0
-      else
-        sleep 1.8
-      fi
+      # Do not terminate+relaunch here — that hung base/meta for minutes on CI.
+      # Explicit one-launch steps (revive/notif) cover sheet/overlay modes.
+      sleep 1.8
     fi
 
     left=$(shot_budget_left "$shot_start")
@@ -1571,9 +1561,11 @@ assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
 SOFT_SHOT_ONLY=0
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-# Meta screens soft-only — repeated launches wedge shop/pass on CI.
-SOFT_SHOT_ONLY=1
+# Meta screens: one launch for base (soft after revive was LaunchLogo-flaky),
+# then soft-only for pass/shop — repeated launches wedge shop on CI.
+SOFT_SHOT_ONLY=0
 launch_shot "base" "$OUT_DIR/06-base.png" 2
+SOFT_SHOT_ONLY=1
 launch_shot "pass" "$OUT_DIR/07-pass.png" 2
 launch_shot "shop" "$OUT_DIR/08-shop.png" 2
 # Notif overlay: soft after shop left io/container wedged; one launch refreshes.
