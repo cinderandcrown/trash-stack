@@ -317,16 +317,16 @@ shot() {
     ok=1
   else
     elapsed=$((SECONDS - t0))
-    # If primary already blew past its deadline (killpg soft-failed), skip fallbacks —
-    # display=1 previously hung 113s and burned the game step budget.
-    if (( elapsed <= SHOT_DEADLINE_S + 4 )); then
+    # Only try fallbacks when primary failed *fast* (wrong display). If it hit the
+    # deadline or kill lagged, further displays hang and burn the step budget.
+    if (( elapsed < SHOT_DEADLINE_S )); then
       if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
         ok=1
       elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out" 2>/tmp/sim-shot.err; then
         ok=1
       fi
     else
-      echo "primary screenshot wedged (${elapsed}s) — skip display fallbacks" >&2
+      echo "primary screenshot timed out/wedged (${elapsed}s) — skip display fallbacks" >&2
     fi
   fi
   if (( ok == 1 )); then
@@ -1565,11 +1565,10 @@ assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
 # Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
 launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
-# Revive sheet needs one launch (soft-only left LaunchLogo / wedged io on CI).
-SOFT_SHOT_ONLY=0
+# Revive sheet soft from live recycle process (launch after recycle wedges io).
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-# Meta: launch base + shop (soft between was LaunchLogo-flaky); soft pass/notif.
+# Meta: one launch for base, soft pass, one launch for shop, soft notif.
 SOFT_SHOT_ONLY=0
 launch_shot "base" "$OUT_DIR/06-base.png" 2
 SOFT_SHOT_ONLY=1
@@ -1577,7 +1576,6 @@ launch_shot "pass" "$OUT_DIR/07-pass.png" 2
 SOFT_SHOT_ONLY=0
 launch_shot "shop" "$OUT_DIR/08-shop.png" 2
 SOFT_SHOT_ONLY=1
-# Notif is a title overlay — soft via cached Documents path (no launch).
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
 smoke_budget
 # Retention evidence: Daily Dumpster, share card, streak reward.
