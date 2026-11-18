@@ -67,8 +67,12 @@ public final class CompactorScene: SKScene {
         // Paint the dark bin + solid tiles FIRST (no gray flash). Texture decode follows.
         _ = tex("DumpsterFrame")
         _ = tex("AlleyBackground")
+        // Sync-warm one icon per material so the first recycle ghosts aren't flat squares.
+        for mat in Material.allCases {
+            _ = representativeTexture(for: mat)
+        }
         rebuild()
-        // Warm junk icons after first real frame so PLAY→board stays under 1.5s.
+        // Warm remaining junk icons after first real frame so PLAY→board stays under 1.5s.
         let names = Self.requiredJunkTextureNames
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             for name in names {
@@ -514,13 +518,17 @@ public final class CompactorScene: SKScene {
                 let fallbackSize = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
                 for c in coords {
                     let prior = snaps[c]
-                    let hasIcon = prior?.texture != nil
                     let solid = fallbackColor(material)
+                    // Force a material icon if the cell hadn't painted yet (cold warm).
+                    let icon = prior?.texture ?? representativeTexture(for: material)
+                        ?? JunkTextureLoader.texture(named: JunkCatalog.textureName(
+                            for: JunkCatalog.all.first(where: { $0.material == material })?.id ?? .can
+                        ))
                     snaps[c] = CellLook(
-                        texture: prior?.texture ?? representativeTexture(for: material),
+                        texture: icon,
                         size: prior?.size ?? fallbackSize,
                         color: solid,
-                        blend: hasIcon ? 0 : 0
+                        blend: 0
                     )
                 }
                 recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo, snaps: snaps)
@@ -599,7 +607,19 @@ public final class CompactorScene: SKScene {
                 }
             }
         }
-        recycleSuck(coords: coords, material: .metal, points: 800, combo: 3)
+        var snaps = snapshotCellLooks(coords: coords)
+        let cs = cellSize()
+        let fallbackSize = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
+        for c in coords {
+            let prior = snaps[c]
+            snaps[c] = CellLook(
+                texture: prior?.texture ?? representativeTexture(for: .metal),
+                size: prior?.size ?? fallbackSize,
+                color: fallbackColor(.metal),
+                blend: 0
+            )
+        }
+        recycleSuck(coords: coords, material: .metal, points: 800, combo: 3, snaps: snaps)
         subtleGlow(color: SKColor(red: 0.2, green: 1, blue: 0.7, alpha: 0.55))
         screenShake(strength: CGFloat(feel.shakeRecycle) * 1.4)
         onToast?("CHAIN ×3")
@@ -787,21 +807,45 @@ public final class CompactorScene: SKScene {
                     let icon = SKSpriteNode(texture: t, size: CGSize(width: existing.size.width * 0.55, height: existing.size.height * 0.55))
                     icon.zPosition = 1
                     ghost.addChild(icon)
+                } else if let t = representativeTexture(for: material) {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: existing.size.width * 0.55, height: existing.size.height * 0.55))
+                    icon.zPosition = 1
+                    ghost.addChild(icon)
                 }
             } else {
                 ghost = SKSpriteNode(color: fallbackColor(material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                ghost.colorBlendFactor = 1
+                if let t = representativeTexture(for: material) {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: (cs.width - cellPad) * 0.55, height: (cs.height - cellPad) * 0.55))
+                    icon.zPosition = 1
+                    ghost.addChild(icon)
+                }
             }
-            // Brighten so ghosts read as the recycled item flying to the chute — not flat gray.
+            // Punch then hold readable until near the chute — fade only in the last beat.
             ghost.alpha = 1
-            ghost.setScale(1.05)
+            ghost.setScale(1.18)
             ghost.position = start
             ghost.zPosition = 57
             addChild(ghost)
             let dur = feel.recycleSuckSec
-            let suck = SKAction.group([
-                SKAction.move(to: chute, duration: dur),
-                SKAction.scale(to: 0.12, duration: dur),
-                SKAction.fadeOut(withDuration: dur),
+            let hold = max(0.08, dur * 0.4)
+            let tail = max(0.08, dur - hold)
+            let suck = SKAction.sequence([
+                SKAction.group([
+                    SKAction.scale(to: 1.28, duration: 0.06),
+                    SKAction.fadeAlpha(to: 1, duration: 0.04),
+                ]),
+                SKAction.group([
+                    SKAction.move(to: chute, duration: dur),
+                    SKAction.sequence([
+                        SKAction.scale(to: 0.85, duration: hold),
+                        SKAction.scale(to: 0.12, duration: tail),
+                    ]),
+                    SKAction.sequence([
+                        SKAction.wait(forDuration: hold),
+                        SKAction.fadeOut(withDuration: tail),
+                    ]),
+                ]),
             ])
             suck.timingMode = .easeIn
             ghost.run(SKAction.sequence([suck, SKAction.removeFromParent()]))

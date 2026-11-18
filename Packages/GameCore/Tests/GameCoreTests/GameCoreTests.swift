@@ -198,6 +198,22 @@ final class GameCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(feel.gravityMinSec, feel.gravityBaseSec)
         XCTAssertEqual(BoardGym.allCases.count, 5)
         XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
+        XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.42, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 12, accuracy: 0.001)
+    }
+
+    func testLevelNeverGoesBackwardsAfterShotSeed() {
+        var eng = GameEngine(seed: 99)
+        eng.applyShotScenario("game")
+        let seeded = eng.state.level
+        XCTAssertGreaterThanOrEqual(seeded, 3)
+        XCTAssertGreaterThanOrEqual(eng.state.lines, (seeded - 1) * 8)
+        // Drive a lock+recycle path; level must not drop below the staged seed.
+        for _ in 0..<24 {
+            if eng.state.over { break }
+            eng.hardDrop()
+            XCTAssertGreaterThanOrEqual(eng.state.level, seeded, "level must never rewind below seeded \(seeded)")
+        }
     }
 
     func testNoStraightSpanLongerThanThree() {

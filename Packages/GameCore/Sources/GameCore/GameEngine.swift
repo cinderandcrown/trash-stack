@@ -288,11 +288,7 @@ public struct GameEngine: Sendable {
         if any {
             bumpOrder(kind: .recycleAny, amount: 1)
             checkOrders()
-            let leveledBefore = state.level
-            state.level = 1 + state.lines / 8
-            if state.level > leveledBefore {
-                events.append(.leveledUp(state.level))
-            }
+            advanceLevelFromLines()
         } else {
             state.combo = 0
         }
@@ -373,6 +369,7 @@ public struct GameEngine: Sendable {
             applyGravity()
         }
         checkOrders()
+        advanceLevelFromLines()
         return true
     }
 
@@ -431,6 +428,21 @@ public struct GameEngine: Sendable {
             applyGravity()
         }
         checkOrders()
+        advanceLevelFromLines()
+    }
+
+    /// Level only climbs. Never recompute below the current level (shot seeds / mid-run).
+    private mutating func advanceLevelFromLines() {
+        let leveledBefore = state.level
+        state.level = max(state.level, 1 + state.lines / 8)
+        if state.level > leveledBefore {
+            events.append(.leveledUp(state.level))
+        }
+    }
+
+    /// Keep `lines` consistent with a staged level so the next clear cannot rewind it.
+    private mutating func syncLinesFloorToLevel() {
+        state.lines = max(state.lines, (state.level - 1) * 8)
     }
 
     private mutating func bumpOrderMaterial(_ mat: Material, amount: Int) {
@@ -572,6 +584,7 @@ public struct GameEngine: Sendable {
             state.combo = 2
             state.pressMeter = 5
             state.level = 3
+            syncLinesFloorToLevel()
             state.active = ActivePiece(id: .can, x: 1, y: hid + 2)
         case "ftue":
             // Almost-cluster: 3 metal cans; active metal can completes the recycle.
@@ -610,6 +623,7 @@ public struct GameEngine: Sendable {
             }
             state.score = 7600
             state.level = 4
+            syncLinesFloorToLevel()
             state.pressMeter = state.pressMeterMax
             state.combo = 1
             state.active = ActivePiece(id: .crate, x: 3, y: hid + 2)
@@ -631,8 +645,10 @@ public struct GameEngine: Sendable {
             for x in 2..<6 {
                 state.board[x, hid] = Cell(piece: .can, material: .metal)
             }
+            // Smoke-only staged score for the revive sheet frame — live runs use natural top-out.
             state.score = 8800
             state.level = 6
+            syncLinesFloorToLevel()
             state.over = true
             state.active = nil
             state.pressMeter = 3
@@ -653,6 +669,7 @@ public struct GameEngine: Sendable {
             }
             state.score = 3180
             state.level = 3
+            syncLinesFloorToLevel()
             state.combo = 1
             state.pressMeter = 6
             state.orders[0].progress = 7
@@ -690,6 +707,7 @@ public struct GameEngine: Sendable {
             }
             state.score = 12400
             state.level = 5
+            syncLinesFloorToLevel()
             state.pressMeter = 7
             state.combo = 1
             state.active = ActivePiece(id: .plank, rot: 0, x: 3, y: hid + 2)

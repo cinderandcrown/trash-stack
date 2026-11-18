@@ -61,6 +61,8 @@ public final class AudioService {
     private var musicPlayer: AVAudioPlayerNode?
     private var musicBuffers: [String: AVAudioPCMBuffer] = [:]
     private var currentMusic: String?
+    /// Last requested loop — resume this when the player unmutes (playMusic no-ops while muted).
+    private var desiredMusic: String?
     /// Reused SFX nodes — creating/attaching per sound caused 50–250 ms frame gaps.
     private var sfxPool: [AVAudioPlayerNode] = []
     private var sfxBusy: Set<ObjectIdentifier> = []
@@ -124,6 +126,9 @@ public final class AudioService {
         UserDefaults.standard.set(on, forKey: "trashStack.soundMuted")
 #if canImport(AVFoundation)
         engine?.mainMixerNode.outputVolume = on ? 0 : 1
+        if !on, let name = desiredMusic {
+            playMusic(name)
+        }
 #endif
     }
 
@@ -178,6 +183,9 @@ public final class AudioService {
     }
 
     public func playMusic(_ name: String) {
+#if canImport(AVFoundation)
+        desiredMusic = name
+#endif
         guard !muted else { return }
 #if canImport(AVFoundation)
         ensureEngine()
@@ -209,6 +217,7 @@ public final class AudioService {
         }
         musicPlayer = nil
         currentMusic = nil
+        desiredMusic = nil
 #endif
     }
 
