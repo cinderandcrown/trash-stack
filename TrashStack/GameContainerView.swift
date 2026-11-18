@@ -569,15 +569,27 @@ struct GameContainerView: View {
                 showToast(text)
             }
         }
+        scene.onPieceSnap = {
+            Task { @MainActor in
+                AudioService.shared.playSFX("ui", pitch: 1.25)
+                HapticsService.shared.tap()
+            }
+        }
         scene.onEvents = { [weak scene] events in
             Task { @MainActor in
                 guard let scene else { return }
                 syncHUD()
                 for e in events {
                     switch e {
-                    case .locked:
-                        AudioService.shared.playSFX("lock")
-                        HapticsService.shared.lock()
+                    case .locked(let hard):
+                        if hard {
+                            AudioService.shared.playSFX("crush", pitch: 0.92)
+                            AudioService.shared.playSFX("lock", pitch: 1.15)
+                            HapticsService.shared.clear()
+                        } else {
+                            AudioService.shared.playSFX("lock")
+                            HapticsService.shared.lock()
+                        }
                     case .recycled:
                         let pitch = 1.0 + Double(scene.engine.state.combo) * 0.1
                         AudioService.shared.playSFX("recycle", pitch: pitch)

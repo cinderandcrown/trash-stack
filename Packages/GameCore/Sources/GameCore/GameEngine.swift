@@ -8,7 +8,8 @@ public struct BoardCoord: Sendable, Equatable, Hashable {
 
 public enum GameEvent: Sendable, Equatable {
     case spawned(JunkID)
-    case locked
+    /// `hard` is true after a slam drop — bigger impact juice.
+    case locked(hard: Bool)
     /// `coords` are board cells sucked into the chute (for VFX).
     case recycled(groups: Int, cells: Int, score: Int, scrap: Int, material: Material, coords: [BoardCoord])
     case pressed(cells: Int, score: Int, scrap: Int)
@@ -204,7 +205,7 @@ public struct GameEngine: Sendable {
     public mutating func hardDrop() {
         guard state.active != nil, !state.over else { return }
         while tryMove(dx: 0, dy: 1) {}
-        lock()
+        lock(hard: true)
     }
 
     @discardableResult
@@ -212,7 +213,7 @@ public struct GameEngine: Sendable {
         tryMove(dx: 0, dy: 1)
     }
 
-    public mutating func lock() {
+    public mutating func lock(hard: Bool = false) {
         guard let p = state.active else { return }
         let def = p.def
         for (x, y) in p.cells {
@@ -229,7 +230,7 @@ public struct GameEngine: Sendable {
         }
         state.active = nil
         placeCount += 1
-        events.append(.locked)
+        events.append(.locked(hard: hard))
         // Press meter fills on place.
         state.pressMeter = min(state.pressMeterMax, state.pressMeter + max(1, p.cells.count / 2))
         applyHazards()

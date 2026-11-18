@@ -49,12 +49,15 @@ public final class CompactorScene: SKScene {
 
     /// Small toast text for SwiftUI banner (not big mid-board labels).
     public var onToast: ((String) -> Void)?
+    /// Soft click when a piece snaps left/right/rotate (SFX/haptic live in the app shell).
+    public var onPieceSnap: (() -> Void)?
     /// Fired once after the first real board paint (dark fill + cells — never blank gray).
     /// May be assigned after `didMove`; fires immediately if the board is already ready.
     public var onFirstGameFrame: (() -> Void)? {
         didSet { noteFirstGameFrame() }
     }
     private var didFireFirstGameFrame = false
+    private var lastFlashAt: TimeInterval = 0
 
     public override func didMove(to view: SKView) {
         let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
@@ -503,12 +506,18 @@ public final class CompactorScene: SKScene {
         let ev = engine.drainEvents()
         for e in ev {
             switch e {
-            case .locked:
-                // Satisfying drop thud: dust + tiny shake at the settle point.
+            case .locked(let hard):
+                // Soft settle vs hard slam — slam gets press-tier shake + more debris.
                 let lockPt = positionFor(x: Int(visualX.rounded()), boardY: max(0, Int(visualY.rounded())))
-                spawnParticle(named: "DebrisMetal", at: lockPt, count: 7)
-                spawnParticle(named: "SparkTeal", at: lockPt, count: 4)
-                screenShake(strength: 3.5)
+                let debris = hard ? 16 : 7
+                let sparks = hard ? 10 : 4
+                spawnParticle(named: "DebrisMetal", at: lockPt, count: debris)
+                spawnParticle(named: hard ? "DebrisNeon" : "SparkTeal", at: lockPt, count: sparks)
+                screenShake(strength: hard ? CGFloat(feel.shakePress) * 0.85 : 3.5)
+                if hard {
+                    boardFlash(color: SKColor(red: 1, green: 0.95, blue: 0.75, alpha: 0.55))
+                    hitStop(seconds: feel.hitStopShortSec * 0.7)
+                }
                 hasVisualPose = false
             case .recycled(_, let cells, let score, _, let material, let coords):
                 // Snapshot textures BEFORE render clears the cells (real item ghosts, not flat squares).
@@ -533,14 +542,18 @@ public final class CompactorScene: SKScene {
                 }
                 recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo, snaps: snaps)
                 subtleGlow(color: materialGlow(material))
+                boardFlash(color: materialGlow(material).withAlphaComponent(0.7))
                 screenShake(strength: CGFloat(feel.shakeRecycle) * (engine.state.combo >= 2 ? 1.35 : 1.0))
-                if engine.state.combo >= 2 {
-                    onToast?("CHAIN ×\(engine.state.combo)")
+                let combo = engine.state.combo
+                if combo >= 2 {
+                    presentComboBanner(combo: combo)
+                    onToast?("CHAIN ×\(combo)")
                     raccoonMood = .cheer
                 } else {
                     onToast?("RECYCLE")
                 }
                 spawnScorePips(points: score, near: coords.first.map { positionFor(x: $0.x, boardY: $0.y) })
+                spawnParticle(named: "SparkTeal", at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45), count: min(40, 12 + cells * 2))
                 _ = cells
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
@@ -574,6 +587,67 @@ public final class CompactorScene: SKScene {
             SKAction.fadeOut(withDuration: 0.28),
             SKAction.removeFromParent(),
         ]))
+    }
+
+    private func boardFlash(color: SKColor) {
+        let now = CACurrentMediaTime()
+        guard now - lastFlashAt >= feel.flashCooldownSec else { return }
+        lastFlashAt = now
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = CGFloat(engine.state.board.config.cols)
+        let rows = CGFloat(engine.state.board.config.visibleRows)
+        let flash = SKSpriteNode(
+            color: color,
+            size: CGSize(width: cs.width * cols - 4, height: cs.height * rows - 4)
+        )
+        flash.position = CGPoint(x: origin.x + cs.width * cols / 2, y: origin.y + cs.height * rows / 2)
+        flash.zPosition = 48
+        flash.alpha = 0
+        flash.blendMode = .add
+        addChild(flash)
+        flash.run(SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.85, duration: 0.04),
+            SKAction.fadeOut(withDuration: 0.18),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func presentComboBanner(combo: Int) {
+        let banner = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        banner.text = combo >= 5 ? "MEGA CHAIN ×\(combo)" : (combo >= 3 ? "CHAIN ×\(combo)" : "CHAIN ×\(combo)")
+        banner.fontSize = combo >= 5 ? 42 : (combo >= 3 ? 36 : 30)
+        banner.fontColor = combo >= 5
+            ? SKColor(red: 1, green: 0.35, blue: 0.85, alpha: 1)
+            : (combo >= 3
+               ? SKColor(red: 0.2, green: 1, blue: 0.85, alpha: 1)
+               : SKColor(red: 0.95, green: 0.95, blue: 1, alpha: 1))
+        banner.position = CGPoint(x: size.width * 0.5, y: size.height * 0.58)
+        banner.zPosition = 90
+        banner.setScale(0.45)
+        banner.alpha = 0
+        addChild(banner)
+        let hold = min(1.1, 0.45 + Double(combo) * 0.08)
+        banner.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.fadeAlpha(to: 1, duration: 0.08),
+                SKAction.scale(to: combo >= 5 ? 1.35 : 1.18, duration: 0.14),
+            ]),
+            SKAction.wait(forDuration: hold),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.2),
+                SKAction.scale(to: 0.8, duration: 0.2),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func snapActivePose() {
+        guard let p = engine.state.active else { return }
+        visualX = CGFloat(p.x)
+        visualY = CGFloat(p.y)
+        hasVisualPose = true
+        layoutActiveNodes()
     }
 
     public func presentPressMoment() {
@@ -1148,11 +1222,16 @@ public final class CompactorScene: SKScene {
         if cols != movedCols {
             let step = cols > movedCols ? 1 : -1
             var target = movedCols
+            var nudged = false
             while target != cols {
                 target += step
-                _ = engine.tryMove(dx: step, dy: 0)
+                if engine.tryMove(dx: step, dy: 0) { nudged = true }
             }
             movedCols = cols
+            if nudged {
+                snapActivePose()
+                onPieceSnap?()
+            }
             render(immediate: false)
         }
         let dy = p.y - start.y
@@ -1172,7 +1251,11 @@ public final class CompactorScene: SKScene {
 
         // Forgiving: small tap = rotate; clear downward flick = drop; upward = hold.
         if dist < 28, dt < 0.4 {
-            _ = engine.tryRotate()
+            if engine.tryRotate() {
+                rebuildActiveNodesIfNeeded()
+                snapActivePose()
+                onPieceSnap?()
+            }
             render(immediate: false)
         } else if dy < -40, abs(dy) > abs(dx) * 0.7 {
             engine.hardDrop()
@@ -1188,9 +1271,28 @@ public final class CompactorScene: SKScene {
         touchStart = nil
     }
 
-    public func moveLeft() { _ = engine.tryMove(dx: -1, dy: 0); render(immediate: false) }
-    public func moveRight() { _ = engine.tryMove(dx: 1, dy: 0); render(immediate: false) }
-    public func rotate() { _ = engine.tryRotate(); rebuildActiveNodesIfNeeded(); render(immediate: false) }
+    public func moveLeft() {
+        if engine.tryMove(dx: -1, dy: 0) {
+            snapActivePose()
+            onPieceSnap?()
+        }
+        render(immediate: false)
+    }
+    public func moveRight() {
+        if engine.tryMove(dx: 1, dy: 0) {
+            snapActivePose()
+            onPieceSnap?()
+        }
+        render(immediate: false)
+    }
+    public func rotate() {
+        if engine.tryRotate() {
+            rebuildActiveNodesIfNeeded()
+            snapActivePose()
+            onPieceSnap?()
+        }
+        render(immediate: false)
+    }
     public func soft() { _ = engine.softDrop(); render(immediate: false) }
     public func hard() {
         engine.hardDrop()
