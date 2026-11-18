@@ -216,6 +216,21 @@ final class GameCoreTests: XCTestCase {
         }
     }
 
+    func testLevelTwistsEscalate() {
+        XCTAssertEqual(LevelTwist.active(at: 1), .nightWarmup)
+        XCTAssertEqual(LevelTwist.active(at: 3), .stickyCans)
+        XCTAssertEqual(LevelTwist.active(at: 5), .denseJunk)
+        XCTAssertEqual(LevelTwist.active(at: 7), .nightRush)
+        XCTAssertEqual(LevelTwist.active(at: 99), .nightRush)
+        XCTAssertTrue(LevelTwist.denseJunk.playerBlurb.lowercased().contains("junk"))
+        XCTAssertTrue(LevelTwist.alleyGusts.toastTitle.contains("Gust") || LevelTwist.alleyGusts.playerBlurb.lowercased().contains("gust"))
+        var eng = GameEngine(seed: 7)
+        // Fresh run is level 1 — full lock window.
+        XCTAssertEqual(eng.lockDelaySeconds(base: 0.42), 0.42, accuracy: 0.001)
+        eng.applyShotScenario("revive") // level 6 — still below Night Rush
+        XCTAssertEqual(eng.lockDelaySeconds(base: 0.42), 0.42, accuracy: 0.001)
+    }
+
     func testNoStraightSpanLongerThanThree() {
         for def in JunkCatalog.all {
             for rot in def.rotations {

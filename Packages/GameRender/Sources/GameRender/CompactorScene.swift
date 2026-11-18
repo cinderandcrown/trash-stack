@@ -463,13 +463,24 @@ public final class CompactorScene: SKScene {
             return
         }
         guard !engine.state.over, engine.state.active != nil else { return }
+        // Speeds up every level; floor keeps it readable.
         let grav = max(feel.gravityMinSec, feel.gravityBaseSec - Double(engine.state.level) * feel.gravityLevelStep)
+        // Level 6+: rare alley gust nudges the active piece sideways.
+        if engine.state.level >= LevelTwist.alleyGusts.rawValue, Int.random(in: 0...240) == 0 {
+            let dir = Bool.random() ? 1 : -1
+            if engine.tryMove(dx: dir, dy: 0) {
+                snapActivePose()
+                onPieceSnap?()
+                onToast?("Gust!")
+            }
+        }
         gravityAcc += Double(dt)
         if gravityAcc >= grav {
             gravityAcc = 0
             if !engine.softDrop() {
                 lockAcc += grav
-                if lockAcc > feel.lockDelaySec {
+                let lockNeed = engine.lockDelaySeconds(base: feel.lockDelaySec)
+                if lockAcc > lockNeed {
                     lockAcc = 0
                     engine.lock()
                     handleEvents()

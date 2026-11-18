@@ -637,7 +637,8 @@ struct GameContainerView: View {
                         Task { await GameKitService.shared.reportAchievement(AchievementID.snatchUsed) }
                     case .leveledUp(let lvl):
                         AudioService.shared.playSFX("levelup")
-                        showToast("Level \(lvl)")
+                        let twist = LevelTwist.active(at: lvl)
+                        showToast(twist.toastTitle)
                     case .spawned:
                         syncHUD()
                     default: break

@@ -130,7 +130,15 @@ public struct GameEngine: Sendable {
 
     private mutating func fillQueue() {
         while state.queue.count < 5 {
-            state.queue.append(bag.next())
+            var id = bag.next()
+            // Level 5+ dense junk: bias toward bulky pieces so the bin fills faster.
+            if state.level >= LevelTwist.denseJunk.rawValue {
+                let bulky: [JunkID] = [.crate, .tire, .fridge, .plank, .pipe]
+                if placeCount % 5 == 0 {
+                    id = bulky[Int(state.level + placeCount) % bulky.count]
+                }
+            }
+            state.queue.append(id)
         }
     }
 
@@ -218,11 +226,11 @@ public struct GameEngine: Sendable {
         let def = p.def
         for (x, y) in p.cells {
             var cell = Cell(piece: p.id, material: def.material)
-            // Sticky / battery hazards appear after level 3 on occasional placements.
-            if state.level >= 3, placeCount % 11 == 7, p.id == .can {
+            // Per-level twists: sticky cans (L3+), leaking pipes (L4+).
+            if state.level >= LevelTwist.stickyCans.rawValue, placeCount % 11 == 7, p.id == .can {
                 cell.sticky = true
             }
-            if state.level >= 4, placeCount % 17 == 5, p.id == .pipe {
+            if state.level >= LevelTwist.leakingPipes.rawValue, placeCount % 17 == 5, p.id == .pipe {
                 cell.hazard = .leakingBattery
                 cell.material = .metal
             }
@@ -438,7 +446,17 @@ public struct GameEngine: Sendable {
         state.level = max(state.level, 1 + state.lines / 8)
         if state.level > leveledBefore {
             events.append(.leveledUp(state.level))
+            // Refresh orders so the new twist has a matching ticket target.
+            if state.level == leveledBefore + 1, state.orders.allSatisfy(\.done) {
+                seedOrders(level: state.level)
+            }
         }
+    }
+
+    /// Effective lock delay — tightens under Night Rush (L7+).
+    public func lockDelaySeconds(base: Double) -> Double {
+        guard state.level >= LevelTwist.nightRush.rawValue else { return base }
+        return max(0.18, base * 0.62)
     }
 
     /// Keep `lines` consistent with a staged level so the next clear cannot rewind it.
