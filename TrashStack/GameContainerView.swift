@@ -23,6 +23,7 @@ struct GameContainerView: View {
     @State private var raccoonMood: CompactorScene.RaccoonMood = .idle
     @State private var showPause = false
     @State private var scoreAnimTask: Task<Void, Never>?
+    @State private var sheetScoreAnimTask: Task<Void, Never>?
     @State private var pressMeter = 0
     @State private var pressMax = 8
     @State private var snatchReady = true
@@ -36,6 +37,11 @@ struct GameContainerView: View {
     @State private var snatchPressed = false
     @State private var completedOrderFlash: String? = nil
     @State private var rewardFly: String? = nil
+    /// Locked at top-out — never a stale HUD or smoke-staged value.
+    @State private var overScore = 0
+    @State private var sheetScore = 0
+    @State private var overBestBefore = 0
+    @State private var isNewBest = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -172,24 +178,37 @@ struct GameContainerView: View {
             ZStack {
                 NeonTheme.bgBottom.ignoresSafeArea()
                 NeonPanel {
-                    VStack(spacing: 16) {
+                    VStack(spacing: 14) {
                         BundleImage(name: "RaccoonPanic")
                             .scaledToFit()
-                            .frame(width: 110, height: 110)
-                        Text(nearMiss ? "SO CLOSE" : "ONE MORE?")
+                            .frame(width: 100, height: 100)
+                        Text(isNewBest ? "NEW BEST" : (nearMiss ? "SO CLOSE" : "BIN FULL"))
                             .font(.title2.bold())
-                            .foregroundStyle(NeonTheme.magenta)
+                            .foregroundStyle(isNewBest ? NeonTheme.teal : NeonTheme.magenta)
+                        Text("\(sheetScore)")
+                            .font(.system(size: 44, weight: .black, design: .rounded))
+                            .monospacedDigit()
+                            .foregroundStyle(
+                                LinearGradient(colors: [.white, NeonTheme.teal], startPoint: .leading, endPoint: .trailing)
+                            )
+                            .contentTransition(.numericText())
+                            .animation(.easeOut(duration: 0.12), value: sheetScore)
+                        Text(isNewBest
+                             ? "Best \(overScore) · you beat \(overBestBefore)"
+                             : "Best \(max(overBestBefore, overScore))"
+                               + (profile.dailyStreak > 0 ? " · streak \(profile.dailyStreak)d" : ""))
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.muted)
                         Text(nearMiss
-                             ? "Bin was kissing the lip — revive once (opt-in ad) or clock out with your streak intact."
-                             : "Revive once with an opt-in ad, or clock out. No purchase prompts here.")
+                             ? "One revive (opt-in ad) or jump straight back in."
+                             : "Revive once with an opt-in ad, or play again now.")
                             .multilineTextAlignment(.center)
                             .foregroundStyle(NeonTheme.muted)
-                        Text(profile.dailyStreak > 0
-                             ? "Score \(hudScore) · streak \(profile.dailyStreak)d"
-                             : "Score \(hudScore)")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(NeonTheme.teal)
-                        NeonButton(title: "Revive (ad)") {
+                        NeonButton(title: "Play again") {
+                            showContinue = false
+                            Task { await playAgainNow() }
+                        }
+                        NeonButton(title: "Revive (ad)", style: .secondary) {
                             Task {
                                 // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
                                 await AdsBootstrap.startAfterFirstWinIfNeeded()
@@ -198,6 +217,7 @@ struct GameContainerView: View {
                                 if ok {
                                     continued = true
                                     scene.revive()
+                                    AudioService.shared.playMusic("game_loop")
                                 } else {
                                     await finalizeOver()
                                 }
@@ -211,7 +231,7 @@ struct GameContainerView: View {
                 }
                 .padding()
             }
-            .presentationDetents([.medium])
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -510,9 +530,9 @@ struct GameContainerView: View {
                 scene.autoplay = false
                 raccoonMood = .panic
                 nearMiss = true
-                // Sheet must match the staged board score (never a stale HUD 0).
-                hudScore = scene.engine.state.score
-                displayScore = scene.engine.state.score
+                // Smoke-only staged board — lock sheet score to that board, not a stale HUD.
+                captureGameOverScore(scene.engine.state.score)
+                lastState = scene.engine.state
                 syncHUD()
                 // Defer past first layout — same-turn sheet flags no-op on soft
                 // switches; a short beat keeps magenta/teal markers in the frame.
@@ -556,9 +576,8 @@ struct GameContainerView: View {
         }
         scene.onGameOver = { state in
             Task { @MainActor in
-                // HUD and revive sheet must match the live run — never a staged 8,800.
-                hudScore = state.score
-                displayScore = state.score
+                // Lock the live top-out score before any sheet / HUD race.
+                captureGameOverScore(state.score)
                 syncHUD()
                 raccoonMood = .panic
                 await handleGameOver(state)
@@ -633,8 +652,47 @@ struct GameContainerView: View {
     }
 
     @MainActor
+    private func captureGameOverScore(_ score: Int) {
+        overScore = score
+        hudScore = score
+        displayScore = score
+        overBestBefore = max(profile.highScore, profile.endlessHighScore)
+        isNewBest = score > overBestBefore
+        sheetScore = 0
+        animateSheetScore(to: score)
+    }
+
+    @MainActor
+    private func animateSheetScore(to target: Int) {
+        sheetScoreAnimTask?.cancel()
+        guard target > 0 else {
+            sheetScore = target
+            return
+        }
+        sheetScoreAnimTask = Task { @MainActor in
+            let steps = min(36, max(12, target / 180))
+            let start = 0
+            for step in 1...steps {
+                if Task.isCancelled { return }
+                try? await Task.sleep(nanoseconds: 28_000_000)
+                if Task.isCancelled { return }
+                let t = Double(step) / Double(steps)
+                let eased = 1 - pow(1 - t, 3)
+                sheetScore = start + Int(Double(target) * eased)
+            }
+            sheetScore = target
+            if isNewBest {
+                AudioService.shared.playSFX("levelup", pitch: 1.2)
+                HapticsService.shared.clear()
+            }
+        }
+    }
+
+    @MainActor
     private func handleGameOver(_ state: GameState) async {
         lastState = state
+        // Prefer the locked top-out score if something mutated state afterward.
+        if overScore == 0 { captureGameOverScore(state.score) }
         if !continued {
             showContinue = true
             return
@@ -642,56 +700,91 @@ struct GameContainerView: View {
         await finalizeOver()
     }
 
+    /// Persist rewards and jump into a fresh run — no title hop, no interstitial wait.
     @MainActor
-    private func finalizeOver() async {
-        guard let state = lastState ?? Optional(scene.engine.state) else { return }
+    private func playAgainNow() async {
+        _ = await bankRunRewards(submitScores: true)
+        continued = false
+        lastState = nil
+        overScore = 0
+        sheetScore = 0
+        isNewBest = false
+        raccoonMood = .idle
+        nearMiss = false
+        if playMode == .daily {
+            scene.applyShot("daily")
+        } else {
+            scene.reset()
+        }
+        syncHUD()
+        displayScore = 0
+        hudScore = 0
+        AudioService.shared.playSFX("ui")
+        AudioService.shared.playMusic("game_loop")
+    }
+
+    @MainActor
+    private func bankRunRewards(submitScores: Bool) async -> GameState? {
+        guard let state = lastState ?? Optional(scene.engine.state) else { return nil }
+        let scored = overScore > 0 ? overScore : state.score
         profile.addScrap(state.runScrap)
         profile.battlePassXP += state.lines * 2 + 5
         for order in state.orders where order.done {
             profile.addGems(2)
             profile.battlePassXP += 15
         }
-        if state.score > profile.highScore {
-            profile.highScore = state.score
+        if scored > profile.highScore {
+            profile.highScore = scored
         }
         if playMode == .endless {
-            if state.score > profile.endlessHighScore {
-                profile.endlessHighScore = state.score
+            if scored > profile.endlessHighScore {
+                profile.endlessHighScore = scored
             }
-            await GameKitService.shared.submitScore(state.score, leaderboardID: "trashstack_endless")
+            if submitScores {
+                await GameKitService.shared.submitScore(scored, leaderboardID: "trashstack_endless")
+            }
         }
+        if playMode == .shift, state.orders.allSatisfy(\.done) {
+            profile.shiftProgress = max(profile.shiftProgress, profile.shiftProgress + 1)
+        }
+        if scored > 0 && !profile.firstWin {
+            profile.firstWin = true
+        }
+        profile.persist()
+        return state
+    }
+
+    @MainActor
+    private func finalizeOver() async {
+        guard let state = await bankRunRewards(submitScores: true) else { return }
+        let scored = overScore > 0 ? overScore : state.score
         if playMode == .daily {
             let stars = state.orders.filter(\.done).count
             let card = DailyDumpster.shareCard(
                 dayKey: DailyDumpster.dayKey(),
-                score: state.score,
+                score: scored,
                 stars: min(3, max(1, stars)),
                 materialGrid: scene.engine.materialShareGrid()
             )
-            profile.markDailyComplete(score: state.score)
-            await GameKitService.shared.submitScore(state.score, leaderboardID: "trashstack_daily")
+            profile.markDailyComplete(score: scored)
+            await GameKitService.shared.submitScore(scored, leaderboardID: "trashstack_daily")
             await GameKitService.shared.reportAchievement(AchievementID.dailyClear)
             if profile.dailyStreak >= 7 {
                 await GameKitService.shared.reportAchievement(AchievementID.streakSeven)
             }
             profile.persist()
             continued = false
+            overScore = 0
             AudioService.shared.playMusic("menu_loop")
-            onDailyFinished?(state.score, card)
+            onDailyFinished?(scored, card)
             return
-        }
-        if playMode == .shift, state.orders.allSatisfy(\.done) {
-            profile.shiftProgress = max(profile.shiftProgress, profile.shiftProgress + 1)
-        }
-        if state.score > 0 && !profile.firstWin {
-            profile.firstWin = true
-            profile.persist()
         }
         // Never fire ATT/UMP/notification prompts on game-over. Notifications: win / streak / settings (2nd session).
         let streak = profile.registerDailyActivity()
         profile.persist()
         await AdsService.shared.maybeShowInterstitial()
         continued = false
+        overScore = 0
         AudioService.shared.playMusic("menu_loop")
         if streak.isNew, streak.scrap > 0 {
             if profile.mayPromptNotifications {
