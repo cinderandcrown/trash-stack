@@ -1552,7 +1552,13 @@ assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
 smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
-# First gameplay shot may still need simctl launch; juice shots soft-switch.
+# Kill the sticky title PID first — simctl launch often reuses it and leaves the
+# frame on title (markers pass on alley variance, SSIM vs title stays ≥0.85).
+echo "Terminating before first gameplay launch (clear sticky title PID)" >&2
+raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+APP_DATA_CONTAINER=""
+write_shot_defaults "game" 8
+# First gameplay shot needs simctl launch; juice shots soft-switch after.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
 SOFT_SHOT_ONLY=1
