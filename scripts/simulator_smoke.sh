@@ -310,15 +310,24 @@ app_running() {
 }
 
 shot() {
-  local out="$1" ok=0
+  local out="$1" ok=0 t0=$SECONDS elapsed=0
   # Display fallbacks must NOT each count as a wedge timeout (3 displays ≠ wedged sim).
   # Screenshot flakes also must NOT trigger erase/reboot — that burned 4+ minutes then failed.
   if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
     ok=1
-  elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
-    ok=1
-  elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out" 2>/tmp/sim-shot.err; then
-    ok=1
+  else
+    elapsed=$((SECONDS - t0))
+    # If primary already blew past its deadline (killpg soft-failed), skip fallbacks —
+    # display=1 previously hung 113s and burned the game step budget.
+    if (( elapsed <= SHOT_DEADLINE_S + 4 )); then
+      if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
+        ok=1
+      elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out" 2>/tmp/sim-shot.err; then
+        ok=1
+      fi
+    else
+      echo "primary screenshot wedged (${elapsed}s) — skip display fallbacks" >&2
+    fi
   fi
   if (( ok == 1 )); then
     DEADLINE_FAILS=0
@@ -819,11 +828,10 @@ launch_shot() {
       continue
     fi
     # Extra beat for SpriteKit board / juice after first SwiftUI paint.
+    # If the refresh screenshot wedges, keep the post-LaunchLogo frame we already have.
     sleep 1.0
     if ! shot "$outfile"; then
-      echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
-      sleep 0.5
-      continue
+      echo "refresh screenshot wedged for mode='$mode' — keeping prior good frame" >&2
     fi
     step_elapsed=$((SECONDS - shot_start))
     if (( step_elapsed > STEP_BUDGET_S )); then
