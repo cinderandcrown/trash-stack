@@ -107,25 +107,28 @@ struct PublisherIdentView: View {
     }
 
     private func runSequence() {
-        if reduceMotion {
+        let seenBefore = UserDefaults.standard.bool(forKey: "trashStack.identSeen")
+        // Returning players get a blink; first launch still shows the mark, just fast.
+        if reduceMotion || (seenBefore && !holdForShot) {
             logoOpacity = 1
             logoScale = 1
             titleOpacity = 1
             creditOpacity = 1
-            glowPulse = 0.5
+            glowPulse = 0.55
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 900_000_000)
+                let holdNs: UInt64 = holdForShot ? 900_000_000 : (seenBefore ? 280_000_000 : 450_000_000)
+                try? await Task.sleep(nanoseconds: holdNs)
                 if !holdForShot { finish(skipped: false) }
             }
             return
         }
 
-        withAnimation(.easeOut(duration: 0.55)) {
+        withAnimation(.easeOut(duration: 0.28)) {
             logoOpacity = 1
             logoScale = 1
             glowPulse = 0.85
         }
-        withAnimation(.easeInOut(duration: 1.1)) {
+        withAnimation(.easeInOut(duration: 0.55)) {
             sweepX = 0.7
         }
         Task { @MainActor in
@@ -135,20 +138,20 @@ struct PublisherIdentView: View {
             if !AudioService.shared.isMuted {
                 AudioService.shared.playSFX("ember_whoosh", pitch: 0.95)
             }
-            try? await Task.sleep(nanoseconds: 380_000_000)
-            withAnimation(.easeOut(duration: 0.35)) {
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            withAnimation(.easeOut(duration: 0.22)) {
                 titleOpacity = 1
                 creditOpacity = 1
             }
-            try? await Task.sleep(nanoseconds: 900_000_000)
+            try? await Task.sleep(nanoseconds: 420_000_000)
             if holdForShot { return }
-            withAnimation(.easeIn(duration: 0.32)) {
+            withAnimation(.easeIn(duration: 0.2)) {
                 logoOpacity = 0
                 titleOpacity = 0
                 creditOpacity = 0
                 glowPulse = 0.2
             }
-            try? await Task.sleep(nanoseconds: 320_000_000)
+            try? await Task.sleep(nanoseconds: 180_000_000)
             finish(skipped: false)
         }
     }
@@ -156,6 +159,7 @@ struct PublisherIdentView: View {
     private func finish(skipped: Bool) {
         guard !finished else { return }
         finished = true
+        UserDefaults.standard.set(true, forKey: "trashStack.identSeen")
         onFinished()
         _ = skipped
     }

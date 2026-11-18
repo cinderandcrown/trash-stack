@@ -44,7 +44,12 @@ struct TitleView: View {
                     AdsService.shared.noteRunStarted()
                     AudioService.shared.playMusic("game_loop")
                     LaunchTiming.markPlayTap()
-                    screen = .modes
+                    // Straight into the preferred mode — no mode-select detour.
+                    if !profile.tutorialDone {
+                        screen = .tutorial
+                    } else {
+                        screen = .game
+                    }
                 }
                 .padding(.horizontal, 36)
 
@@ -62,6 +67,7 @@ struct TitleView: View {
                 }
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    NeonButton(title: "Modes", style: .secondary) { screen = .modes }
                     NeonButton(title: "Junkyard", style: .ghost) { screen = .base }
                     NeonButton(title: "Season Pass", style: .ghost) { screen = .pass }
                     NeonButton(title: "Shop", style: .ghost) { screen = .shop }
