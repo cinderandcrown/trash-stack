@@ -70,9 +70,10 @@ public final class CompactorScene: SKScene {
         // Paint the dark bin + solid tiles FIRST (no gray flash). Texture decode follows.
         _ = tex("DumpsterFrame")
         _ = tex("AlleyBackground")
-        // Sync-warm one icon per material so the first recycle ghosts aren't flat squares.
+        // Sync-warm material icons + neon ghost plates so first recycle isn't flat.
         for mat in Material.allCases {
             _ = representativeTexture(for: mat)
+            _ = ghostPlateTexture(for: mat)
         }
         rebuild()
         // Warm remaining junk icons after first real frame so PLAY→board stays under 1.5s.
@@ -746,6 +747,17 @@ public final class CompactorScene: SKScene {
         return tex(JunkCatalog.textureName(for: id))
     }
 
+    private func ghostPlateTexture(for material: Material) -> SKTexture? {
+        let name: String
+        switch material {
+        case .metal: name = "GhostMetal"
+        case .plastic: name = "GhostPlastic"
+        case .glass: name = "GhostGlass"
+        case .paper: name = "GhostPaper"
+        }
+        return tex(name)
+    }
+
     private func chutePoint(for material: Material) -> CGPoint {
         let origin = gridOrigin()
         let cs = cellSize()
@@ -864,9 +876,21 @@ public final class CompactorScene: SKScene {
             let visY = c.y - hid
             guard visY >= 0, visY < vis else { continue }
             let start = positionFor(x: c.x, boardY: c.y)
+            let ghostSize = snaps[c]?.size
+                ?? cellNodes[visY][c.x]?.size
+                ?? CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
             let ghost: SKSpriteNode
-            // Always build a solid material tile ghost; overlay icon when we have a snapshot.
-            if let snap = snaps[c] {
+            // Prefer licensed original neon ghost plates; fall back to solid+icon.
+            if let plate = ghostPlateTexture(for: material) {
+                ghost = SKSpriteNode(texture: plate, size: CGSize(width: ghostSize.width * 1.15, height: ghostSize.height * 1.15))
+                ghost.blendMode = .alpha
+                if let t = snaps[c]?.texture ?? representativeTexture(for: material) {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: ghostSize.width * 0.42, height: ghostSize.height * 0.42))
+                    icon.zPosition = 1
+                    icon.alpha = 0.92
+                    ghost.addChild(icon)
+                }
+            } else if let snap = snaps[c] {
                 ghost = SKSpriteNode(color: snap.color.withAlphaComponent(1), size: snap.size)
                 ghost.colorBlendFactor = 1
                 if let t = snap.texture {
@@ -887,10 +911,10 @@ public final class CompactorScene: SKScene {
                     ghost.addChild(icon)
                 }
             } else {
-                ghost = SKSpriteNode(color: fallbackColor(material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                ghost = SKSpriteNode(color: fallbackColor(material), size: ghostSize)
                 ghost.colorBlendFactor = 1
                 if let t = representativeTexture(for: material) {
-                    let icon = SKSpriteNode(texture: t, size: CGSize(width: (cs.width - cellPad) * 0.55, height: (cs.height - cellPad) * 0.55))
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: ghostSize.width * 0.55, height: ghostSize.height * 0.55))
                     icon.zPosition = 1
                     ghost.addChild(icon)
                 }
