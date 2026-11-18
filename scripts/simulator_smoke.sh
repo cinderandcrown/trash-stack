@@ -1569,13 +1569,14 @@ assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
 SOFT_SHOT_ONLY=0
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-# Meta screens: one launch for base (soft after revive was LaunchLogo-flaky),
-# then soft-only for pass/shop/notif — further launches wedge io on CI.
+# Meta: launch base + shop (soft between was LaunchLogo-flaky); soft pass/notif.
 SOFT_SHOT_ONLY=0
 launch_shot "base" "$OUT_DIR/06-base.png" 2
 SOFT_SHOT_ONLY=1
 launch_shot "pass" "$OUT_DIR/07-pass.png" 2
+SOFT_SHOT_ONLY=0
 launch_shot "shop" "$OUT_DIR/08-shop.png" 2
+SOFT_SHOT_ONLY=1
 # Notif is a title overlay — soft via cached Documents path (no launch).
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
 smoke_budget
