@@ -602,17 +602,24 @@ struct GameContainerView: View {
                     switch e {
                     case .locked(let hard):
                         if hard {
-                            AudioService.shared.playSFX("crush", pitch: 0.92)
-                            AudioService.shared.playSFX("lock", pitch: 1.15)
+                            AudioService.shared.playSFX("crush", pitch: 0.88)
+                            AudioService.shared.playSFX("lock", pitch: 1.2)
                             HapticsService.shared.clear()
                         } else {
-                            AudioService.shared.playSFX("lock")
+                            // Soft land — lower thud so hard drops still feel bigger.
+                            AudioService.shared.playSFX("lock", pitch: 0.85)
                             HapticsService.shared.lock()
                         }
                     case .recycled:
-                        let pitch = 1.0 + Double(scene.engine.state.combo) * 0.1
+                        let combo = max(1, scene.engine.state.combo)
+                        let pitch = 1.0 + Double(combo) * 0.12
                         AudioService.shared.playSFX("recycle", pitch: pitch)
-                        AudioService.shared.playSFX("combo", pitch: min(1.8, pitch + 0.05))
+                        if combo >= 2 {
+                            AudioService.shared.playSFX("combo", pitch: min(1.9, pitch + 0.08))
+                        }
+                        if combo >= 4 {
+                            AudioService.shared.playSFX("levelup", pitch: 1.15)
+                        }
                         HapticsService.shared.recycle()
                         Task { await GameKitService.shared.reportAchievement(AchievementID.firstRecycle) }
                         if scene.engine.state.combo >= 5 {

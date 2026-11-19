@@ -27,4 +27,15 @@ public struct ActivePiece: Sendable, Equatable {
         }
         return true
     }
+
+    /// Lowest y this piece can rest at without colliding (ghost-drop target).
+    public func landingY(on board: Board) -> Int {
+        var probe = self
+        while true {
+            var next = probe
+            next.y += 1
+            if !next.fits(board) { return probe.y }
+            probe = next
+        }
+    }
 }

@@ -198,8 +198,84 @@ final class GameCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(feel.gravityMinSec, feel.gravityBaseSec)
         XCTAssertEqual(BoardGym.allCases.count, 5)
         XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
-        XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.42, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 12, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.36, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 14, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.70, accuracy: 0.001)
+    }
+
+    func testComboScoreEscalatesHard() {
+        let single = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 1)
+        let double = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 2)
+        let mega = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 4)
+        XCTAssertEqual(double, single * 2)
+        XCTAssertGreaterThan(mega, double * 2)
+    }
+
+    /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).
+    func testPlayLoopDumpForVerify() throws {
+        var eng = GameEngine(seed: 2026_11_19)
+        eng.applyShotScenario("demo")
+        var log: [String] = []
+        var frames: [[[String]]] = []
+        func snap() -> [[String]] {
+            let hid = eng.state.board.config.hiddenRows
+            let vis = eng.state.board.config.visibleRows
+            var rows: [[String]] = []
+            for y in hid..<(hid + vis) {
+                var row: [String] = []
+                for x in 0..<eng.state.board.config.cols {
+                    if let c = eng.state.board[x, y] {
+                        // Distinct letters for the verify renderer (plastic vs paper).
+                        switch c.material {
+                        case .metal: row.append("m")
+                        case .plastic: row.append("p")
+                        case .glass: row.append("g")
+                        case .paper: row.append("P")
+                        }
+                    } else {
+                        row.append(".")
+                    }
+                }
+                rows.append(row)
+            }
+            return rows
+        }
+        frames.append(snap())
+        for step in 0..<28 {
+            if eng.state.over { break }
+            eng.hardDrop()
+            let ev = eng.drainEvents()
+            for e in ev {
+                switch e {
+                case .locked(let hard):
+                    log.append("step\(step) lock hard=\(hard) score=\(eng.state.score)")
+                case .recycled(let groups, let cells, let score, _, let mat, _):
+                    log.append("step\(step) recycle \(mat.rawValue) groups=\(groups) cells=\(cells) +\(score) combo=\(eng.state.combo) total=\(eng.state.score)")
+                case .leveledUp(let lvl):
+                    log.append("step\(step) level \(lvl) · \(LevelTwist.active(at: lvl).playerBlurb)")
+                case .gameOver:
+                    log.append("step\(step) gameOver score=\(eng.state.score)")
+                default: break
+                }
+            }
+            if step == 4 || step == 10 || step == 18 || eng.state.over {
+                frames.append(snap())
+            }
+        }
+        XCTAssertFalse(log.isEmpty)
+        let payload: [String: Any] = [
+            "seed": 2026_11_19,
+            "finalScore": eng.state.score,
+            "finalLevel": eng.state.level,
+            "finalCombo": eng.state.combo,
+            "over": eng.state.over,
+            "log": log,
+            "frames": frames,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        let out = URL(fileURLWithPath: "/tmp/trash-stack-play-verify.json")
+        try data.write(to: out)
+        XCTAssertGreaterThan(eng.state.score, 0, "played loop should score")
     }
 
     func testLevelNeverGoesBackwardsAfterShotSeed() {

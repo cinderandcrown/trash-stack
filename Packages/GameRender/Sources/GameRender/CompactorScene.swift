@@ -25,6 +25,7 @@ public final class CompactorScene: SKScene {
     private var cellNodes: [[SKSpriteNode?]] = []
     private var activeNodes: [SKSpriteNode] = []
     private var activeRoot: SKNode?
+    private var ghostRoot: SKNode?
     private var boardCrop: SKCropNode?
     private var fpsLabel: SKLabelNode?
     private var alleyNode: SKSpriteNode?
@@ -188,6 +189,8 @@ public final class CompactorScene: SKScene {
         cellNodes = []
         activeNodes = []
         activeRoot = nil
+        ghostRoot?.removeFromParent()
+        ghostRoot = nil
         boardCrop = nil
         alleyNode = nil
         pressPlate = nil
@@ -521,15 +524,20 @@ public final class CompactorScene: SKScene {
             case .locked(let hard):
                 // Soft settle vs hard slam — slam gets press-tier shake + more debris.
                 let lockPt = positionFor(x: Int(visualX.rounded()), boardY: max(0, Int(visualY.rounded())))
-                let debris = hard ? 16 : 7
-                let sparks = hard ? 10 : 4
+                let debris = hard ? 18 : 9
+                let sparks = hard ? 12 : 6
                 spawnParticle(named: "DebrisMetal", at: lockPt, count: debris)
                 spawnParticle(named: hard ? "DebrisNeon" : "SparkTeal", at: lockPt, count: sparks)
-                screenShake(strength: hard ? CGFloat(feel.shakePress) * 0.85 : 3.5)
+                screenShake(strength: hard ? CGFloat(feel.shakePress) * 0.9 : 5.5)
+                // Every land gets a readable squash — soft lands too, not only slams.
+                bounceLandedCells(around: lockPt, hard: hard)
                 if hard {
-                    boardFlash(color: SKColor(red: 1, green: 0.95, blue: 0.75, alpha: 0.55))
-                    hitStop(seconds: feel.hitStopShortSec * 0.7)
+                    boardFlash(color: SKColor(red: 1, green: 0.95, blue: 0.75, alpha: 0.6))
+                    hitStop(seconds: feel.hitStopShortSec * 0.85)
+                } else {
+                    hitStop(seconds: feel.hitStopShortSec * 0.35)
                 }
+                clearGhost()
                 hasVisualPose = false
             case .recycled(_, let cells, let score, _, let material, let coords):
                 // Snapshot textures BEFORE render clears the cells (real item ghosts, not flat squares).
@@ -552,20 +560,26 @@ public final class CompactorScene: SKScene {
                         blend: 0
                     )
                 }
-                recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo, snaps: snaps)
+                let combo = max(1, engine.state.combo)
+                recycleSuck(coords: coords, material: material, points: score, combo: combo, snaps: snaps)
                 subtleGlow(color: materialGlow(material))
-                boardFlash(color: materialGlow(material).withAlphaComponent(0.7))
-                screenShake(strength: CGFloat(feel.shakeRecycle) * (engine.state.combo >= 2 ? 1.35 : 1.0))
-                let combo = engine.state.combo
+                boardFlash(color: materialGlow(material).withAlphaComponent(0.75 + min(0.2, CGFloat(combo) * 0.04)))
+                let shakeMul = 1.0 + min(1.2, Double(combo - 1) * 0.28)
+                screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul)
                 if combo >= 2 {
                     presentComboBanner(combo: combo)
+                    presentComboRing(combo: combo)
                     onToast?("CHAIN ×\(combo)")
                     raccoonMood = .cheer
                 } else {
-                    onToast?("RECYCLE")
+                    onToast?("RECYCLE +\(score)")
                 }
                 spawnScorePips(points: score, near: coords.first.map { positionFor(x: $0.x, boardY: $0.y) })
-                spawnParticle(named: "SparkTeal", at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45), count: min(40, 12 + cells * 2))
+                spawnParticle(
+                    named: combo >= 3 ? "SparkMagenta" : "SparkTeal",
+                    at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45),
+                    count: min(52, 14 + cells * 2 + combo * 4)
+                )
                 _ = cells
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
@@ -577,15 +591,114 @@ public final class CompactorScene: SKScene {
                 playSnatchGrab()
                 onToast?("Snatch!")
             case .leveledUp(let lvl):
-                onToast?("Level \(lvl)")
+                onToast?(LevelTwist.active(at: lvl).toastTitle)
             case .spawned:
                 hasVisualPose = false
+                updateLandingGhost()
             case .gameOver:
+                clearGhost()
                 raccoonMood = .panic
             default: break
             }
         }
         onEvents?(ev)
+    }
+
+    private func bounceLandedCells(around point: CGPoint, hard: Bool) {
+        let radius: CGFloat = hard ? 90 : 55
+        let amp: CGFloat = hard ? 0.22 : 0.12
+        for row in cellNodes {
+            for node in row {
+                guard let node, node.alpha > 0.2 else { continue }
+                let d = hypot(node.position.x - point.x, node.position.y - point.y)
+                guard d < radius else { continue }
+                node.removeAction(forKey: "landBounce")
+                let squash = SKAction.sequence([
+                    SKAction.group([
+                        SKAction.scaleX(to: 1.0 + amp, duration: 0.05),
+                        SKAction.scaleY(to: 1.0 - amp, duration: 0.05),
+                    ]),
+                    SKAction.group([
+                        SKAction.scaleX(to: 1.0 - amp * 0.4, duration: 0.06),
+                        SKAction.scaleY(to: 1.0 + amp * 0.35, duration: 0.06),
+                    ]),
+                    SKAction.scale(to: 1.0, duration: 0.07),
+                ])
+                node.run(squash, withKey: "landBounce")
+            }
+        }
+    }
+
+    private func presentComboRing(combo: Int) {
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = CGFloat(engine.state.board.config.cols)
+        let rows = CGFloat(engine.state.board.config.visibleRows)
+        let ring = SKShapeNode(rectOf: CGSize(width: cs.width * cols + 10, height: cs.height * rows + 10), cornerRadius: 10)
+        ring.strokeColor = combo >= 4
+            ? SKColor(red: 1, green: 0.3, blue: 0.85, alpha: 1)
+            : SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 1)
+        ring.lineWidth = 3 + CGFloat(min(4, combo))
+        ring.fillColor = .clear
+        ring.glowWidth = 6
+        ring.position = CGPoint(x: origin.x + cs.width * cols / 2, y: origin.y + cs.height * rows / 2)
+        ring.zPosition = 49
+        ring.alpha = 0
+        addChild(ring)
+        ring.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.fadeAlpha(to: 0.95, duration: 0.06),
+                SKAction.scale(to: 1.04, duration: 0.1),
+            ]),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.28),
+                SKAction.scale(to: 1.12, duration: 0.28),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func clearGhost() {
+        ghostRoot?.removeFromParent()
+        ghostRoot = nil
+    }
+
+    private func updateLandingGhost() {
+        guard let p = engine.state.active, !engine.state.over else {
+            clearGhost()
+            return
+        }
+        let landY = p.landingY(on: engine.state.board)
+        // Hide ghost when already resting / one cell above land (noise).
+        if landY <= p.y + 1 {
+            clearGhost()
+            return
+        }
+        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)"
+        if ghostRoot?.name == tag { return }
+        clearGhost()
+        let root = SKNode()
+        root.name = tag
+        root.zPosition = 4
+        root.alpha = 0.38
+        (boardCrop ?? self).addChild(root)
+        ghostRoot = root
+        let cs = cellSize()
+        let mat = p.def.material
+        let color = fallbackColor(mat).withAlphaComponent(0.55)
+        if p.def.isSquare {
+            let n = SKSpriteNode(color: color, size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
+            n.position = CGPoint(x: cs.width * 0.5, y: -cs.height * 0.5)
+            root.addChild(n)
+        } else {
+            let shape = p.def.rotations[p.rot % p.def.rotations.count]
+            for off in shape {
+                let n = SKSpriteNode(color: color, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                n.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
+                root.addChild(n)
+            }
+        }
+        root.position = positionForBoard(x: CGFloat(p.x), y: CGFloat(landY))
     }
 
     private func subtleGlow(color: SKColor) {
@@ -936,7 +1049,8 @@ public final class CompactorScene: SKScene {
             ghost.position = start
             ghost.zPosition = 57
             addChild(ghost)
-            let dur = feel.recycleSuckSec
+            // Snappier on big chains so the bin clears with punch.
+            let dur = max(0.22, feel.recycleSuckSec - Double(max(0, combo - 1)) * 0.03)
             let hold = max(0.08, dur * 0.4)
             let tail = max(0.08, dur - hold)
             let suck = SKAction.sequence([
@@ -1158,6 +1272,7 @@ public final class CompactorScene: SKScene {
         }
         rebuildActiveNodesIfNeeded()
         layoutActiveNodes()
+        updateLandingGhost()
     }
 
     private func rebuildActiveNodesIfNeeded() {
@@ -1166,6 +1281,7 @@ public final class CompactorScene: SKScene {
             activeRoot = nil
             activeNodes.forEach { $0.removeFromParent() }
             activeNodes.removeAll()
+            clearGhost()
             return
         }
         let tag = "\(p.id.rawValue)-\(p.rot)"
