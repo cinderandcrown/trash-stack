@@ -11,12 +11,18 @@ import SpriteKit
 public enum JunkTextureLoader {
     public static let appBundleId = "com.cinderandcrown.trashstack"
 
-    /// Legacy atlas keys → current silhouette files.
+    /// Legacy atlas keys → current Higgsfield tile / silhouette files.
     private static let aliases: [String: String] = [
-        "tube": "bottle",
-        "scrap": "plank",
-        "bag": "bentPipe",
-        "box": "fridge",
+        "tube": "glass",
+        "scrap": "cardboard",
+        "bag": "banana",
+        "box": "cardboard",
+        "bottle": "glass",
+        "plank": "cardboard",
+        "pipe": "plastic",
+        "crate": "pizza",
+        "bentPipe": "banana",
+        "fridge": "cardboard",
     ]
 
     public static func image(named name: String) -> UIImage? {

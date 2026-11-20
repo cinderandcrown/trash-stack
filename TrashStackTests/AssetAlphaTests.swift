@@ -8,7 +8,7 @@ import GameCore
 /// Fails if raccoon (or other keyed) art still has opaque checkerboard corners.
 final class AssetAlphaTests: XCTestCase {
     func testRaccoonCornersAreTransparent() {
-        for name in ["RaccoonIdle", "RaccoonCheer", "RaccoonPanic"] {
+        for name in ["RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "RaccoonGameOver"] {
             guard let img = JunkTextureLoader.image(named: name),
                   let cg = img.cgImage else {
                 XCTFail("Missing raccoon art \(name)")

@@ -9,7 +9,8 @@ Track atlases, frame sizes, SFX, and BGM. Update when art/audio changes.
 | can, tube, scrap, pipe, crate, tire, bag, box | Junk textures | Max straight span 3; crate/tire rendered as single 2×2 |
 | DumpsterFrame, AlleyBackground | Playfield | Board owns color vs quiet HUD chrome |
 | SparkTeal, SparkMagenta, SparkGold, DebrisMetal, DebrisNeon | Particles | Local flashes only |
-| RaccoonIdle, RaccoonCheer, RaccoonPanic | Helper | Snatch / mood |
+| RaccoonIdle/Cheer/Panic/GameOver, BanditHero | Helper (official Bandit stills) | Mood heads + title hero; animated loops incoming |
+| BinInterior, Slam01/02, ClearBurst, CellPlate, tiles | Playfield / VFX | Higgsfield art pack (see docs/art/TS_ART_LICENSE.md) |
 
 ## Audio (`TrashStack/Resources/Audio`)
 

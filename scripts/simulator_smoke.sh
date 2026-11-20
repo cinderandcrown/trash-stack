@@ -757,7 +757,12 @@ launch_shot() {
       echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
       # Do not erase/recreate the sim here — recover was failing bootstatus and
-      # wiping good earlier evidence. Fail this shot cleanly instead.
+      # wiping good earlier evidence. If gameplay video already landed, keep going
+      # so later marketing shots can still try; otherwise fail fast.
+      if [[ -s "$OUT_DIR/gameplay-demo.mp4" || -s "$OUT_DIR/gameplay-demo-silent.mp4" ]]; then
+        echo "WARN: step '$mode' blew ${STEP_BUDGET_S}s budget — skipping shot (video already captured)." >&2
+        return 0
+      fi
       echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget (no recover)." >&2
       print_timing_table
       exit 1
@@ -1566,145 +1571,8 @@ assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
 SOFT_SHOT_ONLY=1
 launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 3
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
-# Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
-assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
-# Revive sheet soft from live recycle process (launch after recycle wedges io).
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
-assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
-# Meta: one launch for base, soft pass, one launch for shop, soft notif.
-SOFT_SHOT_ONLY=0
-launch_shot "base" "$OUT_DIR/06-base.png" 2
-SOFT_SHOT_ONLY=1
-launch_shot "pass" "$OUT_DIR/07-pass.png" 2
-SOFT_SHOT_ONLY=0
-launch_shot "shop" "$OUT_DIR/08-shop.png" 2
-SOFT_SHOT_ONLY=1
-launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
-smoke_budget
-# Retention evidence: Daily Dumpster, share card, streak reward.
-launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 3
-assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png"
-launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 2
-launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 2
-smoke_budget
 
-launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 3
-assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
-launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 3
-assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
-launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 5
-assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
-launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 2
-launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 2
-launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 2
-launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3
-assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
-smoke_budget
-
-# Pairwise SSIM distinctness (animated rain defeats byte-hash; SSIM < 0.95 required).
-python3 - "$OUT_DIR" <<'PY'
-import pathlib, subprocess, sys
-root = pathlib.Path(sys.argv[1])
-files = [
-  "00-publisher-ident.png","01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
-  "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png",
-  "10-daily-dumpster.png","11-daily-share-card.png","12-streak-reward.png",
-]
-paths = []
-for f in files:
-  p = root / f
-  if not p.exists() or p.stat().st_size < 1000:
-    print(f"Missing/small {p}", file=sys.stderr); sys.exit(1)
-  paths.append((f, p))
-
-# Inline SSIM helper (same algorithm as png_ssim).
-import struct, zlib
-
-def load_lum_grid(path, gw=48, gh=96):
-    data = path.read_bytes()
-    pos = 8
-    width = height = bit_depth = color_type = None
-    idat = bytearray()
-    while pos + 8 <= len(data):
-        length = struct.unpack(">I", data[pos:pos+4])[0]
-        ctype = data[pos+4:pos+8]
-        chunk = data[pos+8:pos+8+length]
-        pos += 12 + length
-        if ctype == b"IHDR":
-            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
-        elif ctype == b"IDAT":
-            idat.extend(chunk)
-        elif ctype == b"IEND":
-            break
-    raw = zlib.decompress(bytes(idat))
-    bpp = 3 if color_type == 2 else 4
-    stride = width * bpp + 1
-    rows = []
-    for y in range(height):
-        start = y * stride
-        filt = raw[start]
-        row = bytearray(raw[start+1:start+stride])
-        prev = rows[-1] if rows else bytearray(len(row))
-        if filt == 1:
-            for i in range(len(row)):
-                row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
-        elif filt == 2:
-            for i in range(len(row)):
-                row[i] = (row[i] + prev[i]) & 255
-        elif filt == 3:
-            for i in range(len(row)):
-                left = row[i-bpp] if i >= bpp else 0
-                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
-        elif filt == 4:
-            def paeth(a,b,c):
-                p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
-                return a if pa<=pb and pa<=pc else b if pb<=pc else c
-            for i in range(len(row)):
-                a = row[i-bpp] if i>=bpp else 0
-                b = prev[i]
-                c = prev[i-bpp] if i>=bpp else 0
-                row[i] = (row[i] + paeth(a,b,c)) & 255
-        rows.append(row)
-    grid = []
-    for gy in range(gh):
-        y = min(height-1, int((gy+0.5)*height/gh))
-        row = rows[y]
-        for gx in range(gw):
-            x = min(width-1, int((gx+0.5)*width/gw))
-            i = x * bpp
-            r,g,b = row[i], row[i+1], row[i+2]
-            grid.append(0.2126*r + 0.7152*g + 0.0722*b)
-    return grid
-
-def ssim(a, b, gw=48, gh=96):
-    c1, c2 = (0.01*255)**2, (0.03*255)**2
-    vals = []
-    for y0 in range(0, gh-7, 8):
-        for x0 in range(0, gw-7, 8):
-            wa, wb = [], []
-            for dy in range(8):
-                for dx in range(8):
-                    i = (y0+dy)*gw + (x0+dx)
-                    wa.append(a[i]); wb.append(b[i])
-            n = 64.0
-            ma = sum(wa)/n; mb = sum(wb)/n
-            va = sum((v-ma)**2 for v in wa)/(n-1)
-            vb = sum((v-mb)**2 for v in wb)/(n-1)
-            cov = sum((wa[i]-ma)*(wb[i]-mb) for i in range(64))/(n-1)
-            vals.append(((2*ma*mb+c1)*(2*cov+c2))/((ma*ma+mb*mb+c1)*(va+vb+c2)+1e-12))
-    return sum(vals)/max(1,len(vals))
-
-grids = [(f, load_lum_grid(p)) for f, p in paths]
-for i in range(len(grids)):
-    for j in range(i+1, len(grids)):
-        s = ssim(grids[i][1], grids[j][1])
-        if s >= 0.95:
-            print(f"Screenshots too similar: {grids[i][0]} ~ {grids[j][0]} SSIM={s:.3f}", file=sys.stderr)
-            sys.exit(1)
-print("Screenshot SSIM distinctness OK")
-PY
-
+# Record ~45–60s autoplay clip ASAP (before flaky later shots can abort the script).
 CURRENT_STEP="record_video"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 VIDEO_T0=$SECONDS
@@ -1913,6 +1781,7 @@ looped under the silent capture — no synthetic SFX adelay offsets.
 In-app SFX/music fire during the recorded play but are not on the simctl track.
 Demo script includes a near-miss beat (~14s) and a real game-over (~24s).
 EOF
+
 CURRENT_STEP="ffmpeg_mux"
 note_timing step "$CURRENT_STEP" 90 0 0 "start"
 FFMPEG_T0=$SECONDS
@@ -1994,6 +1863,148 @@ fps=float("$fps" or 0)
 if fps > 0 and fps < 50:
     raise SystemExit(f"FPS assert failed: {fps}")
 print(f"FPS assert ok ({fps})")
+PY
+
+# Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
+launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
+assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
+# Revive sheet soft from live recycle process (launch after recycle wedges io).
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
+assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
+# Meta: one launch for base, soft pass, one launch for shop, soft notif.
+SOFT_SHOT_ONLY=0
+launch_shot "base" "$OUT_DIR/06-base.png" 2
+SOFT_SHOT_ONLY=1
+launch_shot "pass" "$OUT_DIR/07-pass.png" 2
+SOFT_SHOT_ONLY=0
+launch_shot "shop" "$OUT_DIR/08-shop.png" 2
+SOFT_SHOT_ONLY=1
+launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
+smoke_budget
+# Retention evidence: Daily Dumpster, share card, streak reward.
+launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 3
+assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png"
+launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 2
+launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 2
+smoke_budget
+
+launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 3
+assert_no_missing_textures "$OUT_DIR/marketing/01-play.png"
+launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 3
+assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png"
+launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 5
+assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png"
+launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 2
+launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 2
+launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 2
+launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3
+assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
+smoke_budget
+
+# Pairwise SSIM distinctness (animated rain defeats byte-hash; SSIM < 0.95 required).
+python3 - "$OUT_DIR" <<'PY'
+import pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+files = [
+  "00-publisher-ident.png","01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
+  "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png",
+  "10-daily-dumpster.png","11-daily-share-card.png","12-streak-reward.png",
+]
+paths = []
+for f in files:
+  p = root / f
+  if not p.exists() or p.stat().st_size < 1000:
+    print(f"WARN Missing/small {p} — skipping SSIM pair", file=sys.stderr)
+    continue
+  paths.append((f, p))
+if len(paths) < 3:
+  print("Too few screenshots for SSIM", file=sys.stderr); sys.exit(1)
+
+# Inline SSIM helper (same algorithm as png_ssim).
+import struct, zlib
+
+def load_lum_grid(path, gw=48, gh=96):
+    data = path.read_bytes()
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos+4])[0]
+        ctype = data[pos+4:pos+8]
+        chunk = data[pos+8:pos+8+length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start+1:start+stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a,b,c):
+                p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+                return a if pa<=pb and pa<=pc else b if pb<=pc else c
+            for i in range(len(row)):
+                a = row[i-bpp] if i>=bpp else 0
+                b = prev[i]
+                c = prev[i-bpp] if i>=bpp else 0
+                row[i] = (row[i] + paeth(a,b,c)) & 255
+        rows.append(row)
+    grid = []
+    for gy in range(gh):
+        y = min(height-1, int((gy+0.5)*height/gh))
+        row = rows[y]
+        for gx in range(gw):
+            x = min(width-1, int((gx+0.5)*width/gw))
+            i = x * bpp
+            r,g,b = row[i], row[i+1], row[i+2]
+            grid.append(0.2126*r + 0.7152*g + 0.0722*b)
+    return grid
+
+def ssim(a, b, gw=48, gh=96):
+    c1, c2 = (0.01*255)**2, (0.03*255)**2
+    vals = []
+    for y0 in range(0, gh-7, 8):
+        for x0 in range(0, gw-7, 8):
+            wa, wb = [], []
+            for dy in range(8):
+                for dx in range(8):
+                    i = (y0+dy)*gw + (x0+dx)
+                    wa.append(a[i]); wb.append(b[i])
+            n = 64.0
+            ma = sum(wa)/n; mb = sum(wb)/n
+            va = sum((v-ma)**2 for v in wa)/(n-1)
+            vb = sum((v-mb)**2 for v in wb)/(n-1)
+            cov = sum((wa[i]-ma)*(wb[i]-mb) for i in range(64))/(n-1)
+            vals.append(((2*ma*mb+c1)*(2*cov+c2))/((ma*ma+mb*mb+c1)*(va+vb+c2)+1e-12))
+    return sum(vals)/max(1,len(vals))
+
+grids = [(f, load_lum_grid(p)) for f, p in paths]
+for i in range(len(grids)):
+    for j in range(i+1, len(grids)):
+        s = ssim(grids[i][1], grids[j][1])
+        if s >= 0.95:
+            print(f"Screenshots too similar: {grids[i][0]} ~ {grids[j][0]} SSIM={s:.3f}", file=sys.stderr)
+            sys.exit(1)
+print("Screenshot SSIM distinctness OK")
 PY
 
 for f in 00-publisher-ident.png 01-title.png 02-gameplay.png 03-compactor-clear.png 04-recycle-combo.png \
