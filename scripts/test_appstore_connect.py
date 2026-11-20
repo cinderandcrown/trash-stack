@@ -53,7 +53,7 @@ class BundleIdTests(unittest.TestCase):
                             {
                                 "id": "BID1",
                                 "type": "bundleIds",
-                                "attributes": {"identifier": "com.cinderandcrown.magpie", "name": "MAGPIE"},
+                                "attributes": {"identifier": "com.cinderandcrown.trashstack", "name": "Trash Stack"},
                             }
                         ]
                     },
@@ -61,7 +61,7 @@ class BundleIdTests(unittest.TestCase):
             }
         )
         client = asc.Client(token=lambda: "t", send=send)
-        bid, created = asc.ensure_bundle_id(client, "com.cinderandcrown.magpie", "MAGPIE")
+        bid, created = asc.ensure_bundle_id(client, "com.cinderandcrown.trashstack", "Trash Stack")
         self.assertEqual(bid, "BID1")
         self.assertFalse(created)
 
@@ -71,12 +71,18 @@ class BundleIdTests(unittest.TestCase):
                 ("GET", "/v1/bundleIds"): (200, {"data": []}),
                 ("POST", "/v1/bundleIds"): (
                     201,
-                    {"data": {"id": "NEWID", "type": "bundleIds", "attributes": {"identifier": "com.cinderandcrown.magpie"}}},
+                    {
+                        "data": {
+                            "id": "NEWID",
+                            "type": "bundleIds",
+                            "attributes": {"identifier": "com.cinderandcrown.trashstack"},
+                        }
+                    },
                 ),
             }
         )
         client = asc.Client(token=lambda: "t", send=send)
-        bid, created = asc.ensure_bundle_id(client, "com.cinderandcrown.magpie", "MAGPIE")
+        bid, created = asc.ensure_bundle_id(client, "com.cinderandcrown.trashstack", "Trash Stack")
         self.assertEqual(bid, "NEWID")
         self.assertTrue(created)
         post = [c for c in send.calls if c[0] == "POST"][0]
@@ -87,7 +93,49 @@ class AppLookupTests(unittest.TestCase):
     def test_find_app_missing(self) -> None:
         send = FakeSend({("GET", "/v1/apps"): (200, {"data": []})})
         client = asc.Client(token=lambda: "t", send=send)
-        self.assertIsNone(asc.find_app(client, "com.cinderandcrown.magpie"))
+        self.assertIsNone(asc.find_app(client, "com.cinderandcrown.trashstack"))
+
+
+class ExportComplianceTests(unittest.TestCase):
+    def test_set_export_compliance_patches_build(self) -> None:
+        send = FakeSend({("PATCH", "/v1/builds/B1"): (200, {"data": {"id": "B1"}})})
+        client = asc.Client(token=lambda: "t", send=send)
+        msg = asc.set_export_compliance(client, "B1")
+        self.assertIn("usesNonExemptEncryption=false", msg)
+        self.assertEqual(send.calls[0][2]["data"]["attributes"]["usesNonExemptEncryption"], False)
+
+    def test_attach_build_conflict_is_ok(self) -> None:
+        send = FakeSend(
+            {
+                ("POST", "/v1/builds/B1/relationships/betaGroups"): (
+                    409,
+                    {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID", "detail": "already"}]},
+                )
+            }
+        )
+        client = asc.Client(token=lambda: "t", send=send)
+        msg = asc.attach_build_to_group(client, "G1", "B1")
+        self.assertIn("already", msg.lower())
+
+    def test_attach_internal_all_builds_is_ok(self) -> None:
+        send = FakeSend(
+            {
+                ("POST", "/v1/builds/B1/relationships/betaGroups"): (
+                    422,
+                    {
+                        "errors": [
+                            {
+                                "code": "ENTITY_UNPROCESSABLE",
+                                "detail": "Cannot add internal group to a build.",
+                            }
+                        ]
+                    },
+                )
+            }
+        )
+        client = asc.Client(token=lambda: "t", send=send)
+        msg = asc.attach_build_to_group(client, "G1", "B1")
+        self.assertIn("access to all builds", msg.lower())
 
 
 class WaitBuildTests(unittest.TestCase):

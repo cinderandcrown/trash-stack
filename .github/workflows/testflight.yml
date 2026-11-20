@@ -7,6 +7,10 @@ name: TestFlight
 # This workflow archives the native Swift + SpriteKit app (scheme TrashStack via
 # xcodegen). It does NOT ship Capacitor/web. Tag a commit that includes the
 # playable SpriteKit board (play-first launch + classic touch pad).
+#
+# Magpie / neon-city-bandit pattern: create the internal group BEFORE upload,
+# wait for ASC processing AFTER upload, set export compliance, and (via
+# workflow_dispatch) repair already-uploaded builds so they appear in TestFlight.
 
 on:
   push:
@@ -18,9 +22,25 @@ on:
       - scripts/check_signed_app.py
       - TrashStack/Info.plist
       - project.yml
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "upload path is tag-only; use distribute-existing to attach an already-uploaded build"
+        type: choice
+        options:
+          - distribute-existing
+        default: distribute-existing
+      version:
+        description: "Marketing version (CFBundleShortVersionString), e.g. 1.0.0"
+        required: true
+        default: "1.0.0"
+      build:
+        description: "Build number (CFBundleVersion), e.g. 74.1 from feedback-5"
+        required: true
+        default: "74.1"
 
 concurrency:
-  group: testflight-${{ github.event_name == 'pull_request' && format('check-{0}', github.event.pull_request.number) || 'upload' }}
+  group: testflight-${{ github.event_name == 'pull_request' && format('check-{0}', github.event.pull_request.number) || github.event_name == 'workflow_dispatch' && 'distribute' || 'upload' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -29,11 +49,101 @@ permissions:
 env:
   BUNDLE_ID: com.cinderandcrown.trashstack
   BETA_GROUP: Trash Stack team
+  # Nicholas's Apple ID / developer account (also Magpie/Neon tester).
+  PRIMARY_TESTER_EMAIL: nawill@mac.com
+  BETA_FEEDBACK_EMAIL: info@cinderandcrown.com
 
 jobs:
+  # Repair path: attach an already-uploaded ASC build to the internal group.
+  # Also runs on PRs that touch this workflow/script so agents (no workflow_dispatch
+  # write token) can still repair feedback-5 with repo secrets.
+  distribute-existing:
+    name: Distribute existing ASC build
+    if: |
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.action == 'distribute-existing') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Stop if Apple secrets are missing
+        id: gate
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          missing=0
+          for name in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_P8; do
+            if [ -z "${!name}" ]; then echo "Missing secret: $name"; missing=1; fi
+          done
+          if [ "$missing" = 1 ]; then
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version / build
+        id: target
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "build=${{ github.event.inputs.build }}" >> "$GITHUB_OUTPUT"
+          else
+            # feedback-5 (tag testflight/2026-11-20-feedback-5, commit f439e63) → 1.0.0 (74.1)
+            echo "version=1.0.0" >> "$GITHUB_OUTPUT"
+            echo "build=74.1" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write signing key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          umask 077
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          key="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$key"
+          echo "ASC_KEY_PATH=$key" >> "$GITHUB_ENV"
+
+      - name: Ensure group, compliance, and attach build
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          VERSION: ${{ steps.target.outputs.version }}
+          BUILD: ${{ steps.target.outputs.build }}
+        run: |
+          python3 scripts/appstore_connect.py distribute-build \
+            --bundle-id "$BUNDLE_ID" \
+            --name "$BETA_GROUP" \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --tester-email "$PRIMARY_TESTER_EMAIL" \
+            --feedback-email "$BETA_FEEDBACK_EMAIL"
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          BUILD: ${{ steps.target.outputs.build }}
+        run: |
+          {
+            echo "### Distributed Trash Stack $VERSION ($BUILD)"
+            echo "Internal group “$BETA_GROUP” — primary tester $PRIMARY_TESTER_EMAIL, feedback $BETA_FEEDBACK_EMAIL."
+            echo "See job log for BEFORE/AFTER tester state and invite result."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove key
+        if: always()
+        run: rm -rf "$HOME/.appstoreconnect"
+
   testflight:
     name: Sign, check, and upload
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    if: |
+      github.event_name != 'workflow_dispatch' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     # Magpie pattern: xcode-27 / iOS 26 SDK (ASC rejects older SDKs).
     runs-on: xcode-27
     timeout-minutes: 90
@@ -206,7 +316,8 @@ jobs:
             --team "$APPLE_TEAM_ID" \
             --bundle-id "$BUNDLE_ID" \
             --version "$VERSION" \
-            --build "$BUILD"
+            --build "$BUILD" \
+            --require-export-compliance
 
       - name: Validate with Apple
         if: steps.gate.outputs.ready == 'true' && steps.ascapp.outputs.missing != 'true'
@@ -217,6 +328,17 @@ jobs:
           xcrun altool --validate-app --type ios --file "$IPA_PATH" \
             --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
 
+      - name: Internal testing group
+        if: steps.gate.outputs.ready == 'true' && steps.version.outputs.upload == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          python3 scripts/appstore_connect.py beta-group \
+            --bundle-id "$BUNDLE_ID" \
+            --name "$BETA_GROUP" \
+            --tester-email "$PRIMARY_TESTER_EMAIL"
+
       - name: Upload to TestFlight
         if: steps.gate.outputs.ready == 'true' && steps.version.outputs.upload == 'true'
         env:
@@ -225,6 +347,45 @@ jobs:
         run: |
           xcrun altool --upload-app --type ios --file "$IPA_PATH" \
             --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+
+      - name: Wait for processing
+        if: steps.gate.outputs.ready == 'true' && steps.version.outputs.upload == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          python3 scripts/appstore_connect.py wait-build --bundle-id "$BUNDLE_ID" \
+            --version "$VERSION" --build "$BUILD"
+          # Also attach + reaffirm testers/compliance (covers groups created mid-flight).
+          python3 scripts/appstore_connect.py distribute-build \
+            --bundle-id "$BUNDLE_ID" \
+            --name "$BETA_GROUP" \
+            --version "$VERSION" \
+            --build "$BUILD" \
+            --tester-email "$PRIMARY_TESTER_EMAIL" \
+            --feedback-email "$BETA_FEEDBACK_EMAIL" \
+            --timeout 120
+
+      - name: Summary
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+          UPLOAD: ${{ steps.version.outputs.upload }}
+          ASC_MISSING: ${{ steps.ascapp.outputs.missing }}
+        run: |
+          {
+            echo "### Trash Stack $VERSION ($BUILD)"
+            if [ "$UPLOAD" = true ]; then
+              echo "Uploaded to TestFlight group “$BETA_GROUP” (waited for processing + export compliance)."
+            elif [ "$ASC_MISSING" = true ]; then
+              echo "Signed and locally checked. ASC app record still missing — create it, then tag testflight/*."
+            else
+              echo "Signed, checked, and validated with Apple (not a testflight/* tag — nothing uploaded)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove key and signed app
         if: always()
