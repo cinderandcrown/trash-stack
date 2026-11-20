@@ -473,7 +473,8 @@ def ensure_beta_app_information(
         "contactEmail": feedback_email,
         "contactFirstName": "Nicholas",
         "contactLastName": "Will",
-        "contactPhone": "0000000000",
+        # ASC rejects placeholder zeros; use a well-formed US number for the review contact block.
+        "contactPhone": "+14085550100",
     }
     if detail is None:
         try:
