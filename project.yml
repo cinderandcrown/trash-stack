@@ -121,5 +121,7 @@ schemes:
       config: Debug
       targets:
         - TrashStackTests
+      commandLineArguments:
+        "-trashStackSkipAds": true
     archive:
       config: Release

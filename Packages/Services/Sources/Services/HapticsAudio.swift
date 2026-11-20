@@ -12,6 +12,16 @@ import CoreHaptics
 import AVFoundation
 #endif
 
+extension ProcessInfo {
+    /// True when hosting XCTest or launched with smoke/skip flags that must not block on audio/GC.
+    public var isTrashStackTestHost: Bool {
+        if environment["XCTestConfigurationFilePath"] != nil { return true }
+        if arguments.contains("-trashStackSkipAds") { return true }
+        if UserDefaults.standard.bool(forKey: "trashStack.skipAds") { return true }
+        return false
+    }
+}
+
 @MainActor
 public final class HapticsService {
     public static let shared = HapticsService()
@@ -20,6 +30,8 @@ public final class HapticsService {
 #endif
 
     public func prepare() {
+        // XCTest host + flaky simulators deadlock on CoreHaptics/Audio RPC init.
+        guard !ProcessInfo.processInfo.isTrashStackTestHost else { return }
 #if canImport(CoreHaptics)
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
         engine = try? CHHapticEngine()
@@ -72,6 +84,8 @@ public final class AudioService {
     public var isMuted: Bool { muted }
 
     public func prepare() {
+        // Avoid AVAudioEngine "Initialize: RPC timeout. Apparently deadlocked" under XCTest.
+        guard !ProcessInfo.processInfo.isTrashStackTestHost else { return }
 #if canImport(AVFoundation)
         guard engine == nil else { return }
         let eng = AVAudioEngine()
