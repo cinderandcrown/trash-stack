@@ -8,7 +8,7 @@ import Combine
 import UIKit
 #endif
 #if canImport(GameKit)
-import GameKit
+@preconcurrency import GameKit
 #endif
 import GameCore
 
@@ -51,16 +51,14 @@ public final class GameKitService: NSObject, ObservableObject {
                 cont.resume()
             }
             GKLocalPlayer.local.authenticateHandler = { [weak self] viewController, error in
+                let errText = error?.localizedDescription
+                nonisolated(unsafe) let authVC = viewController
                 Task { @MainActor in
                     guard let self else { finish(); return }
-                    if let viewController {
-                        // Non-blocking: stash for SwiftUI; game keeps working unsigned.
-                        self.authViewController = viewController
-                    } else {
-                        self.authViewController = nil
-                    }
-                    if let error {
-                        self.matchError = error.localizedDescription
+                    // Non-blocking: stash for SwiftUI; game keeps working unsigned.
+                    self.authViewController = authVC
+                    if let errText {
+                        self.matchError = errText
                     }
                     self.authenticated = GKLocalPlayer.local.isAuthenticated
                     self.stubMode = !self.authenticated
@@ -187,13 +185,16 @@ public final class GameKitService: NSObject, ObservableObject {
             }
         } else {
             GKMatchmaker.shared().findMatch(for: request) { [weak self] match, error in
+                let errText = error?.localizedDescription
+                // GameKit types are not Sendable; hop with an unchecked capture.
+                nonisolated(unsafe) let found = match
                 Task { @MainActor in
                     guard let self else { return }
-                    if let error {
-                        self.matchError = error.localizedDescription
+                    if let errText {
+                        self.matchError = errText
                     }
-                    if let match {
-                        self.attach(match: match)
+                    if let found {
+                        self.attach(match: found)
                     }
                 }
             }
@@ -288,46 +289,55 @@ public final class GameKitService: NSObject, ObservableObject {
 #if canImport(GameKit)
 extension GameKitService: GKGameCenterControllerDelegate {
     public nonisolated func gameCenterViewControllerDidFinish(_ gameCenterViewController: GKGameCenterViewController) {
+        nonisolated(unsafe) let vc = gameCenterViewController
         Task { @MainActor in
-            gameCenterViewController.dismiss(animated: true)
+            vc.dismiss(animated: true)
         }
     }
 }
 
 extension GameKitService: GKMatchmakerViewControllerDelegate {
     public nonisolated func matchmakerViewControllerWasCancelled(_ viewController: GKMatchmakerViewController) {
+        nonisolated(unsafe) let vc = viewController
         Task { @MainActor in
-            viewController.dismiss(animated: true)
+            vc.dismiss(animated: true)
             self.cancelMatchmaking()
         }
     }
 
     public nonisolated func matchmakerViewController(_ viewController: GKMatchmakerViewController, didFailWithError error: Error) {
+        let errText = error.localizedDescription
+        nonisolated(unsafe) let vc = viewController
         Task { @MainActor in
-            viewController.dismiss(animated: true)
-            self.matchError = error.localizedDescription
+            vc.dismiss(animated: true)
+            self.matchError = errText
             self.matchmaking = false
         }
     }
 
     public nonisolated func matchmakerViewController(_ viewController: GKMatchmakerViewController, didFind match: GKMatch) {
+        nonisolated(unsafe) let vc = viewController
+        nonisolated(unsafe) let found = match
         Task { @MainActor in
-            viewController.dismiss(animated: true)
-            self.attach(match: match)
+            vc.dismiss(animated: true)
+            self.attach(match: found)
         }
     }
 }
 
 extension GameKitService: GKMatchDelegate {
     public nonisolated func match(_ match: GKMatch, didReceive data: Data, fromRemotePlayer player: GKPlayer) {
+        let payload = data
+        let name = player.displayName
         Task { @MainActor in
-            self.onMatchData?(data, player.displayName)
+            self.onMatchData?(payload, name)
         }
     }
 
     public nonisolated func match(_ match: GKMatch, player: GKPlayer, didChange state: GKPlayerConnectionState) {
+        let disconnected = state == .disconnected
         Task { @MainActor in
-            if state == .disconnected {
+            if disconnected {
                 self.onRivalDisconnected?()
                 self.onMatchEnded?(true)
             }
@@ -335,8 +345,9 @@ extension GameKitService: GKMatchDelegate {
     }
 
     public nonisolated func match(_ match: GKMatch, didFailWithError error: (any Error)?) {
+        let errText = error?.localizedDescription
         Task { @MainActor in
-            self.matchError = error?.localizedDescription
+            self.matchError = errText
             self.onMatchEnded?(true)
         }
     }

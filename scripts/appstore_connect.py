@@ -844,9 +844,10 @@ ACHIEVEMENTS = [
 
 
 def list_bundle_capabilities(client: Client, bundle_record_id: str) -> set[str]:
+    # Relationship endpoint rejects `limit` (PARAMETER_ERROR.ILLEGAL).
     page = client.get(
         f"/v1/bundleIds/{bundle_record_id}/bundleIdCapabilities",
-        {"limit": "200", "fields[bundleIdCapabilities]": "capabilityType"},
+        {"fields[bundleIdCapabilities]": "capabilityType"},
     )
     out: set[str] = set()
     for row in page.get("data", []):
