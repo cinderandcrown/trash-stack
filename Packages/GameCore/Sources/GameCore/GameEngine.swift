@@ -18,6 +18,9 @@ public enum GameEvent: Sendable, Equatable {
     case magnetUsed // legacy alias unused
     case gameOver
     case leveledUp(Int)
+    /// Incoming TRASH TALK junk — warning meter ticking, then rows land.
+    case junkIncoming(rows: Int, warnProgress: Double)
+    case junkLanded(rows: Int)
 }
 
 public struct OrderTicket: Sendable, Equatable, Identifiable {
@@ -66,6 +69,10 @@ public struct GameState: Sendable, Equatable {
     public var over: Bool
     public var runScrap: Int
     public var recycledByMaterial: [Material: Int]
+    /// TRASH TALK: junk rows waiting to land (warning meter).
+    public var pendingJunkRows: Int
+    public var junkWarnElapsed: Double
+    public var junkWarnDuration: Double
 
     public init(config: BoardConfig = .dumpster) {
         board = Board(config: config)
@@ -87,6 +94,9 @@ public struct GameState: Sendable, Equatable {
         over = false
         runScrap = 0
         recycledByMaterial = [:]
+        pendingJunkRows = 0
+        junkWarnElapsed = 0
+        junkWarnDuration = TrashTalkRules.junkWarningSec
     }
 }
 
@@ -96,6 +106,9 @@ public struct GameEngine: Sendable {
     private var bag: RNGBag
     public var events: [GameEvent] = []
     private var placeCount = 0
+
+    /// Pieces locked this run — used to keep TRASH TALK seeds in lockstep.
+    public var lockCount: Int { placeCount }
 
     public init(seed: UInt64 = 0xC1A55, config: BoardConfig = .dumpster) {
         state = GameState(config: config)
@@ -113,6 +126,79 @@ public struct GameEngine: Sendable {
         fillQueue()
         seedOrders(level: 1)
         spawn()
+    }
+
+    /// Queue incoming junk rows (TRASH TALK). Lands after the warning meter fills.
+    public mutating func queueJunk(rows: Int) {
+        guard rows > 0, !state.over else { return }
+        state.pendingJunkRows += rows
+        if state.junkWarnElapsed <= 0 {
+            state.junkWarnElapsed = 0.001
+        }
+        let progress = min(1, state.junkWarnElapsed / max(0.01, state.junkWarnDuration))
+        events.append(.junkIncoming(rows: state.pendingJunkRows, warnProgress: progress))
+    }
+
+    /// Advance junk warning; returns true when rows just landed.
+    @discardableResult
+    public mutating func tickJunkWarning(dt: Double) -> Bool {
+        guard state.pendingJunkRows > 0, !state.over else { return false }
+        state.junkWarnElapsed += dt
+        let progress = min(1, state.junkWarnElapsed / max(0.01, state.junkWarnDuration))
+        events.append(.junkIncoming(rows: state.pendingJunkRows, warnProgress: progress))
+        guard state.junkWarnElapsed >= state.junkWarnDuration else { return false }
+        let rows = state.pendingJunkRows
+        state.pendingJunkRows = 0
+        state.junkWarnElapsed = 0
+        landJunkRows(rows)
+        events.append(.junkLanded(rows: rows))
+        return true
+    }
+
+    /// Push sticky junk up from the bottom — last bin standing loses if this tops out.
+    private mutating func landJunkRows(_ rows: Int) {
+        let cols = state.board.config.cols
+        let boardRows = state.board.config.rows
+        for _ in 0..<rows {
+            // Shift everything up one; top-out if the hidden lip is occupied.
+            for y in 0..<(boardRows - 1) {
+                for x in 0..<cols {
+                    state.board[x, y] = state.board[x, y + 1]
+                }
+            }
+            let y = boardRows - 1
+            for x in 0..<cols {
+                // Leave one gap so the player can still dig — classic fair garbage.
+                if x == (placeCount + rows) % cols {
+                    state.board[x, y] = nil
+                } else {
+                    state.board[x, y] = Cell(piece: .can, material: .metal, sticky: true)
+                }
+            }
+        }
+        if (0..<cols).contains(where: { state.board[$0, state.board.config.hiddenRows] != nil }) {
+            state.over = true
+            events.append(.gameOver)
+        }
+    }
+
+    /// Occupancy digest for the rival mini-board (tiny wire payload).
+    public func boardDigest() -> (filled: UInt8, topY: UInt8) {
+        let cfg = state.board.config
+        var filled = 0
+        var top = cfg.rows
+        for y in cfg.hiddenRows..<cfg.rows {
+            for x in 0..<cfg.cols {
+                if state.board[x, y] != nil {
+                    filled += 1
+                    top = min(top, y)
+                }
+            }
+        }
+        let visible = max(1, cfg.visibleRows * cfg.cols)
+        let pct = UInt8(min(255, (filled * 255) / visible))
+        let topVis = UInt8(max(0, min(255, top - cfg.hiddenRows)))
+        return (pct, topVis)
     }
 
     public mutating func revive() {

@@ -634,6 +634,10 @@ struct GameContainerView: View {
             }
         } else if playMode == .daily {
             scene.applyShot("daily")
+        } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
+            // Weekly tournament — same seed for everyone this UTC week.
+            scene.reset(seed: WeeklyTournament.seed())
+            UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
         }
         scene.onFirstGameFrame = {
             Task { @MainActor in
@@ -846,7 +850,14 @@ struct GameContainerView: View {
                 profile.endlessHighScore = scored
             }
             if submitScores {
-                await GameKitService.shared.submitScore(scored, leaderboardID: "trashstack_endless")
+                await GameKitService.shared.submitScore(scored, leaderboardID: TrashTalkRules.leaderboardAllTime)
+                await GameKitService.shared.submitWeeklyScore(scored)
+                if scored >= 10_000 {
+                    await GameKitService.shared.reportAchievement(AchievementID.allTime10k)
+                }
+                if scored >= 50_000 {
+                    await GameKitService.shared.reportAchievement(AchievementID.allTime50k)
+                }
             }
         }
         if playMode == .shift, state.orders.allSatisfy(\.done) {

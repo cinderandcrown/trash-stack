@@ -160,7 +160,7 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThan(StreakRewards.scrap(forDay: 7), StreakRewards.scrap(forDay: 1))
         XCTAssertEqual(StreakRewards.gems(forDay: 7), 5)
         XCTAssertEqual(ShiftCatalog.levels.count, 6)
-        XCTAssertEqual(PlayMode.allCases.count, 3)
+        XCTAssertEqual(PlayMode.allCases.count, 4)
     }
 
     func testHoldSlotAndNearMiss() {

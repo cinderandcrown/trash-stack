@@ -5,8 +5,8 @@ import Foundation
 import Combine
 #endif
 
-public enum PlayModePreference: String, Sendable {
-    case shift, endless, daily
+public enum PlayModePreference: String, Sendable, CaseIterable {
+    case shift, endless, daily, trashTalk
 }
 
 @MainActor

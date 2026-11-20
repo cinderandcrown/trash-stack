@@ -771,6 +771,273 @@ def distribute_build(
     return 1
 
 
+# --- Game Center (config only — no submission / release) ---
+
+LEADERBOARDS = [
+    {
+        "referenceName": "Endless High Score",
+        "vendorId": "trashstack_endless",
+        "defaultFormatter": "INTEGER",
+        "submissionType": "BEST_SCORE",
+        "scoreSortType": "DESC",
+        "scoreRangeStart": "0",
+        "scoreRangeEnd": "999999999",
+        "locale": "en-US",
+        "name": "Endless Night Shift",
+        "formatter": "INTEGER",
+    },
+    {
+        "referenceName": "Daily Dumpster",
+        "vendorId": "trashstack_daily",
+        "defaultFormatter": "INTEGER",
+        "submissionType": "BEST_SCORE",
+        "scoreSortType": "DESC",
+        "scoreRangeStart": "0",
+        "scoreRangeEnd": "999999999",
+        "locale": "en-US",
+        "name": "Daily Dumpster",
+        "formatter": "INTEGER",
+    },
+    {
+        "referenceName": "Weekly Tournament",
+        "vendorId": "trashstack_weekly",
+        "defaultFormatter": "INTEGER",
+        "submissionType": "BEST_SCORE",
+        "scoreSortType": "DESC",
+        "scoreRangeStart": "0",
+        "scoreRangeEnd": "999999999",
+        "locale": "en-US",
+        "name": "Weekly Tournament",
+        "formatter": "INTEGER",
+        "recurrenceRule": "FREQ=WEEKLY;INTERVAL=1",
+    },
+]
+
+# Keep in sync with GameCore.AchievementID.allConfigured
+ACHIEVEMENTS = [
+    ("ts_first_recycle", "First Recycle", 5),
+    ("ts_chain_5", "Chain Reaction", 10),
+    ("ts_press_slam", "Press Operator", 5),
+    ("ts_daily_clear", "Daily Dump Cleared", 5),
+    ("ts_streak_7", "Week on the Job", 15),
+    ("ts_snatch", "Sticky Fingers", 5),
+    ("ts_tt_first_win", "First Trash Talk Win", 10),
+    ("ts_tt_streak_3", "Trash Talk Streak ×3", 15),
+    ("ts_tt_streak_5", "Trash Talk Streak ×5", 25),
+    ("ts_four_clear", "Quad Clear", 10),
+    ("ts_junk_10", "Junk Courier", 10),
+    ("ts_junk_50", "Junk Tycoon", 20),
+    ("ts_weekly_top10", "Weekly Top 10", 15),
+    ("ts_weekly_champ", "Weekly Champion", 50),
+    ("ts_score_10k", "Night Shift 10K", 10),
+    ("ts_score_50k", "Night Shift 50K", 25),
+    ("ts_beat_friend", "Beat a Friend", 10),
+    ("ts_tt_rematch_win", "Rematch Revenge", 10),
+    ("ts_near_miss", "Lip of the Bin", 5),
+    ("cc_bandit_of_both_worlds", "Bandit of Both Worlds", 50),
+]
+
+
+def ensure_game_center_detail(client: Client, app_id: str) -> str:
+    """Enable Game Center for the app; return gameCenterDetail id."""
+    existing = client.get(
+        f"/v1/apps/{app_id}/gameCenterDetail",
+        {"fields[gameCenterDetails]": "challengeEnabled"},
+    )
+    data = existing.get("data")
+    if isinstance(data, dict) and data.get("id"):
+        print(f"Game Center detail already present ({data['id']}).")
+        return data["id"]
+    created = client.post(
+        "/v1/gameCenterDetails",
+        {
+            "data": {
+                "type": "gameCenterDetails",
+                "relationships": {
+                    "app": {"data": {"type": "apps", "id": app_id}},
+                },
+            }
+        },
+    )
+    detail_id = created["data"]["id"]
+    print(f"Enabled Game Center detail ({detail_id}).")
+    return detail_id
+
+
+def list_leaderboard_vendor_ids(client: Client, detail_id: str) -> set[str]:
+    page = client.get(
+        f"/v1/gameCenterDetails/{detail_id}/gameCenterLeaderboards",
+        {"limit": "200", "fields[gameCenterLeaderboards]": "referenceName,vendorIdentifier"},
+    )
+    out: set[str] = set()
+    for row in page.get("data", []):
+        vid = (row.get("attributes") or {}).get("vendorIdentifier")
+        if vid:
+            out.add(vid)
+    return out
+
+
+def ensure_leaderboards(client: Client, detail_id: str) -> None:
+    have = list_leaderboard_vendor_ids(client, detail_id)
+    for spec in LEADERBOARDS:
+        if spec["vendorId"] in have:
+            print(f"Leaderboard {spec['vendorId']}: already there.")
+            continue
+        attributes = {
+            "defaultFormatter": spec["defaultFormatter"],
+            "referenceName": spec["referenceName"],
+            "submissionType": spec["submissionType"],
+            "scoreSortType": spec["scoreSortType"],
+            "scoreRangeStart": spec["scoreRangeStart"],
+            "scoreRangeEnd": spec["scoreRangeEnd"],
+            "vendorIdentifier": spec["vendorId"],
+        }
+        # Recurring weekly when supported by the API version.
+        if spec.get("recurrenceRule"):
+            attributes["recurrenceStartDate"] = "2026-01-05T00:00:00.000Z"
+            attributes["recurrenceDuration"] = "P7D"
+            attributes["recurrenceRule"] = spec["recurrenceRule"]
+        body = {
+            "data": {
+                "type": "gameCenterLeaderboards",
+                "attributes": attributes,
+                "relationships": {
+                    "gameCenterDetail": {"data": {"type": "gameCenterDetails", "id": detail_id}},
+                },
+            }
+        }
+        try:
+            created = client.post("/v1/gameCenterLeaderboards", body)
+            lb_id = created["data"]["id"]
+            print(f"Leaderboard {spec['vendorId']}: created ({lb_id}).")
+            client.post(
+                "/v1/gameCenterLeaderboardLocalizations",
+                {
+                    "data": {
+                        "type": "gameCenterLeaderboardLocalizations",
+                        "attributes": {
+                            "locale": spec["locale"],
+                            "name": spec["name"],
+                            "formatterOverride": spec["formatter"],
+                        },
+                        "relationships": {
+                            "gameCenterLeaderboard": {
+                                "data": {"type": "gameCenterLeaderboards", "id": lb_id}
+                            }
+                        },
+                    }
+                },
+            )
+        except ApiError as error:
+            # Recurrence fields may be rejected on older API shapes — retry without them.
+            if "recurrence" in attributes and error.status in (400, 409):
+                for key in ("recurrenceStartDate", "recurrenceDuration", "recurrenceRule"):
+                    attributes.pop(key, None)
+                body["data"]["attributes"] = attributes
+                created = client.post("/v1/gameCenterLeaderboards", body)
+                print(f"Leaderboard {spec['vendorId']}: created without recurrence ({created['data']['id']}).")
+            else:
+                raise
+
+
+def list_achievement_refs(client: Client, detail_id: str) -> set[str]:
+    page = client.get(
+        f"/v1/gameCenterDetails/{detail_id}/gameCenterAchievements",
+        {"limit": "200", "fields[gameCenterAchievements]": "referenceName,vendorIdentifier"},
+    )
+    out: set[str] = set()
+    for row in page.get("data", []):
+        vid = (row.get("attributes") or {}).get("vendorIdentifier")
+        if vid:
+            out.add(vid)
+    return out
+
+
+def ensure_achievements(client: Client, detail_id: str) -> None:
+    have = list_achievement_refs(client, detail_id)
+    for vendor, name, points in ACHIEVEMENTS:
+        if vendor in have:
+            print(f"Achievement {vendor}: already there.")
+            continue
+        created = client.post(
+            "/v1/gameCenterAchievements",
+            {
+                "data": {
+                    "type": "gameCenterAchievements",
+                    "attributes": {
+                        "referenceName": name,
+                        "vendorIdentifier": vendor,
+                        "points": points,
+                        "showBeforeEarned": True,
+                        "repeatable": False,
+                    },
+                    "relationships": {
+                        "gameCenterDetail": {"data": {"type": "gameCenterDetails", "id": detail_id}},
+                    },
+                }
+            },
+        )
+        ach_id = created["data"]["id"]
+        print(f"Achievement {vendor}: created ({ach_id}).")
+        client.post(
+            "/v1/gameCenterAchievementLocalizations",
+            {
+                "data": {
+                    "type": "gameCenterAchievementLocalizations",
+                    "attributes": {
+                        "locale": "en-US",
+                        "name": name,
+                        "beforeEarnedDescription": f"Earn: {name}",
+                        "afterEarnedDescription": f"Unlocked: {name}",
+                    },
+                    "relationships": {
+                        "gameCenterAchievement": {
+                            "data": {"type": "gameCenterAchievements", "id": ach_id}
+                        }
+                    },
+                }
+            },
+        )
+
+
+def ensure_game_center_group(client: Client, group_name: str = "Cinder Crown Bandit Universe") -> str | None:
+    """Create or find a Game Center group for cross-game achievements (Trash Stack + NCB)."""
+    page = client.get("/v1/gameCenterGroups", {"limit": "200"})
+    for row in page.get("data", []):
+        if (row.get("attributes") or {}).get("referenceName") == group_name:
+            print(f"Game Center group already present ({row['id']}).")
+            return row["id"]
+    try:
+        created = client.post(
+            "/v1/gameCenterGroups",
+            {
+                "data": {
+                    "type": "gameCenterGroups",
+                    "attributes": {"referenceName": group_name},
+                }
+            },
+        )
+        gid = created["data"]["id"]
+        print(f"Game Center group created ({gid}).")
+        return gid
+    except ApiError as error:
+        print(f"Game Center group skipped: {error}")
+        return None
+
+
+def configure_game_center(client: Client, bundle_id: str) -> int:
+    app_id = require_app(client, bundle_id)
+    detail_id = ensure_game_center_detail(client, app_id)
+    ensure_leaderboards(client, detail_id)
+    ensure_achievements(client, detail_id)
+    ensure_game_center_group(client)
+    print(
+        "Game Center config done (detail + leaderboards + achievements). "
+        "No App Store version was submitted or released."
+    )
+    return 0
+
+
 def client_from_environment() -> Client:
     missing = [name for name in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_PATH") if not os.environ.get(name)]
     if missing:
@@ -829,6 +1096,12 @@ def main(arguments: list[str]) -> int:
 
     check_app = commands.add_parser("check-app", help="exit 0 if the ASC app record exists, else print create fields")
     check_app.add_argument("--bundle-id", required=True)
+
+    gc = commands.add_parser(
+        "configure-game-center",
+        help="enable Game Center, create leaderboards + achievements (config only, no release)",
+    )
+    gc.add_argument("--bundle-id", required=True)
 
     options = parser.parse_args(arguments)
     client = client_from_environment()
@@ -900,6 +1173,8 @@ def main(arguments: list[str]) -> int:
                 options.timeout,
                 feedback_email=options.feedback_email,
             )
+        if options.command == "configure-game-center":
+            return configure_game_center(client, options.bundle_id)
     except ApiError as error:
         print(f"{error}")
         if error.status in (401, 403):

@@ -476,6 +476,12 @@ public final class CompactorScene: SKScene {
         let nextMood = computeRaccoonMood()
         if nextMood != raccoonMood { raccoonMood = nextMood }
 
+        // TRASH TALK junk warning → land (no-op when pendingJunkRows == 0).
+        if engine.state.pendingJunkRows > 0 {
+            _ = engine.tickJunkWarning(dt: Double(dt))
+            handleEvents()
+        }
+
         // Continuous visual smoothing toward discrete logic pose.
         smoothActivePose(dt: dt)
 

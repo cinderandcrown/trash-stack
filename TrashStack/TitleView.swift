@@ -48,6 +48,11 @@ struct TitleView: View {
                     screen = .game
                 }
                 .padding(.horizontal, 36)
+                NeonButton(title: "TRASH TALK", style: .secondary) {
+                    AudioService.shared.playSFX("ui")
+                    screen = .trashTalk
+                }
+                .padding(.horizontal, 36)
 
                 HStack(spacing: 10) {
                     if profile.dailyStreak > 0 {
@@ -74,7 +79,7 @@ struct TitleView: View {
                 }
                 .padding(.horizontal, 22)
 
-                Text("Free to play · odds shown · no real-money gambling")
+                Text("Free to play · odds shown · no real-money gambling · no wagers")
                     .font(.caption)
                     .foregroundStyle(Color.white.opacity(0.7))
                 Spacer(minLength: 12)
@@ -84,6 +89,7 @@ struct TitleView: View {
         .onAppear {
             // Idempotent: publisher ident stamps first frame on cold launch; this covers skip/shot paths.
             LaunchTiming.markFirstTitleFrame()
+            GameKitService.shared.configureAccessPoint(show: true)
             withAnimation(.easeInOut(duration: 1.4).repeatForever(autoreverses: true)) {
                 bob = true
             }
@@ -94,6 +100,9 @@ struct TitleView: View {
                 AudioService.shared.prepare()
                 AudioService.shared.playMusic("menu_loop")
             }
+        }
+        .onDisappear {
+            GameKitService.shared.configureAccessPoint(show: false)
         }
     }
 }

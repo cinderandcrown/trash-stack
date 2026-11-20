@@ -12,8 +12,11 @@ let package = Package(
     products: [
         .library(name: "Services", targets: ["Services"]),
     ],
+    dependencies: [
+        .package(path: "../GameCore"),
+    ],
     targets: [
-        .target(name: "Services"),
+        .target(name: "Services", dependencies: ["GameCore"]),
         .testTarget(name: "ServicesTests", dependencies: ["Services"]),
     ]
 )

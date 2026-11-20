@@ -4,31 +4,98 @@ import Foundation
 #if canImport(Combine)
 import Combine
 #endif
-
+#if canImport(UIKit)
+import UIKit
+#endif
 #if canImport(GameKit)
 import GameKit
 #endif
+import GameCore
 
-/// GameKit leaderboards / achievements — stubbed when entitlement / auth missing.
+/// Game Center auth, leaderboards, achievements, TRASH TALK matchmaking.
+/// Fully playable signed out — GC features no-op in stub mode.
 @MainActor
-public final class GameKitService: ObservableObject {
+public final class GameKitService: NSObject, ObservableObject {
     public static let shared = GameKitService()
+
     @Published public private(set) var authenticated = false
+    @Published public private(set) var playerDisplayName = "Night Shift"
+    @Published public private(set) var matchmaking = false
+    @Published public private(set) var matchError: String?
+#if canImport(UIKit)
+    /// Present this from SwiftUI when Game Center wants a sign-in sheet.
+    @Published public var authViewController: UIViewController?
+#endif
+
     public var stubMode = true
+
+    #if canImport(GameKit)
+    public private(set) var activeMatch: GKMatch?
+    #endif
+
+    public var onMatchData: ((Data, String) -> Void)?
+    public var onMatchStarted: ((UInt64, Bool /* vsBot */, String /* rival name */) -> Void)?
+    public var onMatchEnded: ((Bool /* disconnected */) -> Void)?
+    public var onRivalDisconnected: (() -> Void)?
+
+    private var matchmakingTask: Task<Void, Never>?
+    private var botFallbackArmed = false
 
     public func authenticate() async {
 #if canImport(GameKit)
-        // Interactive Game Center sign-in is entitlement-gated. CI / local builds without
-        // the capability stay in stub mode; live sessions reuse an existing auth state.
-        authenticated = GKLocalPlayer.local.isAuthenticated
-        stubMode = !authenticated
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            var resumed = false
+            let finish = {
+                guard !resumed else { return }
+                resumed = true
+                cont.resume()
+            }
+            GKLocalPlayer.local.authenticateHandler = { [weak self] viewController, error in
+                Task { @MainActor in
+                    guard let self else { finish(); return }
+                    if let viewController {
+                        // Non-blocking: stash for SwiftUI; game keeps working unsigned.
+                        self.authViewController = viewController
+                    } else {
+                        self.authViewController = nil
+                    }
+                    if let error {
+                        self.matchError = error.localizedDescription
+                    }
+                    self.authenticated = GKLocalPlayer.local.isAuthenticated
+                    self.stubMode = !self.authenticated
+                    if self.authenticated {
+                        self.playerDisplayName = GKLocalPlayer.local.displayName
+                        self.configureAccessPoint(show: false)
+                    }
+                    finish()
+                }
+            }
+            // Don't hang forever if the handler never fires (CI / no entitlement).
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 2_500_000_000)
+                finish()
+            }
+        }
 #else
         authenticated = false
         stubMode = true
 #endif
     }
 
-    public func submitScore(_ score: Int, leaderboardID: String = "trashstack_highscore") async {
+    public func configureAccessPoint(show: Bool, onResults: Bool = false) {
+#if canImport(GameKit)
+        guard authenticated else {
+            GKAccessPoint.shared.isActive = false
+            return
+        }
+        GKAccessPoint.shared.location = onResults ? .topTrailing : .topLeading
+        GKAccessPoint.shared.showHighlights = true
+        GKAccessPoint.shared.isActive = show
+#endif
+    }
+
+    public func submitScore(_ score: Int, leaderboardID: String = TrashTalkRules.leaderboardAllTime) async {
 #if canImport(GameKit)
         guard authenticated, !stubMode else { return }
         try? await GKLeaderboard.submitScore(
@@ -37,14 +104,241 @@ public final class GameKitService: ObservableObject {
 #endif
     }
 
+    public func submitWeeklyScore(_ score: Int) async {
+        await submitScore(score, leaderboardID: TrashTalkRules.leaderboardWeekly)
+    }
+
     public func reportAchievement(_ id: String, percent: Double = 100) async {
 #if canImport(GameKit)
-        guard authenticated, !stubMode else { return }
-        let a = GKAchievement(identifier: id)
-        a.percentComplete = percent
-        try? await GKAchievement.report([a])
+        if authenticated, !stubMode {
+            let a = GKAchievement(identifier: id)
+            a.percentComplete = percent
+            a.showsCompletionBanner = percent >= 100
+            try? await GKAchievement.report([a])
+        }
 #endif
-        // Always record locally so CI / stub builds still exercise the path.
         UserDefaults.standard.set(percent, forKey: "gk.achievement.\(id)")
+        // Cross-game badge: once Trash Stack unlocks Bandit of Both Worlds, leave a flag
+        // Neon City Bandit can read via the shared Game Center group / same achievement id.
+        if id == AchievementID.banditOfBothWorlds, percent >= 100 {
+            UserDefaults.standard.set(true, forKey: "cc.banditOfBothWorlds.unlocked")
+        }
+    }
+
+    public func presentLeaderboard(id: String = TrashTalkRules.leaderboardAllTime) {
+#if canImport(GameKit)
+        guard authenticated else { return }
+        let gc = GKGameCenterViewController(leaderboardID: id, playerScope: .global, timeScope: .allTime)
+        gc.gameCenterDelegate = self
+        topViewController()?.present(gc, animated: true)
+#endif
+    }
+
+    public func presentAchievements() {
+#if canImport(GameKit)
+        guard authenticated else { return }
+        let gc = GKGameCenterViewController(state: .achievements)
+        gc.gameCenterDelegate = self
+        topViewController()?.present(gc, animated: true)
+#endif
+    }
+
+    /// Challenge a friend to beat your score (Game Center challenge sheet when available).
+    public func challengeBeatMyScore(_ score: Int, leaderboardID: String = TrashTalkRules.leaderboardAllTime) {
+#if canImport(GameKit)
+        guard authenticated else { return }
+        // Store pending challenge intent; GameKit challenge UI varies by OS — fall back to access point.
+        UserDefaults.standard.set(score, forKey: "gk.pendingBeatScore")
+        UserDefaults.standard.set(leaderboardID, forKey: "gk.pendingBeatLB")
+        configureAccessPoint(show: true)
+        presentLeaderboard(id: leaderboardID)
+#endif
+    }
+
+    // MARK: - TRASH TALK matchmaking
+
+    public func startTrashTalkMatchmaking(inviteFriend: Bool = false) {
+#if canImport(GameKit)
+        matchError = nil
+        matchmaking = true
+        botFallbackArmed = true
+        matchmakingTask?.cancel()
+
+        if stubMode || !authenticated {
+            // No GC — go straight to labeled bot after a short beat (still respects the 20s label).
+            matchmakingTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(TrashTalkRules.matchmakingBotFallbackSec * 1_000_000_000))
+                guard !Task.isCancelled, self.matchmaking else { return }
+                self.startBotMatch(reason: "offline")
+            }
+            return
+        }
+
+        let request = GKMatchRequest()
+        request.minPlayers = 2
+        request.maxPlayers = 2
+        request.inviteMessage = "TRASH TALK — last bin standing!"
+
+        if inviteFriend {
+            let picker = GKMatchmakerViewController(matchRequest: request)
+            picker?.matchmakerDelegate = self
+            if let picker {
+                topViewController()?.present(picker, animated: true)
+            }
+        } else {
+            GKMatchmaker.shared().findMatch(for: request) { [weak self] match, error in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if let error {
+                        self.matchError = error.localizedDescription
+                    }
+                    if let match {
+                        self.attach(match: match)
+                    }
+                }
+            }
+        }
+
+        matchmakingTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(TrashTalkRules.matchmakingBotFallbackSec * 1_000_000_000))
+            guard !Task.isCancelled, self.matchmaking, self.activeMatch == nil else { return }
+            GKMatchmaker.shared().cancel()
+            self.startBotMatch(reason: "timeout")
+        }
+#else
+        matchmaking = true
+        matchmakingTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: UInt64(TrashTalkRules.matchmakingBotFallbackSec * 1_000_000_000))
+            self.startBotMatch(reason: "unsupported")
+        }
+#endif
+    }
+
+    public func cancelMatchmaking() {
+        matchmakingTask?.cancel()
+        matchmaking = false
+#if canImport(GameKit)
+        GKMatchmaker.shared().cancel()
+#endif
+    }
+
+    public func startBotMatch(reason: String = "fallback") {
+        matchmakingTask?.cancel()
+        matchmaking = false
+        botFallbackArmed = false
+#if canImport(GameKit)
+        activeMatch = nil
+#endif
+        let seed = UInt64.random(in: 1...UInt64.max)
+        onMatchStarted?(seed, true, "Dumpster Bot")
+        matchError = nil
+        _ = reason
+    }
+
+    public func send(_ message: TrashTalkWire) {
+#if canImport(GameKit)
+        guard let match = activeMatch else { return }
+        let data = message.encode()
+        try? match.sendData(toAllPlayers: data, with: .reliable)
+#endif
+    }
+
+    public func disconnectMatch() {
+#if canImport(GameKit)
+        activeMatch?.disconnect()
+        activeMatch = nil
+#endif
+        matchmaking = false
+    }
+
+#if canImport(GameKit)
+    private func attach(match: GKMatch) {
+        matchmakingTask?.cancel()
+        matchmaking = false
+        activeMatch = match
+        match.delegate = self
+        let rivals = match.players.map(\.displayName)
+        let rivalName = rivals.first ?? "Rival"
+        // Shared seed from sorted player IDs so both devices agree without an extra round-trip.
+        let ids = ([GKLocalPlayer.local.gamePlayerID] + match.players.map(\.gamePlayerID)).sorted()
+        var seed: UInt64 = 0x9e37_79b9_7f4a_7c15
+        for id in ids {
+            for b in id.utf8 {
+                seed ^= UInt64(b)
+                seed &*= 0x100_0000_01b3
+            }
+        }
+        if seed == 0 { seed = 1 }
+        send(.hello(seed: seed))
+        onMatchStarted?(seed, false, rivalName)
+    }
+#endif
+
+#if canImport(UIKit)
+    private func topViewController() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap(\.windows).first { $0.isKeyWindow } ?? scenes.first?.windows.first
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        return top
+    }
+#endif
+}
+
+#if canImport(GameKit)
+extension GameKitService: GKGameCenterControllerDelegate {
+    public nonisolated func gameCenterViewControllerDidFinish(_ gameCenterViewController: GKGameCenterViewController) {
+        Task { @MainActor in
+            gameCenterViewController.dismiss(animated: true)
+        }
     }
 }
+
+extension GameKitService: GKMatchmakerViewControllerDelegate {
+    public nonisolated func matchmakerViewControllerWasCancelled(_ viewController: GKMatchmakerViewController) {
+        Task { @MainActor in
+            viewController.dismiss(animated: true)
+            self.cancelMatchmaking()
+        }
+    }
+
+    public nonisolated func matchmakerViewController(_ viewController: GKMatchmakerViewController, didFailWithError error: Error) {
+        Task { @MainActor in
+            viewController.dismiss(animated: true)
+            self.matchError = error.localizedDescription
+            self.matchmaking = false
+        }
+    }
+
+    public nonisolated func matchmakerViewController(_ viewController: GKMatchmakerViewController, didFind match: GKMatch) {
+        Task { @MainActor in
+            viewController.dismiss(animated: true)
+            self.attach(match: match)
+        }
+    }
+}
+
+extension GameKitService: GKMatchDelegate {
+    public nonisolated func match(_ match: GKMatch, didReceive data: Data, fromRemotePlayer player: GKPlayer) {
+        Task { @MainActor in
+            self.onMatchData?(data, player.displayName)
+        }
+    }
+
+    public nonisolated func match(_ match: GKMatch, player: GKPlayer, didChange state: GKPlayerConnectionState) {
+        Task { @MainActor in
+            if state == .disconnected {
+                self.onRivalDisconnected?()
+                self.onMatchEnded?(true)
+            }
+        }
+    }
+
+    public nonisolated func match(_ match: GKMatch, didFailWithError error: (any Error)?) {
+        Task { @MainActor in
+            self.matchError = error?.localizedDescription
+            self.onMatchEnded?(true)
+        }
+    }
+}
+#endif
