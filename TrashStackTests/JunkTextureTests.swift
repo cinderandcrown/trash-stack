@@ -36,7 +36,7 @@ final class JunkTextureTests: XCTestCase {
         for name in [
             "DumpsterFrame", "BinInterior", "CellPlate",
             "Slam01", "Slam02", "ClearBurst",
-            "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "RaccoonGameOver",
+            "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "RaccoonGameOver", "BanditHero",
             "MagnetIcon", "SparkTeal",
         ] {
             XCTAssertNotNil(

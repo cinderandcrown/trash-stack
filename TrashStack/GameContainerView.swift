@@ -294,7 +294,7 @@ struct GameContainerView: View {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(NeonTheme.magenta.opacity(0.7), lineWidth: 1.2)
                 )
-                .accessibilityLabel("Bandit raccoon placeholder")
+                .accessibilityLabel("The Bandit")
                 .onChange(of: raccoonMood) { _, _ in
                     // Squash/bounce when the mascot pose slot changes (placeholder until on-model art).
                     raccoonBounce = 0.82

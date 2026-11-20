@@ -19,12 +19,12 @@ struct TitleView: View {
             }
             VStack(spacing: 14) {
                 Spacer(minLength: 24)
-                BundleImage(name: "RaccoonIdle")
+                BundleImage(name: "BanditHero")
                     .scaledToFit()
-                    .frame(width: 140, height: 140)
+                    .frame(width: 148, height: 148)
                     .offset(y: bob ? -6 : 6)
                     .shadow(color: NeonTheme.teal.opacity(0.45), radius: 18)
-                    .accessibilityLabel("Trash Panda")
+                    .accessibilityLabel("The Bandit")
                 Text("TRASH STACK")
                     .font(.system(size: 40, weight: .black, design: .rounded))
                     .foregroundStyle(
