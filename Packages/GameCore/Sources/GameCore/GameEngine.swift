@@ -275,11 +275,20 @@ public struct GameEngine: Sendable {
         return true
     }
 
-    public mutating func tryRotate() -> Bool {
+    /// True when the active piece cannot drop one cell (on the stack / floor).
+    public func isGrounded() -> Bool {
+        guard let p = state.active, !state.over else { return false }
+        var probe = p
+        probe.y += 1
+        return !probe.fits(state.board)
+    }
+
+    public mutating func tryRotate(clockwise: Bool = true) -> Bool {
         guard var p = state.active, !state.over else { return false }
         if p.def.isSquare { return false }
         let old = p.rot
-        p.rot = (p.rot + 1) % p.def.rotations.count
+        let count = p.def.rotations.count
+        p.rot = clockwise ? (p.rot + 1) % count : (p.rot + count - 1) % count
         if p.fits(state.board) {
             state.active = p
             return true
@@ -295,6 +304,11 @@ public struct GameEngine: Sendable {
         p.rot = old
         state.active = p
         return false
+    }
+
+    /// Back-compat: clockwise rotate.
+    public mutating func tryRotate() -> Bool {
+        tryRotate(clockwise: true)
     }
 
     public mutating func hardDrop() {
