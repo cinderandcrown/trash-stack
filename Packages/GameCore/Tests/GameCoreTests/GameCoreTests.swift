@@ -198,6 +198,137 @@ final class GameCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(feel.gravityMinSec, feel.gravityBaseSec)
         XCTAssertEqual(BoardGym.allCases.count, 5)
         XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
+        XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.36, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 14, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.70, accuracy: 0.001)
+    }
+
+    func testComboScoreEscalatesHard() {
+        let single = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 1)
+        let double = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 2)
+        let mega = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 4)
+        XCTAssertEqual(double, single * 2)
+        XCTAssertGreaterThan(mega, double * 2)
+    }
+
+    func testCascadesProduceChainsInNormalPlay() {
+        // Empty-board play used to peak at combo 1; follow-up triples should raise that.
+        var peak = 0
+        var recycleWaves = 0
+        for seed in [UInt64(7), 42, 99] {
+            var eng = GameEngine(seed: seed)
+            for _ in 0..<100 {
+                if eng.state.over { break }
+                eng.hardDrop()
+                for e in eng.drainEvents() {
+                    if case .recycled = e {
+                        recycleWaves += 1
+                        peak = max(peak, eng.state.combo)
+                    }
+                }
+            }
+            if peak >= 2 { break }
+        }
+        XCTAssertGreaterThan(recycleWaves, 0)
+        XCTAssertGreaterThanOrEqual(peak, 2, "follow-up triples should create real chains")
+        var eng = GameEngine(seed: 1)
+        XCTAssertEqual(eng.state.pressMeterMax, 6)
+    }
+
+    /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).
+    func testPlayLoopDumpForVerify() throws {
+        var eng = GameEngine(seed: 2026_11_19)
+        eng.applyShotScenario("demo")
+        var log: [String] = []
+        var frames: [[[String]]] = []
+        func snap() -> [[String]] {
+            let hid = eng.state.board.config.hiddenRows
+            let vis = eng.state.board.config.visibleRows
+            var rows: [[String]] = []
+            for y in hid..<(hid + vis) {
+                var row: [String] = []
+                for x in 0..<eng.state.board.config.cols {
+                    if let c = eng.state.board[x, y] {
+                        // Distinct letters for the verify renderer (plastic vs paper).
+                        switch c.material {
+                        case .metal: row.append("m")
+                        case .plastic: row.append("p")
+                        case .glass: row.append("g")
+                        case .paper: row.append("P")
+                        }
+                    } else {
+                        row.append(".")
+                    }
+                }
+                rows.append(row)
+            }
+            return rows
+        }
+        frames.append(snap())
+        for step in 0..<28 {
+            if eng.state.over { break }
+            eng.hardDrop()
+            let ev = eng.drainEvents()
+            for e in ev {
+                switch e {
+                case .locked(let hard):
+                    log.append("step\(step) lock hard=\(hard) score=\(eng.state.score)")
+                case .recycled(let groups, let cells, let score, _, let mat, _):
+                    log.append("step\(step) recycle \(mat.rawValue) groups=\(groups) cells=\(cells) +\(score) combo=\(eng.state.combo) total=\(eng.state.score)")
+                case .leveledUp(let lvl):
+                    log.append("step\(step) level \(lvl) · \(LevelTwist.active(at: lvl).playerBlurb)")
+                case .gameOver:
+                    log.append("step\(step) gameOver score=\(eng.state.score)")
+                default: break
+                }
+            }
+            if step == 4 || step == 10 || step == 18 || eng.state.over {
+                frames.append(snap())
+            }
+        }
+        XCTAssertFalse(log.isEmpty)
+        let payload: [String: Any] = [
+            "seed": 2026_11_19,
+            "finalScore": eng.state.score,
+            "finalLevel": eng.state.level,
+            "finalCombo": eng.state.combo,
+            "over": eng.state.over,
+            "log": log,
+            "frames": frames,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        let out = URL(fileURLWithPath: "/tmp/trash-stack-play-verify.json")
+        try data.write(to: out)
+        XCTAssertGreaterThan(eng.state.score, 0, "played loop should score")
+    }
+
+    func testLevelNeverGoesBackwardsAfterShotSeed() {
+        var eng = GameEngine(seed: 99)
+        eng.applyShotScenario("game")
+        let seeded = eng.state.level
+        XCTAssertGreaterThanOrEqual(seeded, 3)
+        XCTAssertGreaterThanOrEqual(eng.state.lines, (seeded - 1) * 8)
+        // Drive a lock+recycle path; level must not drop below the staged seed.
+        for _ in 0..<24 {
+            if eng.state.over { break }
+            eng.hardDrop()
+            XCTAssertGreaterThanOrEqual(eng.state.level, seeded, "level must never rewind below seeded \(seeded)")
+        }
+    }
+
+    func testLevelTwistsEscalate() {
+        XCTAssertEqual(LevelTwist.active(at: 1), .nightWarmup)
+        XCTAssertEqual(LevelTwist.active(at: 3), .stickyCans)
+        XCTAssertEqual(LevelTwist.active(at: 5), .denseJunk)
+        XCTAssertEqual(LevelTwist.active(at: 7), .nightRush)
+        XCTAssertEqual(LevelTwist.active(at: 99), .nightRush)
+        XCTAssertTrue(LevelTwist.denseJunk.playerBlurb.lowercased().contains("junk"))
+        XCTAssertTrue(LevelTwist.alleyGusts.toastTitle.contains("Gust") || LevelTwist.alleyGusts.playerBlurb.lowercased().contains("gust"))
+        var eng = GameEngine(seed: 7)
+        // Fresh run is level 1 — full lock window.
+        XCTAssertEqual(eng.lockDelaySeconds(base: 0.42), 0.42, accuracy: 0.001)
+        eng.applyShotScenario("revive") // level 6 — still below Night Rush
+        XCTAssertEqual(eng.lockDelaySeconds(base: 0.42), 0.42, accuracy: 0.001)
     }
 
     func testNoStraightSpanLongerThanThree() {
@@ -210,5 +341,113 @@ final class GameCoreTests: XCTestCase {
                 XCTAssertFalse(rot.contains { $0.count != 2 })
             }
         }
+    }
+
+    /// Rich empty-board play session for feel QA (seeds 42 & 7, 60 steps).
+    func testPlayFeelSessionSeeds42And7() throws {
+        struct Near { let material: Material; let size: Int }
+        func nearOfSize(_ board: Board, size: Int) -> [Near] {
+            var seen = Set<String>()
+            var out: [Near] = []
+            for y in 0..<board.config.rows {
+                for x in 0..<board.config.cols {
+                    let key = "\(x),\(y)"
+                    guard !seen.contains(key), let cell = board[x, y], !cell.sticky else { continue }
+                    var stack = [(x, y)]
+                    var cluster: [(Int, Int)] = []
+                    seen.insert(key)
+                    while let (cx, cy) = stack.popLast() {
+                        cluster.append((cx, cy))
+                        for (nx, ny) in [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)] {
+                            let nk = "\(nx),\(ny)"
+                            guard !seen.contains(nk), board.inBounds(x: nx, y: ny),
+                                  let n = board[nx, ny], !n.sticky,
+                                  n.material == cell.material else { continue }
+                            seen.insert(nk)
+                            stack.append((nx, ny))
+                        }
+                    }
+                    if cluster.count == size {
+                        out.append(Near(material: cell.material, size: size))
+                    }
+                }
+            }
+            return out
+        }
+
+        var allLines: [String] = []
+        func log(_ s: String) { allLines.append(s); print(s) }
+
+        for seed in [UInt64(42), UInt64(7)] {
+            var eng = GameEngine(seed: seed) // empty — no shot scenario
+            log("=== SEED \(seed) empty start active=\(eng.state.active?.id.rawValue ?? "nil") ===")
+            var recycleCount = 0
+            var comboPeak = 0
+            var comboGe2 = 0
+            var pressFills = 0
+            var pressSlams = 0
+            var near3Peak = 0
+            var near3Sum = 0
+            var firstRecycleStep: Int?
+            var lastPress = eng.state.pressMeter
+            var locks = 0
+
+            for step in 0..<60 {
+                if eng.state.over {
+                    log("step\(step) GAME_OVER score=\(eng.state.score) level=\(eng.state.level) locks=\(locks)")
+                    break
+                }
+                if step % 3 == 0 { _ = eng.tryRotate() }
+                _ = eng.tryMove(dx: (step % 2 == 0) ? -1 : 1, dy: 0)
+                for _ in 0..<((step % 4) + 1) { _ = eng.softDrop() }
+                eng.hardDrop()
+                locks += 1
+
+                if eng.state.pressMeter >= eng.state.pressMeterMax, step % 2 == 0 {
+                    if eng.slamPress() {
+                        pressSlams += 1
+                        log("step\(step) PRESS_SLAM score=\(eng.state.score) combo=\(eng.state.combo)")
+                    }
+                }
+
+                for e in eng.drainEvents() {
+                    switch e {
+                    case .recycled(let groups, let cells, let score, let scrap, let mat, _):
+                        recycleCount += 1
+                        if firstRecycleStep == nil { firstRecycleStep = step }
+                        let combo = eng.state.combo
+                        comboPeak = max(comboPeak, combo)
+                        if combo >= 2 { comboGe2 += 1 }
+                        log("step\(step) RECYCLE \(mat.rawValue) g=\(groups) cells=\(cells) +\(score) scrap=\(scrap) combo=\(combo) total=\(eng.state.score) press=\(eng.state.pressMeter)/\(eng.state.pressMeterMax)")
+                    case .pressed(let cells, let score, let scrap):
+                        log("step\(step) PRESSED cells=\(cells) +\(score) scrap=\(scrap)")
+                    case .leveledUp(let lvl):
+                        log("step\(step) LEVEL \(lvl)")
+                    default: break
+                    }
+                }
+
+                if eng.state.pressMeter == eng.state.pressMeterMax, lastPress < eng.state.pressMeterMax {
+                    pressFills += 1
+                    log("step\(step) PRESS_FULL \(eng.state.pressMeter)/\(eng.state.pressMeterMax)")
+                }
+                lastPress = eng.state.pressMeter
+
+                let n3 = nearOfSize(eng.state.board, size: 3)
+                near3Sum += n3.count
+                near3Peak = max(near3Peak, n3.count)
+                if !n3.isEmpty, step % 5 == 0 || n3.count >= 2 {
+                    let by = Dictionary(grouping: n3, by: \.material.rawValue).mapValues(\.count)
+                    log("step\(step) NEAR3 \(n3.count) \(by) press=\(eng.state.pressMeter)")
+                }
+            }
+
+            log("END seed=\(seed) score=\(eng.state.score) lvl=\(eng.state.level) lines=\(eng.state.lines) over=\(eng.state.over) press=\(eng.state.pressMeter)/\(eng.state.pressMeterMax)")
+            log("STATS seed=\(seed) recycles=\(recycleCount) comboPeak=\(comboPeak) combo>=2=\(comboGe2) pressFills=\(pressFills) pressSlams=\(pressSlams) near3Peak=\(near3Peak) near3Sum=\(near3Sum) firstRecycle=\(firstRecycleStep.map(String.init) ?? "none") locks=\(locks) recycledBy=\(eng.state.recycledByMaterial)")
+        }
+
+        let out = URL(fileURLWithPath: "/tmp/trash-stack-feel-play.log")
+        try allLines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
     }
 }

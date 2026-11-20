@@ -10,10 +10,14 @@ BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
 DISPLAY="${SIMCTL_DISPLAY:-internal}"
 SMOKE_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # Hard budgets (harness only — app launch gates stay 1.5s / 8s).
-STEP_BUDGET_S="${STEP_BUDGET_S:-120}"
+STEP_BUDGET_S="${STEP_BUDGET_S:-150}"
 SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-10}"
 SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
 CONSEC_DEADLINE_LIMIT="${CONSEC_DEADLINE_LIMIT:-5}"
+# After the title frame is captured, prefer Documents soft-switches only (no simctl launch).
+SOFT_SHOT_ONLY=0
+# Cached host path to the app data container (avoids wedged get_app_container on soft writes).
+APP_DATA_CONTAINER=""
 
 mkdir -p "$OUT_DIR" "$OUT_DIR/marketing"
 TIMING_FILE="$OUT_DIR/smoke-step-timing.tsv"
@@ -239,6 +243,7 @@ PY
     exit 125
   fi
   raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
   note_timing step recover_simulator 240 "$((SECONDS - t0))" 0 "done:$reason"
   IN_RECOVER=0
@@ -289,11 +294,15 @@ with_deadline() {
 
 app_running() {
   # Short raw deadline only — must never trip wedge recovery or hang the suite.
-  # (A hung launchctl list previously stalled recycle for ~15 minutes.)
+  # On launchctl timeout, treat as NOT running so ensure_app_terminated exits
+  # after the killall -9 attempts instead of looping until the shot budget dies.
   local tmp
   tmp="$(mktemp -t smoke-app-running.XXXXXX)"
-  if raw_deadline 3 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null \
-    && grep -q "$BUNDLE_ID" "$tmp"; then
+  if ! raw_deadline 2 xcrun simctl spawn "$DEVICE" launchctl list >"$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if grep -q "$BUNDLE_ID" "$tmp"; then
     rm -f "$tmp"
     return 0
   fi
@@ -302,15 +311,24 @@ app_running() {
 }
 
 shot() {
-  local out="$1" ok=0
+  local out="$1" ok=0 t0=$SECONDS elapsed=0
   # Display fallbacks must NOT each count as a wedge timeout (3 displays ≠ wedged sim).
   # Screenshot flakes also must NOT trigger erase/reboot — that burned 4+ minutes then failed.
   if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$out" 2>/tmp/sim-shot.err; then
     ok=1
-  elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
-    ok=1
-  elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out" 2>/tmp/sim-shot.err; then
-    ok=1
+  else
+    elapsed=$((SECONDS - t0))
+    # Only try fallbacks when primary failed *fast* (wrong display). If it hit the
+    # deadline or kill lagged, further displays hang and burn the step budget.
+    if (( elapsed < SHOT_DEADLINE_S )); then
+      if raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot --display=1 "$out" 2>/tmp/sim-shot.err; then
+        ok=1
+      elif raw_deadline "$SHOT_DEADLINE_S" xcrun simctl io "$DEVICE" screenshot "$out" 2>/tmp/sim-shot.err; then
+        ok=1
+      fi
+    else
+      echo "primary screenshot timed out/wedged (${elapsed}s) — skip display fallbacks" >&2
+    fi
   fi
   if (( ok == 1 )); then
     DEADLINE_FAILS=0
@@ -328,9 +346,12 @@ assert_app_frame() {
 import sys, struct, zlib, pathlib
 path = pathlib.Path(sys.argv[1])
 data = path.read_bytes()
-if len(data) < 80_000:
-    print(f"Frame too small ({len(data)} bytes): {path}", file=sys.stderr)
-    sys.exit(2)
+# OS LaunchLogo is a tiny neon card on black (~80–120 KB). Real in-app frames are >>200 KB.
+# Hard floor rejects LaunchLogo even when PNG sampling fails and we would otherwise
+# take the size-only OK path.
+if len(data) < 150_000:
+    print(f"Frame too small / likely OS LaunchLogo ({len(data)} bytes): {path}", file=sys.stderr)
+    sys.exit(6)
 
 samples = None
 try:
@@ -404,13 +425,13 @@ if samples is None:
                 samples.append((rows[y][i], rows[y][i + 1], rows[y][i + 2]))
 
 if not samples:
-    # Last resort: large enough PNG that survived simctl capture.
-    print(f"Frame OK {path} (size-only {len(data)} bytes)")
-    sys.exit(0)
+    print(f"Frame undecodable after size check: {path}", file=sys.stderr)
+    sys.exit(2)
 
 whites = sum(1 for r, g, b in samples if r > 245 and g > 245 and b > 245)
 beiges = sum(1 for r, g, b in samples if r > 90 and g > 70 and b < 160 and r > b + 15)
 darks = sum(1 for r, g, b in samples if r < 55 and g < 55 and b < 75)
+# Size floor already rejected LaunchLogo; do not reject charcoal ident (also very dark).
 if whites >= 7:
     print(f"Blank/white frame: {path}", file=sys.stderr)
     sys.exit(2)
@@ -518,40 +539,67 @@ PY
 # (path can lag right after install/launch; never cache a stale container).
 launch_docs_path() {
   local container=""
-  # Short deadline: stamp poll calls this repeatedly; a 15s hang would miss the 8s window.
-  container="$(with_deadline 5 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  # Short deadline: stamp poll calls this repeatedly; a hang would miss the 8s window.
+  container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
   container="$(echo "$container" | tr -d '[:space:]')"
   if [[ -n "$container" ]]; then
     printf '%s' "$container/Documents/launch-timing.txt"
   fi
 }
 
-# Read a key from Documents/launch-timing.txt (preferred) or UserDefaults.
+# Parse one key from an already-loaded Documents body (no simctl).
+docs_field_from_body() {
+  local body="$1" key="$2" v=""
+  v="$(printf '%s\n' "$body" | grep -E "^${key}=" | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+  if [[ -z "$v" && "$key" == "in_app_sec" ]] && ! printf '%s\n' "$body" | grep -q '='; then
+    v="$(printf '%s' "$body" | tr -d '[:space:]')"
+  fi
+  printf '%s' "$v"
+}
+
+# Read Documents/launch-timing.txt once. Optional second arg "defaults" enables a short
+# UserDefaults fallback (never use during the 8s stamp poll — that hung CI for minutes).
 read_launch_field() {
   local key="$1"
+  local allow_defaults="${2:-}"
   local v="" docs defkey="" body=""
   docs="$(launch_docs_path)"
   if [[ -n "$docs" && -f "$docs" ]]; then
-    # Re-read the file each time so host FS sync of the simulator mirror is visible.
     body="$(cat "$docs" 2>/dev/null || true)"
-    v="$(printf '%s\n' "$body" | grep -E "^${key}=" | head -1 | cut -d= -f2- | tr -d '[:space:]')"
-    # Legacy: plain Documents file that was only the dt string.
-    if [[ -z "$v" && "$key" == "in_app_sec" ]] && ! printf '%s\n' "$body" | grep -q '='; then
-      v="$(printf '%s' "$body" | tr -d '[:space:]')"
-    fi
+    v="$(docs_field_from_body "$body" "$key")"
   fi
-  if [[ -z "$v" ]]; then
+  if [[ -z "$v" && "$allow_defaults" == "defaults" ]]; then
     case "$key" in
       in_app_sec) defkey="trashStack.launchToTitleSec" ;;
       in_app_sec_string) defkey="trashStack.launchToTitleSecString" ;;
       first_frame_wall_epoch) defkey="trashStack.firstFrameWallEpochString" ;;
+      game_in_app_sec) defkey="trashStack.launchToGameSecString" ;;
+      game_first_frame_wall_epoch) defkey="trashStack.firstGameFrameWallEpochString" ;;
     esac
     if [[ -n "$defkey" ]]; then
-      v="$(with_deadline 8 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
+      v="$(raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" "$defkey" 2>/dev/null || true)"
       v="$(echo "$v" | tr -d '[:space:]' | tr -d '\"')"
     fi
   fi
   printf '%s' "$v"
+}
+
+# One-shot parse of the Documents stamp file (preferred during the 8s poll).
+read_launch_docs_snapshot() {
+  local docs body
+  docs="$(launch_docs_path)"
+  if [[ -z "$docs" || ! -f "$docs" ]]; then
+    return 1
+  fi
+  body="$(cat "$docs" 2>/dev/null || true)"
+  [[ -z "$body" ]] && return 1
+  INAPP_RAW="$(docs_field_from_body "$body" in_app_sec)"
+  if [[ -z "$INAPP_RAW" ]]; then
+    INAPP_RAW="$(docs_field_from_body "$body" in_app_sec_string)"
+  fi
+  INAPP_STR="$(docs_field_from_body "$body" in_app_sec_string)"
+  FRAME_EPOCH="$(docs_field_from_body "$body" first_frame_wall_epoch)"
+  [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]
 }
 
 read_inapp_launch_sec() {
@@ -611,18 +659,53 @@ PY
 }
 
 # Defaults via discrete simctl spawn (simulator /bin/sh -c was returning 134).
+# Write Documents/smoke-shot.txt via the host-mirrored container (no simctl spawn).
+write_smoke_shot_file() {
+  local mode="$1"
+  local docs container
+  if [[ -n "$APP_DATA_CONTAINER" && -d "$APP_DATA_CONTAINER/Documents" ]]; then
+    container="$APP_DATA_CONTAINER"
+  else
+    container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+    container="$(echo "$container" | tr -d '[:space:]')"
+    if [[ -z "$container" ]]; then
+      return 1
+    fi
+    APP_DATA_CONTAINER="$container"
+  fi
+  docs="$container/Documents"
+  mkdir -p "$docs" 2>/dev/null || true
+  if [[ -n "$mode" ]]; then
+    printf '%s\n' "$mode" > "$docs/smoke-shot.txt" 2>/dev/null || return 1
+  else
+    rm -f "$docs/smoke-shot.txt" 2>/dev/null || true
+  fi
+  return 0
+}
+
 write_shot_defaults() {
   local mode="$1"
   local rem="${2:-8}"
   (( rem < 2 )) && rem=2
   (( rem > 8 )) && rem=8
-  with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
-  with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
-  if [[ -n "$mode" ]]; then
-    with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
-  else
-    with_deadline "$rem" xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+  # Prefer host file write — simctl spawn defaults often wedges after a few shots.
+  write_smoke_shot_file "$mode" || true
+  # Soft-only path: Documents file is authoritative. Skip simctl spawn — those
+  # 2s timeouts stack and wedge io screenshots before revive/meta frames land.
+  if (( SOFT_SHOT_ONLY == 1 )); then
+    _="$rem"
+    return 0
   fi
+  # Best-effort defaults mirror with a short deadline; file write is authoritative.
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
+  if [[ -n "$mode" ]]; then
+    raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
+  else
+    raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
+  fi
+  _="$rem" # keep rem available for callers; spawn timeouts no longer consume it
 }
 
 # Seconds left in the current launch_shot budget (0 if exhausted).
@@ -638,12 +721,22 @@ launch_shot() {
   local outfile="$2"
   local settle="${3:-4}"
   local attempts=0
-  # Recycle juice is longer (~0.5s suck + held glow/banner) — more attempts, not a looser assert.
-  local max_attempts=2
-  if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-    max_attempts=2
-    if (( settle < 4 )); then settle=4; fi
-  fi
+  # Recycle juice / game boards need time past OS LaunchLogo after a hard terminate.
+  local max_attempts=4
+  case "$mode" in
+    recycle|mkt-recycle|game|gameplay|compactor|press|daily|demo|autoplay|mkt-play|mkt-crush|mkt-recycle|mkt-daily)
+      if (( settle < 5 )); then settle=5; fi
+      ;;
+    revive)
+      if (( settle < 7 )); then settle=7; fi
+      ;;
+    ident|publisher)
+      if (( settle < 4 )); then settle=4; fi
+      ;;
+    base|pass|shop|notif|share|streak|junkyard|mkt-base|mkt-pass|mkt-shop)
+      if (( settle < 3 )); then settle=3; fi
+      ;;
+  esac
   local shot_start=$SECONDS
   CURRENT_STEP="shot:$mode"
   STEP_NEEDS_RESET=0
@@ -663,13 +756,11 @@ launch_shot() {
     if (( step_elapsed > STEP_BUDGET_S )); then
       echo "launch_shot hard budget ${STEP_BUDGET_S}s exceeded for mode='$mode' (${step_elapsed}s)" >&2
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 124 "budget_exceeded"
-      if (( SIM_RECOVERED == 0 )); then
-        recover_simulator_once "step_budget:$mode"
-        continue
-      fi
-      echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget after recover." >&2
+      # Do not erase/recreate the sim here — recover was failing bootstatus and
+      # wiping good earlier evidence. Fail this shot cleanly instead.
+      echo "Fail fast: step '$mode' blew ${STEP_BUDGET_S}s budget (no recover)." >&2
       print_timing_table
-      exit 125
+      exit 1
     fi
     smoke_budget
     left=$(shot_budget_left "$shot_start")
@@ -677,102 +768,348 @@ launch_shot() {
       sleep 1
       continue
     fi
-    # Prefer killall over simctl terminate — terminate is a known hang on wedged sims.
-    raw_deadline 4 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-    sleep 0.15
-
     left=$(shot_budget_left "$shot_start")
     if (( left < 8 )); then sleep 1; continue; fi
     write_shot_defaults "$mode" "$left"
 
-    left=$(shot_budget_left "$shot_start")
-    if (( left < 5 )); then sleep 1; continue; fi
-    local launch_lim="$SIMCTL_DEADLINE_S"
-    (( left < launch_lim )) && launch_lim=$left
-    (( launch_lim < 2 )) && launch_lim=2
-    if [[ -n "$mode" ]]; then
-      with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-    else
-      with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+    # Soft path: Documents/smoke-shot.txt + optional launch. After title is captured,
+    # skip simctl launch entirely — it wedges io on later meta shots (shop/pass).
+    if (( SOFT_SHOT_ONLY == 0 )); then
+      left=$(shot_budget_left "$shot_start")
+      if (( left < 5 )); then sleep 1; continue; fi
+      local launch_lim="$SIMCTL_DEADLINE_S"
+      (( left < launch_lim )) && launch_lim=$left
+      (( launch_lim < 2 )) && launch_lim=2
+      if [[ -n "$mode" ]]; then
+        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      else
+        with_deadline "$launch_lim" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
+      fi
+      cat /tmp/sim-launch.out >&2 || true
     fi
-    cat /tmp/sim-launch.out >&2 || true
+    sleep 1.0
+
+    if (( attempts >= 2 )); then
+      echo "launch_shot: soft switch missed for '$mode' — rewrite smoke-shot + wait" >&2
+      write_smoke_shot_file "$mode" || true
+      # Do not terminate+relaunch here — that hung base/meta for minutes on CI.
+      # Explicit one-launch steps (revive/notif) cover sheet/overlay modes.
+      sleep 1.8
+    fi
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 5 )); then sleep 1; continue; fi
-    # Cap settle to remaining budget so a step cannot sleep past its ceiling.
-    local settle_use="$settle"
-    if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-      settle_use=$((settle + 1))
-    fi
-    if (( settle_use > left - 4 )); then
-      settle_use=$((left - 4))
-    fi
-    if (( settle_use < 1 )); then settle_use=1; fi
-    sleep "$settle_use"
-
-    left=$(shot_budget_left "$shot_start")
-    if (( left < 5 )); then sleep 1; continue; fi
-    if ! shot "$outfile"; then
-      echo "screenshot deadline failed for mode='$mode' attempt=$attempts" >&2
-      sleep 0.5
+    # Poll until past OS LaunchLogo / first real frame (fixed sleep alone is flaky on CI).
+    local poll_deadline=$((SECONDS + settle + 8))
+    local got_frame=0
+    local shot_fail=0
+    while (( SECONDS < poll_deadline )); do
+      left=$(shot_budget_left "$shot_start")
+      if (( left < 5 )); then break; fi
+      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
+      if ! shot "$outfile"; then
+        shot_fail=$((shot_fail + 1))
+        # Don't burn the step budget on wedged io — bail this attempt fast.
+        if (( shot_fail >= 3 )); then
+          echo "screenshot wedged for mode='$mode' (fail=$shot_fail) — next attempt" >&2
+          break
+        fi
+        sleep 0.6
+        continue
+      fi
+      shot_fail=0
+      if assert_app_frame "$outfile"; then
+        got_frame=1
+        break
+      fi
+      echo "Waiting past LaunchLogo/splash for mode='$mode' ($(stat -c%s "$outfile" 2>/dev/null || echo 0) bytes)" >&2
+      sleep 0.8
+    done
+    if (( got_frame == 0 )); then
+      echo "No post-LaunchLogo frame for mode='$mode' attempt=$attempts — retrying" >&2
       continue
+    fi
+    # Extra beat for SpriteKit board / juice after first SwiftUI paint.
+    # If the refresh screenshot wedges, keep the post-LaunchLogo frame we already have.
+    sleep 1.0
+    if ! shot "$outfile"; then
+      echo "refresh screenshot wedged for mode='$mode' — keeping prior good frame" >&2
     fi
     step_elapsed=$((SECONDS - shot_start))
     if (( step_elapsed > STEP_BUDGET_S )); then
       echo "launch_shot budget exceeded before assert for mode='$mode' (${step_elapsed}s)" >&2
       continue
     fi
-    if assert_app_frame "$outfile"; then
+    if assert_app_frame "$outfile" && assert_shot_matches_mode "$mode" "$outfile"; then
       step_elapsed=$((SECONDS - shot_start))
       note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 0 "ok"
       echo "Wrote $outfile" >&2
       DEADLINE_FAILS=0
       return 0
     fi
-    echo "Bad frame for mode='$mode' attempt=$attempts — retrying" >&2
+    echo "Bad frame for mode='$mode' attempt=$attempts — retrying (no sim erase)" >&2
+    settle=$((settle + 2))
   done
   step_elapsed=$((SECONDS - shot_start))
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$step_elapsed" 1 "failed"
-  if (( SIM_RECOVERED == 0 )); then
-    echo "Shot '$mode' failed — erase/reboot once then retry step." >&2
-    recover_simulator_once "shot_failed:$mode"
-    STEP_NEEDS_RESET=0
-    attempts=0
-    shot_start=$SECONDS
-    note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "retry_after_recover"
-    while (( attempts < max_attempts )); do
-      attempts=$((attempts + 1))
-      if (( SECONDS - shot_start > STEP_BUDGET_S )); then
-        break
-      fi
-      smoke_budget
-      raw_deadline 5 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
-      sleep 0.2
-      write_shot_defaults "$mode"
-      if [[ -n "$mode" ]]; then
-        with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot "$mode" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-      else
-        with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch.out 2>&1 || true
-      fi
-      cat /tmp/sim-launch.out >&2 || true
-      if [[ "$mode" == "recycle" || "$mode" == "mkt-recycle" ]]; then
-        sleep 1.2
-        sleep "$settle"
-      else
-        sleep "$settle"
-      fi
-      if (( SECONDS - shot_start > STEP_BUDGET_S )); then break; fi
-      if ! shot "$outfile"; then continue; fi
-      if assert_app_frame "$outfile"; then
-        note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - shot_start))" 0 "ok_after_recover"
-        echo "Wrote $outfile" >&2
-        return 0
-      fi
-    done
-  fi
+  # Do NOT erase/reinstall on bad frames — that hung CI (install timeout). Soft-fail the shot.
   echo "Failed to capture a valid app frame for mode='$mode' → $outfile" >&2
   print_timing_table
   exit 1
+}
+
+# Terminate the app and confirm the process is gone before relaunch (P0-1).
+# killall alone returned rc=2 on CI and left the title process alive.
+ensure_app_terminated() {
+  # Hard wall so a wedged launchctl cannot burn the whole shot budget.
+  local t0=$SECONDS i
+  raw_deadline 4 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" killall TrashStack >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
+  for i in 1 2 3; do
+    if (( SECONDS - t0 > 12 )); then
+      echo "ensure_app_terminated: giving up after 12s — proceeding to launch" >&2
+      return 1
+    fi
+    if ! app_running; then
+      return 0
+    fi
+    sleep 0.1
+    raw_deadline 2 xcrun simctl spawn "$DEVICE" killall -9 TrashStack >/dev/null 2>&1 || true
+  done
+  if app_running; then
+    echo "ensure_app_terminated: app still running after killall -9" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Average SSIM over a downscaled luminance grid (stdlib — no Pillow required).
+png_ssim() {
+  python3 - "$1" "$2" <<'PY'
+import struct, sys, zlib, pathlib, math
+
+def load_png_rgb(path):
+    data = pathlib.Path(path).read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"not png: {path}")
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos + 4])[0]
+        ctype = data[pos + 4:pos + 8]
+        chunk = data[pos + 8:pos + 8 + length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    if not width or bit_depth != 8 or color_type not in (2, 6):
+        raise SystemExit(f"unsupported png: {path}")
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start + 1:start + stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i - bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i - bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a, b, c):
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                if pa <= pb and pa <= pc: return a
+                if pb <= pc: return b
+                return c
+            for i in range(len(row)):
+                a = row[i - bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i - bpp] if i >= bpp else 0
+                row[i] = (row[i] + paeth(a, b, c)) & 255
+        rows.append(row)
+    return width, height, bpp, rows
+
+def lum_grid(path, gw=48, gh=96):
+    w, h, bpp, rows = load_png_rgb(path)
+    grid = []
+    for gy in range(gh):
+        y = min(h - 1, int((gy + 0.5) * h / gh))
+        row = rows[y]
+        for gx in range(gw):
+            x = min(w - 1, int((gx + 0.5) * w / gw))
+            i = x * bpp
+            r, g, b = row[i], row[i + 1], row[i + 2]
+            grid.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+    return grid
+
+def ssim(a, b):
+    # Mean SSIM over 8x8 windows on the downscaled grid.
+    gw, gh = 48, 96
+    c1, c2 = (0.01 * 255) ** 2, (0.03 * 255) ** 2
+    vals = []
+    for y0 in range(0, gh - 7, 8):
+        for x0 in range(0, gw - 7, 8):
+            wa, wb = [], []
+            for dy in range(8):
+                for dx in range(8):
+                    i = (y0 + dy) * gw + (x0 + dx)
+                    wa.append(a[i]); wb.append(b[i])
+            n = 64.0
+            ma = sum(wa) / n; mb = sum(wb) / n
+            va = sum((v - ma) ** 2 for v in wa) / (n - 1)
+            vb = sum((v - mb) ** 2 for v in wb) / (n - 1)
+            cov = sum((wa[i] - ma) * (wb[i] - mb) for i in range(64)) / (n - 1)
+            vals.append(((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma * ma + mb * mb + c1) * (va + vb + c2) + 1e-12))
+    return sum(vals) / max(1, len(vals))
+
+a = lum_grid(sys.argv[1]); b = lum_grid(sys.argv[2])
+print(f"{ssim(a, b):.6f}")
+PY
+}
+
+# Per-mode marker + SSIM-vs-title gate (P0-1). Title/ident skip the title-SSIM reject.
+assert_shot_matches_mode() {
+  local mode="$1" file="$2"
+  local title="$OUT_DIR/01-title.png"
+  # Marker checks (board / header / caption / charcoal).
+  if ! python3 - "$mode" "$file" <<'PY'
+import pathlib, struct, sys, zlib
+mode, path = sys.argv[1], pathlib.Path(sys.argv[2])
+data = path.read_bytes()
+pos = 8
+width = height = bit_depth = color_type = None
+idat = bytearray()
+while pos + 8 <= len(data):
+    length = struct.unpack(">I", data[pos:pos+4])[0]
+    ctype = data[pos+4:pos+8]
+    chunk = data[pos+8:pos+8+length]
+    pos += 12 + length
+    if ctype == b"IHDR":
+        width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+    elif ctype == b"IDAT":
+        idat.extend(chunk)
+    elif ctype == b"IEND":
+        break
+raw = zlib.decompress(bytes(idat))
+bpp = 3 if color_type == 2 else 4
+stride = width * bpp + 1
+rows = []
+for y in range(height):
+    start = y * stride
+    filt = raw[start]
+    row = bytearray(raw[start+1:start+stride])
+    prev = rows[-1] if rows else bytearray(len(row))
+    if filt == 1:
+        for i in range(len(row)):
+            row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+    elif filt == 2:
+        for i in range(len(row)):
+            row[i] = (row[i] + prev[i]) & 255
+    elif filt == 3:
+        for i in range(len(row)):
+            left = row[i-bpp] if i >= bpp else 0
+            row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+    elif filt == 4:
+        def paeth(a,b,c):
+            p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+            return a if pa<=pb and pa<=pc else b if pb<=pc else c
+        for i in range(len(row)):
+            a = row[i-bpp] if i>=bpp else 0
+            b = prev[i]
+            c = prev[i-bpp] if i>=bpp else 0
+            row[i] = (row[i] + paeth(a,b,c)) & 255
+    rows.append(row)
+
+def sample(fx, fy):
+    x = min(width-1, int(width*fx)); y = min(height-1, int(height*fy))
+    i = x * bpp
+    return rows[y][i], rows[y][i+1], rows[y][i+2]
+
+def band_stats(y0, y1, x0=0.15, x1=0.85):
+    vals=[]
+    for fy in (y0,(y0+y1)/2,y1):
+        for fx in (x0,(x0+x1)/2,x1):
+            r,g,b = sample(fx,fy)
+            vals.append((r+g+b)/3)
+    mean=sum(vals)/len(vals)
+    var=sum((v-mean)**2 for v in vals)/len(vals)
+    return var, mean
+
+game = mode in {"game","gameplay","compactor","press","recycle","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
+menu = mode in {"base","pass","shop","notif","share","streak","mkt-base","mkt-pass","mkt-shop"}
+if mode == "revive":
+    # Look for magenta "SO CLOSE" / teal Revive CTA in the lower half (sheet).
+    mag = teal = 0
+    for fy in (0.52, 0.62, 0.72, 0.82):
+        for fx in (0.3, 0.5, 0.7):
+            r, g, b = sample(fx, fy)
+            if r > 160 and b > 120 and g < 130: mag += 1
+            if g > 140 and b > 140 and r < 120: teal += 1
+    if mag + teal < 2:
+        print(f"Mode '{mode}' missing revive-sheet colors (magenta={mag} teal={teal})", file=sys.stderr); sys.exit(4)
+elif game:
+    # Board lives in the lower-mid of the phone frame (HUD above, controls below).
+    var, mean = band_stats(0.48, 0.78)
+    if var < 180:
+        print(f"Mode '{mode}' missing board-frame marker (var={var:.1f})", file=sys.stderr); sys.exit(4)
+elif menu:
+    var, mean = band_stats(0.08, 0.22, 0.1, 0.9)
+    if mean > 140 and var < 120:
+        print(f"Mode '{mode}' missing menu-header marker (mean={mean:.1f} var={var:.1f})", file=sys.stderr); sys.exit(4)
+elif mode in {"ident","publisher"}:
+    dark=sum(1 for fy in (0.2,0.4,0.6,0.8) for fx in (0.2,0.5,0.8)
+             if (lambda r,g,b: r<50 and g<50 and b<50)(*sample(fx,fy)))
+    if dark < 4:
+        print(f"Mode '{mode}' missing charcoal ident marker (dark={dark})", file=sys.stderr); sys.exit(4)
+    # Reject title screen mistaken for ident (neon wordmark teal/magenta in upper third).
+    teal=magenta=0
+    for fy in (0.18,0.28,0.38):
+        for fx in (0.3,0.5,0.7):
+            r,g,b=sample(fx,fy)
+            if g>140 and b>140 and r<120: teal+=1
+            if r>160 and b>140 and g<120: magenta+=1
+    if teal+magenta >= 3:
+        print(f"Mode '{mode}' looks like title wordmark (teal={teal} magenta={magenta})", file=sys.stderr); sys.exit(4)
+if mode.startswith("mkt-"):
+    var, mean = band_stats(0.78, 0.92)
+    if mean > 170 and var < 50:
+        print(f"Mode '{mode}' missing marketing caption band", file=sys.stderr); sys.exit(4)
+print(f"Mode '{mode}' markers OK")
+PY
+  then
+    return 1
+  fi
+  # Non-title shots must not match the title (SSIM >= 0.85 fails), including ident.
+  if [[ "$mode" != "title" && "$mode" != "" && -f "$title" ]]; then
+    local ssim
+    ssim="$(png_ssim "$file" "$title" 2>/dev/null || echo 1.0)"
+    if ! python3 - "$mode" "$ssim" <<'PY'
+import sys
+mode, s = sys.argv[1], float(sys.argv[2])
+if s >= 0.85:
+    print(f"Mode '{mode}' too similar to title (SSIM={s:.3f} >= 0.85)", file=sys.stderr)
+    sys.exit(5)
+print(f"Mode '{mode}' SSIM vs title={s:.3f} OK")
+PY
+    then
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # Overall watchdog (paired with the GitHub step timeout-minutes).
@@ -818,121 +1155,256 @@ if ! with_deadline 60 xcrun simctl bootstatus "$DEVICE" -b; then
 fi
 with_deadline 20 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 if ! with_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH"; then
-  echo "Fail fast: simctl install hung or failed." >&2
-  print_timing_table
-  exit 125
+  echo "simctl install failed — one reboot+retry before fail-fast" >&2
+  with_deadline 20 xcrun simctl shutdown "$DEVICE" >/dev/null 2>&1 || true
+  sleep 2
+  with_deadline 40 xcrun simctl boot "$DEVICE" || true
+  with_deadline 60 xcrun simctl bootstatus "$DEVICE" -b || true
+  with_deadline 20 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  if ! with_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH"; then
+    echo "Fail fast: simctl install hung or failed after retry." >&2
+    print_timing_table
+    exit 125
+  fi
 fi
 note_timing step boot_install 180 "$((SECONDS - SMOKE_START))" 0 "ok"
 smoke_budget
 
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
 # Springboard icon crop (evidence for real AppIcon) — before timed launch.
 with_deadline 20 xcrun simctl io "$DEVICE" screenshot --display="$DISPLAY" "$OUT_DIR/00-springboard.png" 2>/dev/null \
   || with_deadline 20 xcrun simctl io "$DEVICE" screenshot "$OUT_DIR/00-springboard.png" || true
 python3 - "$OUT_DIR/00-springboard.png" <<'PY'
-import pathlib, sys
+import pathlib, struct, sys, zlib
 src = pathlib.Path(sys.argv[1])
 out = src.with_name("00-springboard-icon-crop.png")
 if not src.exists():
     print("Springboard crop skipped: no screenshot")
     raise SystemExit(0)
+
+def load_png_rgb(path):
+    data = path.read_bytes()
+    if data[:8] != b"\x89PNG\r\n\x1a\n":
+        raise SystemExit(f"not png: {path}")
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos+4])[0]
+        ctype = data[pos+4:pos+8]
+        chunk = data[pos+8:pos+8+length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start+1:start+stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a,b,c):
+                p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+                return a if pa<=pb and pa<=pc else b if pb<=pc else c
+            for i in range(len(row)):
+                a = row[i-bpp] if i >= bpp else 0
+                b = prev[i]
+                c = prev[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + paeth(a,b,c)) & 255
+        rows.append(row)
+    return width, height, bpp, rows
+
+def crop_and_write(w, h, bpp, rows, x0, y0, x1, y1):
+    x0, y0 = max(0, x0), max(0, y0)
+    x1, y1 = min(w, x1), min(h, y1)
+    cw, ch = x1 - x0, y1 - y0
+    if cw < 16 or ch < 16:
+        return False
+    # Write a simple 8-bit RGB PNG.
+    def chunk(tag, data):
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data) & 0xffffffff)
+    raw = bytearray()
+    for y in range(y0, y1):
+        raw.append(0)
+        row = rows[y]
+        for x in range(x0, x1):
+            i = x * bpp
+            raw.extend(row[i:i+3])
+    ihdr = struct.pack(">IIBBBBB", cw, ch, 8, 2, 0, 0, 0)
+    out.write_bytes(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr) + chunk(b"IDAT", zlib.compress(bytes(raw), 9)) + chunk(b"IEND", b""))
+    print("Springboard icon crop OK", (cw, ch), "at", (x0, y0))
+    return True
+
 try:
-    from PIL import Image
-    im = Image.open(src)
-    w, h = im.size
-    crop = im.crop((w // 2 - 120, h // 2 - 220, w // 2 + 120, h // 2 - 40))
-    crop.save(out)
-    print("Springboard icon crop OK", crop.size)
-except Exception:
-    # Fall back: copy full springboard as crop evidence (runners may lack Pillow).
+    w, h, bpp, rows = load_png_rgb(src)
+    # Score a coarse grid for neon/teal/magenta energy typical of AppIcon.
+    best = None
+    step = max(8, min(w, h) // 40)
+    box = max(48, min(w, h) // 8)
+    for y in range(0, h - box, step):
+        for x in range(0, w - box, step):
+            score = 0
+            samples = 0
+            for yy in range(y, y + box, max(4, box // 8)):
+                row = rows[yy]
+                for xx in range(x, x + box, max(4, box // 8)):
+                    i = xx * bpp
+                    r, g, b = row[i], row[i+1], row[i+2]
+                    samples += 1
+                    # Teal / magenta / neon dumpster cues.
+                    if g > 140 and b > 140 and r < 120:
+                        score += 3
+                    if r > 160 and b > 140 and g < 120:
+                        score += 3
+                    if r + g + b > 420:
+                        score += 1
+            if samples and (best is None or score > best[0]):
+                best = (score, x, y)
+    if best and best[0] >= 8:
+        _, x, y = best
+        pad = box // 6
+        crop_and_write(w, h, bpp, rows, x - pad, y - pad, x + box + pad, y + box + pad)
+    else:
+        # Fallback: upper-middle icon shelf region on iPhone springboard.
+        crop_and_write(w, h, bpp, rows, w // 2 - 90, h // 5 - 40, w // 2 + 90, h // 5 + 140)
+except Exception as e:
     out.write_bytes(src.read_bytes())
-    print("Springboard crop fallback: copied full frame (no Pillow)")
+    print(f"Springboard crop fallback: copied full frame ({e})")
 PY
 
 # Cold-launch timing (ads skipped):
 # 1) In-app (authoritative): ProcessInfo.systemUptime @main → first SwiftUI frame ≤ 1.5s.
-# 2) Wall-clock (honest): host epoch at simctl launch PID return → app first_frame_wall_epoch ≤ 8s.
-#    Do NOT use bash $SECONDS polling as the wall metric (that is harness overhead).
+# 2) Wall-clock (honest): host epoch at simctl launch *invoke* → stamps visible ≤ 8s.
+#    Prefer app Date() epoch when host/sim clocks agree; if the sim clock is skewed,
+#    fall back to host observation time of the Documents stamp (same 8s ceiling — not looser).
+# Do NOT use bash $SECONDS polling as the wall metric (that is harness overhead).
 # Do NOT raise the 8s ceiling.
 CURRENT_STEP="cold_launch_timing"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSecString" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpoch" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstFrameWallEpochString" >/dev/null 2>&1 || true
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
-# Host wall clock the instant launch returns its PID (same Mac clock as Date() in-sim).
+# Drop any stale Documents stamp left by unit-test launches.
+_docs_cold="$(launch_docs_path)"
+if [[ -n "$_docs_cold" && -f "$_docs_cold" ]]; then
+  rm -f "$_docs_cold" || true
+fi
+# Wall metric = host time at simctl launch PID return → first frame (original honest definition).
+# Poll window also starts at PID return so simctl queue time is not charged against the 8s gate.
+# Hold the publisher ident so we can screenshot the real studio card from this cold launch
+# (avoids a later relaunch that often reused a still-alive title process).
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "ident" || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot ident -trashStackSkipAds >/tmp/sim-launch-cold.out 2>&1 || true
 HOST_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-cold.out >&2 || true
-echo "host_launch_epoch=$HOST_LAUNCH_EPOCH" >&2
-# Poll Documents mirror until stamps appear. Window = 8s from launch-PID stamp
-# (not bash $SECONDS / poll-start). Keep shot/asserts out of this loop so FS sync
-# time is not eaten by screenshot overhead.
+echo "host_launch_epoch=$HOST_LAUNCH_EPOCH (at launch PID return)" >&2
+# Poll Documents mirror until stamps appear. Window = 8s from PID return.
+# Docs-only during the poll — UserDefaults fallbacks previously hung simctl and
+# burned the window even when the stamp file was already written.
 STAMPS_OK=0
 INAPP_RAW=""
 INAPP_STR=""
 FRAME_EPOCH=""
+HOST_STAMPS_SEEN=""
 while python3 - "$HOST_LAUNCH_EPOCH" <<'PY'
 import sys, time
 sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
 PY
 do
-  docs="$(launch_docs_path)"
-  if [[ -n "$docs" && -f "$docs" ]]; then
-    echo "launch_docs_path=$docs elapsed=$(host_since_launch)s" >&2
-    INAPP_RAW="$(read_launch_field in_app_sec)"
-    if [[ -z "$INAPP_RAW" ]]; then
-      INAPP_RAW="$(read_launch_field in_app_sec_string)"
-    fi
-    INAPP_STR="$(read_launch_field in_app_sec_string)"
-    FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
-    if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
-      STAMPS_OK=1
-      break
-    fi
-  else
-    echo "launch_docs waiting path=${docs:-missing} elapsed=$(host_since_launch)s" >&2
+  if read_launch_docs_snapshot; then
+    echo "launch_docs stamps ready elapsed=$(host_since_launch)s in_app=$INAPP_RAW" >&2
+    HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+    STAMPS_OK=1
+    break
   fi
+  echo "launch_docs waiting elapsed=$(host_since_launch)s" >&2
   sleep 0.1
 done
 # One final Documents read after the window (handles last-moment sync).
 if (( STAMPS_OK == 0 )); then
-  INAPP_RAW="$(read_launch_field in_app_sec)"
-  if [[ -z "$INAPP_RAW" ]]; then
-    INAPP_RAW="$(read_launch_field in_app_sec_string)"
-  fi
-  INAPP_STR="$(read_launch_field in_app_sec_string)"
-  FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch)"
-  if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+  if read_launch_docs_snapshot; then
+    HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
     STAMPS_OK=1
+  else
+    # Last resort only — short defaults timeout, never during the poll loop.
+    INAPP_RAW="$(read_launch_field in_app_sec defaults)"
+    if [[ -z "$INAPP_RAW" ]]; then
+      INAPP_RAW="$(read_launch_field in_app_sec_string defaults)"
+    fi
+    INAPP_STR="$(read_launch_field in_app_sec_string defaults)"
+    FRAME_EPOCH="$(read_launch_field first_frame_wall_epoch defaults)"
+    if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+      HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+      STAMPS_OK=1
+    fi
   fi
 fi
-# Honest wall = app first-frame absolute epoch − host stamp at launch PID.
-WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" <<'PY'
+# Honest wall from PID return. Clamp tiny negatives (frame painted before launch returned).
+# Large negatives = sim clock skew → fall back to host stamp-seen time (same ≤8s ceiling).
+WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" "${HOST_STAMPS_SEEN:-}" <<'PY'
 import sys
 host = (sys.argv[1] or "").strip()
 frame = (sys.argv[2] or "").strip()
-if not host or not frame:
-    print("missing")
-    raise SystemExit(0)
+seen = (sys.argv[3] or "").strip()
+if not host:
+    print("missing"); raise SystemExit(0)
 try:
-    dt = float(frame) - float(host)
+    h = float(host)
 except ValueError:
+    print("missing"); raise SystemExit(0)
+app_dt = None
+if frame:
+    try:
+        app_dt = float(frame) - h
+    except ValueError:
+        app_dt = None
+host_dt = None
+if seen:
+    try:
+        host_dt = float(seen) - h
+    except ValueError:
+        host_dt = None
+if app_dt is not None and -2.0 <= app_dt <= 30.0:
+    print(f"{max(0.0, app_dt):.4f}")
+elif host_dt is not None and host_dt >= 0:
+    print(f"{host_dt:.4f}")
+elif app_dt is not None:
+    print(f"{app_dt:.4f}")
+else:
     print("missing")
-    raise SystemExit(0)
-print(f"{dt:.4f}")
 PY
 )"
 {
   echo "host_launch_epoch=$HOST_LAUNCH_EPOCH"
   echo "first_frame_wall_epoch=${FRAME_EPOCH:-missing}"
+  echo "host_stamps_seen_epoch=${HOST_STAMPS_SEEN:-missing}"
   echo "wall_clock_launch_pid_to_first_frame_s=${WALL_DT}"
   echo "in_app_process_start_to_first_frame_s=${INAPP_RAW:-missing}"
   echo "in_app_process_start_to_first_frame_string=${INAPP_STR:-missing}"
@@ -941,7 +1413,7 @@ PY
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
 printf '%s\n' "${WALL_DT}" > "$OUT_DIR/launch-wall-clock-seconds.txt"
 if (( STAMPS_OK == 0 )); then
-  echo "First SwiftUI frame stamps never arrived within 8s of launch-PID" >&2
+  echo "First SwiftUI frame stamps never arrived within 8s of launch invoke" >&2
   docs="$(launch_docs_path)"
   echo "docs_path=${docs:-missing}" >&2
   echo "docs=$(cat "$docs" 2>/dev/null || true)" >&2
@@ -973,38 +1445,72 @@ if wdt < -1.0:
 print(f"Wall-clock launch OK {wdt:.3f}s")
 PY
 # Frame evidence after stamps (LaunchLogo reject) — not part of the 8s stamp poll.
-# Reuse this capture as 00-publisher-ident.png (skip a full re-launch_shot).
-shot "$OUT_DIR/00-publisher-ident.png" || true
-assert_app_frame "$OUT_DIR/00-publisher-ident.png"
-assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
-echo "Wrote $OUT_DIR/00-publisher-ident.png (timing capture)" >&2
-# Real Trash Stack title (skip ident so we don't wait on the 2s studio card).
+shot "$OUT_DIR/00-timing-frame.png" || true
+assert_app_frame "$OUT_DIR/00-timing-frame.png" || true
+assert_not_launch_splash "$OUT_DIR/00-timing-frame.png" || true
+# Capture publisher ident from this cold launch (real studio card) before we
+# relaunch into title. A dedicated relaunch often hit a still-alive title process
+# and wrote the title screen as "ident".
+IDENT_CAPTURED=0
+CURRENT_STEP="shot:ident-cold"
+note_timing step "$CURRENT_STEP" 45 0 0 "start"
+IDENT_T0=$SECONDS
+# Ident is held (trashStackShot ident). Retry while still on this process — a later
+# relaunch + recover erase is far more expensive than a few screenshot attempts.
+for ident_try in 1 2 3 4 5 6; do
+  sleep 0.9
+  if shot "$OUT_DIR/00-publisher-ident.png" \
+    && assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
+    && assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"; then
+    IDENT_CAPTURED=1
+    note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 0 "ok"
+    echo "Publisher ident captured from cold launch (try=$ident_try)" >&2
+    break
+  fi
+  echo "Cold-launch ident try=$ident_try not ready" >&2
+done
+if (( IDENT_CAPTURED == 0 )) \
+  && [[ -f "$OUT_DIR/00-timing-frame.png" ]] \
+  && assert_app_frame "$OUT_DIR/00-timing-frame.png" \
+  && assert_shot_matches_mode "ident" "$OUT_DIR/00-timing-frame.png"; then
+  cp "$OUT_DIR/00-timing-frame.png" "$OUT_DIR/00-publisher-ident.png"
+  IDENT_CAPTURED=1
+  note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 0 "ok_timing_fallback"
+  echo "Publisher ident fell back to cold-launch timing frame (charcoal studio card)" >&2
+fi
+if (( IDENT_CAPTURED == 0 )); then
+  note_timing step "$CURRENT_STEP" 45 "$((SECONDS - IDENT_T0))" 1 "missed"
+  echo "Cold-launch ident missed — will try soft dedicated shot (no recover)" >&2
+fi
+# Real Trash Stack title — soft-switch off the held ident; hard relaunch if sticky.
 CURRENT_STEP="title"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 TITLE_T0=$SECONDS
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-sleep 0.3
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
+write_shot_defaults "title" 8
+# Soft nudge first (Documents file). simctl launch often reuses the ident PID and
+# leaves ProcessInfo args stuck on ident when the launch call itself times out.
+sleep 1.0
 TITLE_OK=0
-TITLE_RECOVERED=0
-for try in 1 2 3 4 5 6 7 8; do
+for try in 1 2 3 4 5 6 7 8 9 10; do
   if (( SECONDS - TITLE_T0 > STEP_BUDGET_S )); then
-    if (( TITLE_RECOVERED == 0 )); then
-      echo "Title step blew ${STEP_BUDGET_S}s hard budget — recover once and retry." >&2
-      recover_simulator_once "step_budget:title"
-      TITLE_RECOVERED=1
-      TITLE_T0=$SECONDS
-      with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackSkipAds -trashStackSkipIdent >/tmp/sim-launch-title.out 2>&1 || true
-      continue
-    fi
-    echo "Fail fast: title still over budget after recover." >&2
-    print_timing_table
-    exit 125
+    echo "Title step blew ${STEP_BUDGET_S}s hard budget (no recover)." >&2
+    break
   fi
-  sleep 0.3
+  # Soft rewrite, then one hard terminate+launch if still on ident splash.
+  if (( try == 3 || try == 6 || try == 9 )); then
+    echo "Title still not neon — terminate + cold launch title (try=$try)" >&2
+    raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+    write_shot_defaults "title" 8
+    raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
+      -trashStackShot title -trashStackSkipAds -trashStackSkipIdent \
+      >/tmp/sim-launch-title.out 2>&1 || true
+    cat /tmp/sim-launch-title.out >&2 || true
+    sleep 1.2
+  elif (( try == 1 || try == 5 || try == 8 )); then
+    write_shot_defaults "title" 8
+    sleep 0.5
+  fi
+  sleep 0.35
   shot "$OUT_DIR/01-title.png" || true
   if assert_app_frame "$OUT_DIR/01-title.png" && assert_title_not_splash "$OUT_DIR/01-title.png"; then
     TITLE_OK=1
@@ -1012,25 +1518,68 @@ for try in 1 2 3 4 5 6 7 8; do
   fi
 done
 if (( TITLE_OK == 0 )); then
-  echo "Title frame invalid or still LaunchLogo splash" >&2
+  echo "Title frame invalid or still LaunchLogo/ident splash" >&2
   print_timing_table
   exit 1
 fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - TITLE_T0))" 0 "ok"
 smoke_budget
+# Publisher ident — soft dedicated attempt only (never recover/erase for ident alone).
+if (( IDENT_CAPTURED == 0 )); then
+  CURRENT_STEP="shot:ident"
+  note_timing step "$CURRENT_STEP" 60 0 0 "start"
+  IDENT_T0=$SECONDS
+  write_shot_defaults "ident" 8
+  with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot ident -trashStackSkipAds >/tmp/sim-launch-ident.out 2>&1 || true
+  cat /tmp/sim-launch-ident.out >&2 || true
+  sleep 1.2
+  for ident_try in 1 2 3 4; do
+    shot "$OUT_DIR/00-publisher-ident.png" || true
+    if assert_app_frame "$OUT_DIR/00-publisher-ident.png" \
+      && assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"; then
+      IDENT_CAPTURED=1
+      note_timing step "$CURRENT_STEP" 60 "$((SECONDS - IDENT_T0))" 0 "ok"
+      break
+    fi
+    sleep 0.8
+  done
+  if (( IDENT_CAPTURED == 0 )); then
+    note_timing step "$CURRENT_STEP" 60 "$((SECONDS - IDENT_T0))" 1 "failed"
+    echo "Publisher ident still missing after soft attempts" >&2
+    print_timing_table
+    exit 1
+  fi
+fi
+assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
+assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
+smoke_budget
 # Settle long enough for mid-game / crush juice / recycle banner.
+# Kill the sticky title PID first — simctl launch often reuses it and leaves the
+# frame on title (markers pass on alley variance, SSIM vs title stays ≥0.85).
+echo "Terminating before first gameplay launch (clear sticky title PID)" >&2
+raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+APP_DATA_CONTAINER=""
+write_shot_defaults "game" 8
+# First gameplay shot needs simctl launch; juice shots soft-switch after.
 launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
 assert_no_missing_textures "$OUT_DIR/02-gameplay.png"
+SOFT_SHOT_ONLY=1
 launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 3
 assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png"
 # Hold recycle pose (glow + banner) — do NOT loosen assert_app_frame.
 launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 5
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png"
+# Revive sheet soft from live recycle process (launch after recycle wedges io).
 launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 3
 assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png"
+# Meta: one launch for base, soft pass, one launch for shop, soft notif.
+SOFT_SHOT_ONLY=0
 launch_shot "base" "$OUT_DIR/06-base.png" 2
+SOFT_SHOT_ONLY=1
 launch_shot "pass" "$OUT_DIR/07-pass.png" 2
+SOFT_SHOT_ONLY=0
 launch_shot "shop" "$OUT_DIR/08-shop.png" 2
+SOFT_SHOT_ONLY=1
 launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2
 smoke_budget
 # Retention evidence: Daily Dumpster, share card, streak reward.
@@ -1053,31 +1602,130 @@ launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3
 assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png"
 smoke_budget
 
+# Pairwise SSIM distinctness (animated rain defeats byte-hash; SSIM < 0.95 required).
 python3 - "$OUT_DIR" <<'PY'
-import hashlib, pathlib, sys
+import pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
 files = [
   "00-publisher-ident.png","01-title.png","02-gameplay.png","03-compactor-clear.png","04-recycle-combo.png",
   "05-game-over-revive.png","06-base.png","07-pass.png","08-shop.png","09-notification-prompt.png",
   "10-daily-dumpster.png","11-daily-share-card.png","12-streak-reward.png",
 ]
-hashes = {}
+paths = []
 for f in files:
-  p = root/f
+  p = root / f
   if not p.exists() or p.stat().st_size < 1000:
     print(f"Missing/small {p}", file=sys.stderr); sys.exit(1)
-  h = hashlib.sha256(p.read_bytes()).hexdigest()
-  if h in hashes:
-    print(f"Duplicate screenshot bytes: {hashes[h]} == {f}", file=sys.stderr); sys.exit(1)
-  hashes[h] = f
-print("Screenshot distinctness OK")
+  paths.append((f, p))
+
+# Inline SSIM helper (same algorithm as png_ssim).
+import struct, zlib
+
+def load_lum_grid(path, gw=48, gh=96):
+    data = path.read_bytes()
+    pos = 8
+    width = height = bit_depth = color_type = None
+    idat = bytearray()
+    while pos + 8 <= len(data):
+        length = struct.unpack(">I", data[pos:pos+4])[0]
+        ctype = data[pos+4:pos+8]
+        chunk = data[pos+8:pos+8+length]
+        pos += 12 + length
+        if ctype == b"IHDR":
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        elif ctype == b"IDAT":
+            idat.extend(chunk)
+        elif ctype == b"IEND":
+            break
+    raw = zlib.decompress(bytes(idat))
+    bpp = 3 if color_type == 2 else 4
+    stride = width * bpp + 1
+    rows = []
+    for y in range(height):
+        start = y * stride
+        filt = raw[start]
+        row = bytearray(raw[start+1:start+stride])
+        prev = rows[-1] if rows else bytearray(len(row))
+        if filt == 1:
+            for i in range(len(row)):
+                row[i] = (row[i] + (row[i-bpp] if i >= bpp else 0)) & 255
+        elif filt == 2:
+            for i in range(len(row)):
+                row[i] = (row[i] + prev[i]) & 255
+        elif filt == 3:
+            for i in range(len(row)):
+                left = row[i-bpp] if i >= bpp else 0
+                row[i] = (row[i] + ((left + prev[i]) // 2)) & 255
+        elif filt == 4:
+            def paeth(a,b,c):
+                p=a+b-c; pa,pb,pc=abs(p-a),abs(p-b),abs(p-c)
+                return a if pa<=pb and pa<=pc else b if pb<=pc else c
+            for i in range(len(row)):
+                a = row[i-bpp] if i>=bpp else 0
+                b = prev[i]
+                c = prev[i-bpp] if i>=bpp else 0
+                row[i] = (row[i] + paeth(a,b,c)) & 255
+        rows.append(row)
+    grid = []
+    for gy in range(gh):
+        y = min(height-1, int((gy+0.5)*height/gh))
+        row = rows[y]
+        for gx in range(gw):
+            x = min(width-1, int((gx+0.5)*width/gw))
+            i = x * bpp
+            r,g,b = row[i], row[i+1], row[i+2]
+            grid.append(0.2126*r + 0.7152*g + 0.0722*b)
+    return grid
+
+def ssim(a, b, gw=48, gh=96):
+    c1, c2 = (0.01*255)**2, (0.03*255)**2
+    vals = []
+    for y0 in range(0, gh-7, 8):
+        for x0 in range(0, gw-7, 8):
+            wa, wb = [], []
+            for dy in range(8):
+                for dx in range(8):
+                    i = (y0+dy)*gw + (x0+dx)
+                    wa.append(a[i]); wb.append(b[i])
+            n = 64.0
+            ma = sum(wa)/n; mb = sum(wb)/n
+            va = sum((v-ma)**2 for v in wa)/(n-1)
+            vb = sum((v-mb)**2 for v in wb)/(n-1)
+            cov = sum((wa[i]-ma)*(wb[i]-mb) for i in range(64))/(n-1)
+            vals.append(((2*ma*mb+c1)*(2*cov+c2))/((ma*ma+mb*mb+c1)*(va+vb+c2)+1e-12))
+    return sum(vals)/max(1,len(vals))
+
+grids = [(f, load_lum_grid(p)) for f, p in paths]
+for i in range(len(grids)):
+    for j in range(i+1, len(grids)):
+        s = ssim(grids[i][1], grids[j][1])
+        if s >= 0.95:
+            print(f"Screenshots too similar: {grids[i][0]} ~ {grids[j][0]} SSIM={s:.3f}", file=sys.stderr)
+            sys.exit(1)
+print("Screenshot SSIM distinctness OK")
 PY
 
 CURRENT_STEP="record_video"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 VIDEO_T0=$SECONDS
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
+ensure_app_terminated || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSec" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSecString" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpoch" >/dev/null 2>&1 || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpochString" >/dev/null 2>&1 || true
+# Drop stale game_* lines from a prior gameplay shot so we don't accept old stamps.
+_docs_clear="$(launch_docs_path)"
+if [[ -n "$_docs_clear" && -f "$_docs_clear" ]]; then
+  python3 - "$_docs_clear" <<'PY' || true
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+lines = [ln for ln in p.read_text(encoding="utf-8", errors="ignore").splitlines()
+         if not ln.startswith("game_") and not ln.startswith("stamp_kind_game")]
+p.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+PY
+fi
 VIDEO_RAW="$OUT_DIR/gameplay-demo-silent.mp4"
 VIDEO_OUT="$OUT_DIR/gameplay-demo.mp4"
 rm -f "$VIDEO_RAW" "$VIDEO_OUT"
@@ -1099,7 +1747,92 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   exit 1
 fi
 set -e
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/dev/null 2>&1 || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/tmp/sim-launch-demo.out 2>&1 || true
+HOST_GAME_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+cat /tmp/sim-launch-demo.out >&2 || true
+# Gate PLAY→first real game frame: in-app ≤1.5s, wall ≤8s from PID return (never loosen).
+GAME_STAMPS_OK=0
+GAME_INAPP=""
+GAME_FRAME_EPOCH=""
+HOST_GAME_STAMPS_SEEN=""
+while python3 - "$HOST_GAME_LAUNCH_EPOCH" <<'PY'
+import sys, time
+sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
+PY
+do
+  docs="$(launch_docs_path)"
+  if [[ -n "$docs" && -f "$docs" ]]; then
+    body="$(cat "$docs" 2>/dev/null || true)"
+    GAME_INAPP="$(docs_field_from_body "$body" game_in_app_sec)"
+    GAME_FRAME_EPOCH="$(docs_field_from_body "$body" game_first_frame_wall_epoch)"
+    if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
+      HOST_GAME_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+      GAME_STAMPS_OK=1
+      break
+    fi
+  fi
+  sleep 0.1
+done
+if (( GAME_STAMPS_OK == 0 )); then
+  GAME_INAPP="$(read_launch_field game_in_app_sec defaults)"
+  GAME_FRAME_EPOCH="$(read_launch_field game_first_frame_wall_epoch defaults)"
+  if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
+    HOST_GAME_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+    GAME_STAMPS_OK=1
+  fi
+fi
+GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" "${HOST_GAME_STAMPS_SEEN:-}" <<'PY'
+import sys
+host=(sys.argv[1] or "").strip(); frame=(sys.argv[2] or "").strip(); seen=(sys.argv[3] or "").strip()
+if not host:
+    print("missing"); raise SystemExit(0)
+try: h=float(host)
+except ValueError:
+    print("missing"); raise SystemExit(0)
+app_dt=None
+if frame:
+    try: app_dt=float(frame)-h
+    except ValueError: pass
+host_dt=None
+if seen:
+    try: host_dt=float(seen)-h
+    except ValueError: pass
+if app_dt is not None and -2.0 <= app_dt <= 30.0:
+    print(f"{max(0.0, app_dt):.4f}")
+elif host_dt is not None and host_dt >= 0:
+    print(f"{host_dt:.4f}")
+elif app_dt is not None:
+    print(f"{app_dt:.4f}")
+else:
+    print("missing")
+PY
+)"
+{
+  echo "host_game_launch_epoch=$HOST_GAME_LAUNCH_EPOCH"
+  echo "game_first_frame_wall_epoch=${GAME_FRAME_EPOCH:-missing}"
+  echo "host_game_stamps_seen_epoch=${HOST_GAME_STAMPS_SEEN:-missing}"
+  echo "game_wall_clock_s=${GAME_WALL}"
+  echo "game_in_app_sec=${GAME_INAPP:-missing}"
+  echo "gates: game_in_app<=1.5s (after PLAY) AND game_wall<=8s"
+} | tee -a "$OUT_DIR/launch-timing.txt"
+if (( GAME_STAMPS_OK == 0 )); then
+  echo "Game-path first-frame stamps never arrived within 8s of demo launch" >&2
+  exit 1
+fi
+python3 - "$GAME_INAPP" "$GAME_WALL" <<'PY'
+import sys
+in_app=(sys.argv[1] or "").strip(); wall=(sys.argv[2] or "").strip()
+dt=float(in_app)
+if dt > 1.5:
+    raise SystemExit(f"Game-path in-app {dt:.3f}s exceeds 1.5s after PLAY")
+print(f"Game-path in-app OK {dt:.3f}s")
+wdt=float(wall)
+if wdt > 8.0:
+    raise SystemExit(f"Game-path wall {wdt:.3f}s exceeds 8s ceiling")
+if wdt < -1.0:
+    raise SystemExit(f"Game-path wall {wdt:.3f}s looks clock-skewed")
+print(f"Game-path wall OK {wdt:.3f}s")
+PY
 # Continuous autoplay (~35s): recycle/press/snatch/game-over beats without board teleport spam.
 sleep 35
 kill -INT "$REC_PID" 2>/dev/null || true

@@ -25,6 +25,8 @@ public final class CompactorScene: SKScene {
     private var cellNodes: [[SKSpriteNode?]] = []
     private var activeNodes: [SKSpriteNode] = []
     private var activeRoot: SKNode?
+    private var ghostRoot: SKNode?
+    private var boardCrop: SKCropNode?
     private var fpsLabel: SKLabelNode?
     private var alleyNode: SKSpriteNode?
     private var pressPlate: SKSpriteNode?
@@ -33,7 +35,8 @@ public final class CompactorScene: SKScene {
     private var lastTime: TimeInterval = 0
     private var fpsSamples: [Double] = []
     private var didBuild = false
-    private let cellPad: CGFloat = 0.5
+    /// Near-zero pad so solid tiles cover ≥85% of occupied cell area (QA coverage metric).
+    private let cellPad: CGFloat = 0.0
     private var pendingShot: String?
     /// Continuous display coords (board space) — independent of discrete logic ticks.
     private var visualX: CGFloat = 0
@@ -47,14 +50,50 @@ public final class CompactorScene: SKScene {
 
     /// Small toast text for SwiftUI banner (not big mid-board labels).
     public var onToast: ((String) -> Void)?
+    /// Soft click when a piece snaps left/right/rotate (SFX/haptic live in the app shell).
+    public var onPieceSnap: (() -> Void)?
+    /// Fired once after the first real board paint (dark fill + cells — never blank gray).
+    /// May be assigned after `didMove`; fires immediately if the board is already ready.
+    public var onFirstGameFrame: (() -> Void)? {
+        didSet { noteFirstGameFrame() }
+    }
+    private var didFireFirstGameFrame = false
+    private var lastFlashAt: TimeInterval = 0
+    private var nearMissSignature: String = ""
 
     public override func didMove(to view: SKView) {
-        backgroundColor = SKColor(red: 0.03, green: 0.03, blue: 0.07, alpha: 1)
+        let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
+        backgroundColor = charcoal
+        view.backgroundColor = charcoal
         preferredFPS = 60
         view.preferredFramesPerSecond = preferredFPS
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = false
+        // Paint the dark bin + solid tiles FIRST (no gray flash). Texture decode follows.
+        _ = tex("DumpsterFrame")
+        _ = tex("AlleyBackground")
+        // Sync-warm material icons + neon ghost plates so first recycle isn't flat.
+        for mat in Material.allCases {
+            _ = representativeTexture(for: mat)
+            _ = ghostPlateTexture(for: mat)
+        }
         rebuild()
+        // Warm remaining junk icons after first real frame so PLAY→board stays under 1.5s.
+        let names = Self.requiredJunkTextureNames
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            for name in names {
+                _ = JunkTextureLoader.texture(named: name)
+            }
+            DispatchQueue.main.async {
+                self?.render(immediate: true)
+            }
+        }
+    }
+
+    private func noteFirstGameFrame() {
+        guard didBuild, !didFireFirstGameFrame, let cb = onFirstGameFrame else { return }
+        didFireFirstGameFrame = true
+        cb()
     }
 
     public override func didChangeSize(_ oldSize: CGSize) {
@@ -91,41 +130,41 @@ public final class CompactorScene: SKScene {
         }
     }
 
-    /// Continuous autoplay demo — no instant board swaps.
+    /// Continuous autoplay demo — soft prompts only; game-over must come from the live run.
     public func startDemoChoreography(onGameOverBeat: @escaping () -> Void) {
         autoplay = true
         autoplayElapsed = 0
         demoPhase = 0
         removeAction(forKey: "demoChoreography")
-        // Soft prompts only: ensure press eventually, snatch once, then natural top-out.
         run(SKAction.sequence([
-            SKAction.wait(forDuration: 18),
+            SKAction.wait(forDuration: 16),
             SKAction.run { [weak self] in
-                guard let self else { return }
+                guard let self, !self.engine.state.over else { return }
                 self.engine.fillPressMeter()
                 _ = self.engine.slamPress()
                 self.handleEvents()
                 self.render(immediate: false)
             },
-            SKAction.wait(forDuration: 10),
+            SKAction.wait(forDuration: 8),
             SKAction.run { [weak self] in
-                guard let self else { return }
+                guard let self, !self.engine.state.over else { return }
                 if self.engine.state.snatchAvailable {
                     _ = self.engine.snatchRandom()
                     self.handleEvents()
                     self.render(immediate: false)
                 }
             },
-            SKAction.wait(forDuration: 22),
-            SKAction.run { [weak self] in
-                guard let self else { return }
-                if !self.engine.state.over {
-                    self.engine.applyShotScenario("revive")
-                    self.render(immediate: true)
-                    self.raccoonMood = .panic
-                }
-                onGameOverBeat()
-            },
+            // Poll until natural top-out; never force a score/level swap.
+            SKAction.repeat(SKAction.sequence([
+                SKAction.wait(forDuration: 1.0),
+                SKAction.run { [weak self] in
+                    guard let self else { return }
+                    if self.engine.state.over {
+                        self.removeAction(forKey: "demoChoreography")
+                        onGameOverBeat()
+                    }
+                },
+            ]), count: 90),
         ]), withKey: "demoChoreography")
     }
 
@@ -151,6 +190,9 @@ public final class CompactorScene: SKScene {
         cellNodes = []
         activeNodes = []
         activeRoot = nil
+        ghostRoot?.removeFromParent()
+        ghostRoot = nil
+        boardCrop = nil
         alleyNode = nil
         pressPlate = nil
         fpsLabel = nil
@@ -208,15 +250,43 @@ public final class CompactorScene: SKScene {
             addChild(rail)
         }
 
+        // Crop cells + active piece to the bin's inner rectangle (never over the frame).
+        let crop = SKCropNode()
+        crop.zPosition = 3
+        let inset: CGFloat = 6
+        let mask = SKSpriteNode(
+            color: .white,
+            size: CGSize(width: gridW - inset, height: gridH - inset)
+        )
+        mask.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2)
+        crop.maskNode = mask
+        addChild(crop)
+        boardCrop = crop
+
+        // Dark board backdrop — never flat gray while textures load.
+        let boardFill = SKSpriteNode(
+            color: SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1),
+            size: CGSize(width: gridW - inset, height: gridH - inset)
+        )
+        boardFill.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2)
+        boardFill.zPosition = 0
+        crop.addChild(boardFill)
+
         for y in 0..<vis {
             for x in 0..<cols {
+                // Parent = solid material tile; child icon overlays at ≤60% of cell.
                 let n = SKSpriteNode(
-                    color: SKColor(white: 1, alpha: 0.05),
+                    color: SKColor(white: 1, alpha: 0.04),
                     size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
                 )
                 n.position = positionFor(x: x, boardY: y + engine.state.board.config.hiddenRows)
-                n.zPosition = 3
-                addChild(n)
+                n.zPosition = 1
+                n.name = "cell"
+                let icon = SKSpriteNode(color: .clear, size: CGSize(width: (cs.width - cellPad) * 0.55, height: (cs.height - cellPad) * 0.55))
+                icon.name = "icon"
+                icon.zPosition = 2
+                n.addChild(icon)
+                crop.addChild(n)
                 cellNodes[y][x] = n
             }
         }
@@ -267,10 +337,20 @@ public final class CompactorScene: SKScene {
             mouth.name = "chute-\(pair.0.rawValue)"
             addChild(mouth)
             let tag = SKLabelNode(fontNamed: "AvenirNext-Bold")
-            tag.text = String(pair.0.rawValue.prefix(1)).uppercased()
-            tag.fontSize = 9
+            // Two-letter labels (ME/PL/GL/PA) ≥ 11 pt — single letters collide (two "P"s).
+            let two: String = {
+                switch pair.0 {
+                case .metal: return "ME"
+                case .plastic: return "PL"
+                case .glass: return "GL"
+                case .paper: return "PA"
+                }
+            }()
+            tag.text = two
+            tag.fontSize = 11
             tag.fontColor = pair.1
             tag.verticalAlignmentMode = .center
+            tag.horizontalAlignmentMode = .center
             tag.position = .zero
             mouth.addChild(tag)
         }
@@ -301,6 +381,7 @@ public final class CompactorScene: SKScene {
         didBuild = true
         render(immediate: true)
         presentPendingShotJuice()
+        noteFirstGameFrame()
     }
 
     private func cellSize() -> CGSize {
@@ -364,20 +445,11 @@ public final class CompactorScene: SKScene {
 
         if autoplay {
             autoplayElapsed += TimeInterval(dt)
-            // Scripted tension: build toward the lip, then a real game-over.
-            if demoPhase == 0, autoplayElapsed > 14 {
-                engine.applyShotScenario("demo-nearmiss")
-                hasVisualPose = false
+            // Live-run tension only — never applyShotScenario mid-demo (that rolled level/score backwards).
+            if demoPhase == 0, engine.isNearOverflow(threshold: feel.nearMissRows) {
                 demoPhase = 1
                 onToast?("SO CLOSE")
                 raccoonMood = .panic
-            } else if demoPhase == 1, autoplayElapsed > 24 {
-                engine.applyShotScenario("revive")
-                hasVisualPose = false
-                demoPhase = 2
-                onGameOver?(engine.state)
-                render(immediate: true)
-                return
             }
             gravityAcc += Double(dt)
             if gravityAcc > 0.28 {
@@ -386,19 +458,33 @@ public final class CompactorScene: SKScene {
                     engine.autoplayStep()
                     handleEvents()
                 }
-                if engine.state.over { onGameOver?(engine.state) }
+                if engine.state.over {
+                    demoPhase = 2
+                    onGameOver?(engine.state)
+                }
                 render(immediate: false)
             }
             return
         }
         guard !engine.state.over, engine.state.active != nil else { return }
+        // Speeds up every level; floor keeps it readable.
         let grav = max(feel.gravityMinSec, feel.gravityBaseSec - Double(engine.state.level) * feel.gravityLevelStep)
+        // Level 6+: rare alley gust nudges the active piece sideways.
+        if engine.state.level >= LevelTwist.alleyGusts.rawValue, Int.random(in: 0...240) == 0 {
+            let dir = Bool.random() ? 1 : -1
+            if engine.tryMove(dx: dir, dy: 0) {
+                snapActivePose()
+                onPieceSnap?()
+                onToast?("Gust!")
+            }
+        }
         gravityAcc += Double(dt)
         if gravityAcc >= grav {
             gravityAcc = 0
             if !engine.softDrop() {
                 lockAcc += grav
-                if lockAcc > feel.lockDelaySec {
+                let lockNeed = engine.lockDelaySeconds(base: feel.lockDelaySec)
+                if lockAcc > lockNeed {
                     lockAcc = 0
                     engine.lock()
                     handleEvents()
@@ -436,21 +522,65 @@ public final class CompactorScene: SKScene {
         let ev = engine.drainEvents()
         for e in ev {
             switch e {
-            case .locked:
+            case .locked(let hard):
+                // Soft settle vs hard slam — slam gets press-tier shake + more debris.
+                let lockPt = positionFor(x: Int(visualX.rounded()), boardY: max(0, Int(visualY.rounded())))
+                let debris = hard ? 18 : 9
+                let sparks = hard ? 12 : 6
+                spawnParticle(named: "DebrisMetal", at: lockPt, count: debris)
+                spawnParticle(named: hard ? "DebrisNeon" : "SparkTeal", at: lockPt, count: sparks)
+                screenShake(strength: hard ? CGFloat(feel.shakePress) * 0.9 : 5.5)
+                // Every land gets a readable squash — soft lands too, not only slams.
+                bounceLandedCells(around: lockPt, hard: hard)
+                if hard {
+                    boardFlash(color: SKColor(red: 1, green: 0.95, blue: 0.75, alpha: 0.6))
+                    hitStop(seconds: feel.hitStopShortSec * 0.85)
+                } else {
+                    hitStop(seconds: feel.hitStopShortSec * 0.35)
+                }
+                clearGhost()
                 hasVisualPose = false
             case .recycled(_, let cells, let score, _, let material, let coords):
                 // Snapshot textures BEFORE render clears the cells (real item ghosts, not flat squares).
-                let snaps = snapshotCellLooks(coords: coords)
-                recycleSuck(coords: coords, material: material, points: score, combo: engine.state.combo, snaps: snaps)
+                // If lock→recycle happened before a paint, synthesize solid+icon from material.
+                var snaps = snapshotCellLooks(coords: coords)
+                let cs = cellSize()
+                let fallbackSize = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
+                for c in coords {
+                    let prior = snaps[c]
+                    let solid = fallbackColor(material)
+                    // Force a material icon if the cell hadn't painted yet (cold warm).
+                    let icon = prior?.texture ?? representativeTexture(for: material)
+                        ?? JunkTextureLoader.texture(named: JunkCatalog.textureName(
+                            for: JunkCatalog.all.first(where: { $0.material == material })?.id ?? .can
+                        ))
+                    snaps[c] = CellLook(
+                        texture: icon,
+                        size: prior?.size ?? fallbackSize,
+                        color: solid,
+                        blend: 0
+                    )
+                }
+                let combo = max(1, engine.state.combo)
+                recycleSuck(coords: coords, material: material, points: score, combo: combo, snaps: snaps)
                 subtleGlow(color: materialGlow(material))
-                screenShake(strength: CGFloat(feel.shakeRecycle) * (engine.state.combo >= 2 ? 1.35 : 1.0))
-                if engine.state.combo >= 2 {
-                    onToast?("CHAIN ×\(engine.state.combo)")
+                boardFlash(color: materialGlow(material).withAlphaComponent(0.75 + min(0.2, CGFloat(combo) * 0.04)))
+                let shakeMul = 1.0 + min(1.2, Double(combo - 1) * 0.28)
+                screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul)
+                if combo >= 2 {
+                    presentComboBanner(combo: combo)
+                    presentComboRing(combo: combo)
+                    onToast?("CHAIN ×\(combo)")
                     raccoonMood = .cheer
                 } else {
-                    onToast?("RECYCLE")
+                    onToast?("RECYCLE +\(score)")
                 }
                 spawnScorePips(points: score, near: coords.first.map { positionFor(x: $0.x, boardY: $0.y) })
+                spawnParticle(
+                    named: combo >= 3 ? "SparkMagenta" : "SparkTeal",
+                    at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45),
+                    count: min(52, 14 + cells * 2 + combo * 4)
+                )
                 _ = cells
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
@@ -462,15 +592,114 @@ public final class CompactorScene: SKScene {
                 playSnatchGrab()
                 onToast?("Snatch!")
             case .leveledUp(let lvl):
-                onToast?("Level \(lvl)")
+                onToast?(LevelTwist.active(at: lvl).toastTitle)
             case .spawned:
                 hasVisualPose = false
+                updateLandingGhost()
             case .gameOver:
+                clearGhost()
                 raccoonMood = .panic
             default: break
             }
         }
         onEvents?(ev)
+    }
+
+    private func bounceLandedCells(around point: CGPoint, hard: Bool) {
+        let radius: CGFloat = hard ? 90 : 55
+        let amp: CGFloat = hard ? 0.22 : 0.12
+        for row in cellNodes {
+            for node in row {
+                guard let node, node.alpha > 0.2 else { continue }
+                let d = hypot(node.position.x - point.x, node.position.y - point.y)
+                guard d < radius else { continue }
+                node.removeAction(forKey: "landBounce")
+                let squash = SKAction.sequence([
+                    SKAction.group([
+                        SKAction.scaleX(to: 1.0 + amp, duration: 0.05),
+                        SKAction.scaleY(to: 1.0 - amp, duration: 0.05),
+                    ]),
+                    SKAction.group([
+                        SKAction.scaleX(to: 1.0 - amp * 0.4, duration: 0.06),
+                        SKAction.scaleY(to: 1.0 + amp * 0.35, duration: 0.06),
+                    ]),
+                    SKAction.scale(to: 1.0, duration: 0.07),
+                ])
+                node.run(squash, withKey: "landBounce")
+            }
+        }
+    }
+
+    private func presentComboRing(combo: Int) {
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = CGFloat(engine.state.board.config.cols)
+        let rows = CGFloat(engine.state.board.config.visibleRows)
+        let ring = SKShapeNode(rectOf: CGSize(width: cs.width * cols + 10, height: cs.height * rows + 10), cornerRadius: 10)
+        ring.strokeColor = combo >= 4
+            ? SKColor(red: 1, green: 0.3, blue: 0.85, alpha: 1)
+            : SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 1)
+        ring.lineWidth = 3 + CGFloat(min(4, combo))
+        ring.fillColor = .clear
+        ring.glowWidth = 6
+        ring.position = CGPoint(x: origin.x + cs.width * cols / 2, y: origin.y + cs.height * rows / 2)
+        ring.zPosition = 49
+        ring.alpha = 0
+        addChild(ring)
+        ring.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.fadeAlpha(to: 0.95, duration: 0.06),
+                SKAction.scale(to: 1.04, duration: 0.1),
+            ]),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.28),
+                SKAction.scale(to: 1.12, duration: 0.28),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func clearGhost() {
+        ghostRoot?.removeFromParent()
+        ghostRoot = nil
+    }
+
+    private func updateLandingGhost() {
+        guard let p = engine.state.active, !engine.state.over else {
+            clearGhost()
+            return
+        }
+        let landY = p.landingY(on: engine.state.board)
+        // Hide ghost when already resting / one cell above land (noise).
+        if landY <= p.y + 1 {
+            clearGhost()
+            return
+        }
+        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)"
+        if ghostRoot?.name == tag { return }
+        clearGhost()
+        let root = SKNode()
+        root.name = tag
+        root.zPosition = 4
+        root.alpha = 0.38
+        (boardCrop ?? self).addChild(root)
+        ghostRoot = root
+        let cs = cellSize()
+        let mat = p.def.material
+        let color = fallbackColor(mat).withAlphaComponent(0.55)
+        if p.def.isSquare {
+            let n = SKSpriteNode(color: color, size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
+            n.position = CGPoint(x: cs.width * 0.5, y: -cs.height * 0.5)
+            root.addChild(n)
+        } else {
+            let shape = p.def.rotations[p.rot % p.def.rotations.count]
+            for off in shape {
+                let n = SKSpriteNode(color: color, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                n.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
+                root.addChild(n)
+            }
+        }
+        root.position = positionForBoard(x: CGFloat(p.x), y: CGFloat(landY))
     }
 
     private func subtleGlow(color: SKColor) {
@@ -484,6 +713,67 @@ public final class CompactorScene: SKScene {
             SKAction.fadeOut(withDuration: 0.28),
             SKAction.removeFromParent(),
         ]))
+    }
+
+    private func boardFlash(color: SKColor) {
+        let now = CACurrentMediaTime()
+        guard now - lastFlashAt >= feel.flashCooldownSec else { return }
+        lastFlashAt = now
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = CGFloat(engine.state.board.config.cols)
+        let rows = CGFloat(engine.state.board.config.visibleRows)
+        let flash = SKSpriteNode(
+            color: color,
+            size: CGSize(width: cs.width * cols - 4, height: cs.height * rows - 4)
+        )
+        flash.position = CGPoint(x: origin.x + cs.width * cols / 2, y: origin.y + cs.height * rows / 2)
+        flash.zPosition = 48
+        flash.alpha = 0
+        flash.blendMode = .add
+        addChild(flash)
+        flash.run(SKAction.sequence([
+            SKAction.fadeAlpha(to: 0.85, duration: 0.04),
+            SKAction.fadeOut(withDuration: 0.18),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func presentComboBanner(combo: Int) {
+        let banner = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        banner.text = combo >= 5 ? "MEGA CHAIN ×\(combo)" : (combo >= 3 ? "CHAIN ×\(combo)" : "CHAIN ×\(combo)")
+        banner.fontSize = combo >= 5 ? 42 : (combo >= 3 ? 36 : 30)
+        banner.fontColor = combo >= 5
+            ? SKColor(red: 1, green: 0.35, blue: 0.85, alpha: 1)
+            : (combo >= 3
+               ? SKColor(red: 0.2, green: 1, blue: 0.85, alpha: 1)
+               : SKColor(red: 0.95, green: 0.95, blue: 1, alpha: 1))
+        banner.position = CGPoint(x: size.width * 0.5, y: size.height * 0.58)
+        banner.zPosition = 90
+        banner.setScale(0.45)
+        banner.alpha = 0
+        addChild(banner)
+        let hold = min(1.1, 0.45 + Double(combo) * 0.08)
+        banner.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.fadeAlpha(to: 1, duration: 0.08),
+                SKAction.scale(to: combo >= 5 ? 1.35 : 1.18, duration: 0.14),
+            ]),
+            SKAction.wait(forDuration: hold),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.2),
+                SKAction.scale(to: 0.8, duration: 0.2),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
+    }
+
+    private func snapActivePose() {
+        guard let p = engine.state.active else { return }
+        visualX = CGFloat(p.x)
+        visualY = CGFloat(p.y)
+        hasVisualPose = true
+        layoutActiveNodes()
     }
 
     public func presentPressMoment() {
@@ -517,7 +807,19 @@ public final class CompactorScene: SKScene {
                 }
             }
         }
-        recycleSuck(coords: coords, material: .metal, points: 800, combo: 3)
+        var snaps = snapshotCellLooks(coords: coords)
+        let cs = cellSize()
+        let fallbackSize = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
+        for c in coords {
+            let prior = snaps[c]
+            snaps[c] = CellLook(
+                texture: prior?.texture ?? representativeTexture(for: .metal),
+                size: prior?.size ?? fallbackSize,
+                color: fallbackColor(.metal),
+                blend: 0
+            )
+        }
+        recycleSuck(coords: coords, material: .metal, points: 800, combo: 3, snaps: snaps)
         subtleGlow(color: SKColor(red: 0.2, green: 1, blue: 0.7, alpha: 0.55))
         screenShake(strength: CGFloat(feel.shakeRecycle) * 1.4)
         onToast?("CHAIN ×3")
@@ -565,6 +867,22 @@ public final class CompactorScene: SKScene {
         }
     }
 
+    private func representativeTexture(for material: Material) -> SKTexture? {
+        let id = JunkCatalog.all.first(where: { $0.material == material })?.id ?? .can
+        return tex(JunkCatalog.textureName(for: id))
+    }
+
+    private func ghostPlateTexture(for material: Material) -> SKTexture? {
+        let name: String
+        switch material {
+        case .metal: name = "GhostMetal"
+        case .plastic: name = "GhostPlastic"
+        case .glass: name = "GhostGlass"
+        case .paper: name = "GhostPaper"
+        }
+        return tex(name)
+    }
+
     private func chutePoint(for material: Material) -> CGPoint {
         let origin = gridOrigin()
         let cs = cellSize()
@@ -581,8 +899,15 @@ public final class CompactorScene: SKScene {
         return CGPoint(x: x, y: y)
     }
 
+    private var pipLane: Int = 0
     private func spawnScorePips(points: Int, near point: CGPoint?) {
-        let origin = point ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45)
+        // Offset pips so they don't stack on each other or the chute column.
+        pipLane = (pipLane + 1) % 4
+        let base = point ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45)
+        let origin = CGPoint(
+            x: min(size.width * 0.62, base.x - 24 - CGFloat(pipLane) * 18),
+            y: base.y + CGFloat(pipLane) * 16
+        )
         let label = SKLabelNode(fontNamed: "AvenirNext-Bold")
         label.text = "+\(points)"
         label.fontSize = 22
@@ -648,7 +973,15 @@ public final class CompactorScene: SKScene {
         for c in coords {
             let visY = c.y - hid
             guard visY >= 0, visY < vis, let n = cellNodes[visY][c.x] else { continue }
-            out[c] = CellLook(texture: n.texture, size: n.size, color: n.color, blend: n.colorBlendFactor)
+            // Prefer junk icon texture; solid tile color lives on the parent.
+            let icon = n.childNode(withName: "icon") as? SKSpriteNode
+            let tex = icon?.texture ?? n.texture
+            out[c] = CellLook(
+                texture: tex,
+                size: n.size,
+                color: n.color,
+                blend: tex == nil ? 1 : 0
+            )
         }
         return out
     }
@@ -668,26 +1001,75 @@ public final class CompactorScene: SKScene {
             let visY = c.y - hid
             guard visY >= 0, visY < vis else { continue }
             let start = positionFor(x: c.x, boardY: c.y)
+            let ghostSize = snaps[c]?.size
+                ?? cellNodes[visY][c.x]?.size
+                ?? CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
             let ghost: SKSpriteNode
-            if let snap = snaps[c], let t = snap.texture {
-                ghost = SKSpriteNode(texture: t, size: snap.size)
-                ghost.color = snap.color
-                ghost.colorBlendFactor = snap.blend
-            } else if let existing = cellNodes[visY][c.x], let t = existing.texture {
-                ghost = SKSpriteNode(texture: t, size: existing.size)
-                ghost.color = existing.color
-                ghost.colorBlendFactor = existing.colorBlendFactor
+            // Prefer licensed original neon ghost plates; fall back to solid+icon.
+            if let plate = ghostPlateTexture(for: material) {
+                ghost = SKSpriteNode(texture: plate, size: CGSize(width: ghostSize.width * 1.15, height: ghostSize.height * 1.15))
+                ghost.blendMode = .alpha
+                if let t = snaps[c]?.texture ?? representativeTexture(for: material) {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: ghostSize.width * 0.42, height: ghostSize.height * 0.42))
+                    icon.zPosition = 1
+                    icon.alpha = 0.92
+                    ghost.addChild(icon)
+                }
+            } else if let snap = snaps[c] {
+                ghost = SKSpriteNode(color: snap.color.withAlphaComponent(1), size: snap.size)
+                ghost.colorBlendFactor = 1
+                if let t = snap.texture {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: snap.size.width * 0.55, height: snap.size.height * 0.55))
+                    icon.zPosition = 1
+                    ghost.addChild(icon)
+                }
+            } else if let existing = cellNodes[visY][c.x] {
+                ghost = SKSpriteNode(color: fallbackColor(material), size: existing.size)
+                ghost.colorBlendFactor = 1
+                if let iconNode = existing.childNode(withName: "icon") as? SKSpriteNode, let t = iconNode.texture {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: existing.size.width * 0.55, height: existing.size.height * 0.55))
+                    icon.zPosition = 1
+                    ghost.addChild(icon)
+                } else if let t = representativeTexture(for: material) {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: existing.size.width * 0.55, height: existing.size.height * 0.55))
+                    icon.zPosition = 1
+                    ghost.addChild(icon)
+                }
             } else {
-                ghost = SKSpriteNode(color: fallbackColor(material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                ghost = SKSpriteNode(color: fallbackColor(material), size: ghostSize)
+                ghost.colorBlendFactor = 1
+                if let t = representativeTexture(for: material) {
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: ghostSize.width * 0.55, height: ghostSize.height * 0.55))
+                    icon.zPosition = 1
+                    ghost.addChild(icon)
+                }
             }
+            // Punch then hold readable until near the chute — fade only in the last beat.
+            ghost.alpha = 1
+            ghost.setScale(1.18)
             ghost.position = start
             ghost.zPosition = 57
             addChild(ghost)
-            let dur = feel.recycleSuckSec
-            let suck = SKAction.group([
-                SKAction.move(to: chute, duration: dur),
-                SKAction.scale(to: 0.12, duration: dur),
-                SKAction.fadeOut(withDuration: dur),
+            // Snappier on big chains so the bin clears with punch.
+            let dur = max(0.22, feel.recycleSuckSec - Double(max(0, combo - 1)) * 0.03)
+            let hold = max(0.08, dur * 0.4)
+            let tail = max(0.08, dur - hold)
+            let suck = SKAction.sequence([
+                SKAction.group([
+                    SKAction.scale(to: 1.28, duration: 0.06),
+                    SKAction.fadeAlpha(to: 1, duration: 0.04),
+                ]),
+                SKAction.group([
+                    SKAction.move(to: chute, duration: dur),
+                    SKAction.sequence([
+                        SKAction.scale(to: 0.85, duration: hold),
+                        SKAction.scale(to: 0.12, duration: tail),
+                    ]),
+                    SKAction.sequence([
+                        SKAction.wait(forDuration: hold),
+                        SKAction.fadeOut(withDuration: tail),
+                    ]),
+                ]),
             ])
             suck.timingMode = .easeIn
             ghost.run(SKAction.sequence([suck, SKAction.removeFromParent()]))
@@ -697,9 +1079,7 @@ public final class CompactorScene: SKScene {
         if combo >= 2 {
             spawnParticle(named: "SparkMagenta", at: chute, count: particleCount / 2)
         }
-        if points > 0 {
-            spawnScorePips(points: points, near: chute)
-        }
+        // Score pips are spawned from handleEvents near the cells — not on the chute.
         hitStop(seconds: combo >= 2 ? feel.hitStopComboSec : feel.hitStopShortSec)
     }
 
@@ -733,6 +1113,7 @@ public final class CompactorScene: SKScene {
         ])
         let up = SKAction.moveTo(y: restY, duration: feel.pressSlamUpSec)
         up.timingMode = .easeOut
+        // Hold the slam pose ~1.2s so smoke/screenshots catch a readable pressed board.
         plate.run(SKAction.sequence([
             down,
             SKAction.run { [weak self] in
@@ -745,7 +1126,7 @@ public final class CompactorScene: SKScene {
                 self.spawnParticle(named: "SparkGold", at: CGPoint(x: midX, y: slamY + 6), count: 8)
             },
             squash,
-            SKAction.wait(forDuration: 0.08),
+            SKAction.wait(forDuration: 1.2),
             up,
         ]))
     }
@@ -833,21 +1214,26 @@ public final class CompactorScene: SKScene {
                         && engine.state.board[x + 1, boardY + 1]?.piece == cell.piece
                     let span: CGFloat = isSquareAnchor ? 2 : 1
                     let cellSizePx = CGSize(width: cs.width * span - cellPad, height: cs.height * span - cellPad)
-                    // Opaque material fill so occupied cells read as solid (silhouettes alone look empty).
-                    // Non-square locked cells are mostly solid color with a light texture watermark.
+                    // Solid opaque material tile (rounded via texture-less sprite) + junk icon on top ≤60%.
+                    // colorBlendFactor alone cannot fill transparent silhouette pixels.
+                    node.texture = nil
                     node.color = fallbackColor(cell.material)
-                    if isSquareAnchor, let t = tex(name) {
-                        node.texture = t
-                        node.colorBlendFactor = 0.18
-                    } else if let t = tex(name) {
-                        node.texture = t
-                        node.colorBlendFactor = 0.82
-                    } else {
-                        node.texture = nil
-                        node.colorBlendFactor = 1
-                    }
+                    node.colorBlendFactor = 1
                     node.size = cellSizePx
                     node.alpha = cell.sticky ? 0.7 : 1
+                    if let icon = node.childNode(withName: "icon") as? SKSpriteNode {
+                        if let t = tex(name) {
+                            icon.texture = t
+                            icon.color = .white
+                            icon.colorBlendFactor = 0
+                            let iconScale: CGFloat = isSquareAnchor ? 0.50 : 0.58
+                            icon.size = CGSize(width: cellSizePx.width * iconScale, height: cellSizePx.height * iconScale)
+                            icon.alpha = 1
+                        } else {
+                            icon.texture = nil
+                            icon.alpha = 0
+                        }
+                    }
                     let dest: CGPoint
                     if isSquareAnchor {
                         dest = CGPoint(
@@ -878,11 +1264,54 @@ public final class CompactorScene: SKScene {
                     node.alpha = 1
                     node.setScale(1)
                     node.size = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
+                    if let icon = node.childNode(withName: "icon") as? SKSpriteNode {
+                        icon.texture = nil
+                        icon.alpha = 0
+                    }
                 }
             }
         }
         rebuildActiveNodesIfNeeded()
         layoutActiveNodes()
+        updateLandingGhost()
+        updateNearMissTelegraph()
+    }
+
+    /// Pulse cells that are one junk away from a recycle so the board reads as a puzzle, not noise.
+    private func updateNearMissTelegraph() {
+        let almost = engine.nearMissClusters()
+        let sig = almost
+            .map { g in g.cells.map { "\($0.0),\($0.1)" }.sorted().joined(separator: "+") + ":\(g.material.rawValue)" }
+            .sorted()
+            .joined(separator: "|")
+        guard sig != nearMissSignature else { return }
+        nearMissSignature = sig
+        enumerateChildNodes(withName: "nearMissPulse") { node, _ in
+            node.removeFromParent()
+        }
+        guard !almost.isEmpty else { return }
+        let cs = cellSize()
+        for group in almost {
+            let glow = materialGlow(group.material)
+            for (x, y) in group.cells {
+                let visY = y - engine.state.board.config.hiddenRows
+                guard visY >= 0, visY < engine.state.board.config.visibleRows else { continue }
+                let pulse = SKSpriteNode(
+                    color: glow.withAlphaComponent(0.55),
+                    size: CGSize(width: cs.width + 4, height: cs.height + 4)
+                )
+                pulse.name = "nearMissPulse"
+                pulse.position = positionFor(x: x, boardY: y)
+                pulse.zPosition = 6
+                pulse.alpha = 0.35
+                pulse.blendMode = .add
+                addChild(pulse)
+                pulse.run(SKAction.repeatForever(SKAction.sequence([
+                    SKAction.fadeAlpha(to: 0.75, duration: 0.35),
+                    SKAction.fadeAlpha(to: 0.28, duration: 0.35),
+                ])))
+            }
+        }
     }
 
     private func rebuildActiveNodesIfNeeded() {
@@ -891,6 +1320,7 @@ public final class CompactorScene: SKScene {
             activeRoot = nil
             activeNodes.forEach { $0.removeFromParent() }
             activeNodes.removeAll()
+            clearGhost()
             return
         }
         let tag = "\(p.id.rawValue)-\(p.rot)"
@@ -901,20 +1331,22 @@ public final class CompactorScene: SKScene {
         let root = SKNode()
         root.name = tag
         root.zPosition = 8
-        addChild(root)
+        // Keep the falling piece inside the bin crop so it never draws on the frame.
+        (boardCrop ?? self).addChild(root)
         activeRoot = root
         let cs = cellSize()
         let name = JunkCatalog.textureName(for: p.id)
         // Per-cell segments so the art matches the collision footprint in every rotation.
         // Square items (crate/tire) stay one 2×2 sprite; everything else is one filled cell per offset.
         if p.def.isSquare {
-            let n: SKSpriteNode
+            let cellSizePx = CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad)
+            let n = SKSpriteNode(color: fallbackColor(p.def.material), size: cellSizePx)
+            n.colorBlendFactor = 1
             if let t = tex(name) {
-                n = SKSpriteNode(texture: t, size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
-                n.color = fallbackColor(p.def.material)
-                n.colorBlendFactor = 0.15
-            } else {
-                n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
+                let icon = SKSpriteNode(texture: t, size: CGSize(width: cellSizePx.width * 0.50, height: cellSizePx.height * 0.50))
+                icon.name = "icon"
+                icon.zPosition = 1
+                n.addChild(icon)
             }
             n.position = CGPoint(x: cs.width * 0.5, y: -cs.height * 0.5)
             root.addChild(n)
@@ -922,13 +1354,14 @@ public final class CompactorScene: SKScene {
         } else {
             let shape = p.def.rotations[p.rot % p.def.rotations.count]
             for off in shape {
-                let n: SKSpriteNode
+                let cellSizePx = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
+                let n = SKSpriteNode(color: fallbackColor(p.def.material), size: cellSizePx)
+                n.colorBlendFactor = 1
                 if let t = tex(name) {
-                    n = SKSpriteNode(texture: t, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
-                    n.color = fallbackColor(p.def.material)
-                    n.colorBlendFactor = 0.55
-                } else {
-                    n = SKSpriteNode(color: fallbackColor(p.def.material), size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
+                    let icon = SKSpriteNode(texture: t, size: CGSize(width: cellSizePx.width * 0.58, height: cellSizePx.height * 0.58))
+                    icon.name = "icon"
+                    icon.zPosition = 1
+                    n.addChild(icon)
                 }
                 n.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
                 root.addChild(n)
@@ -954,11 +1387,12 @@ public final class CompactorScene: SKScene {
     }
 
     private func fallbackColor(_ mat: Material) -> SKColor {
+        // Saturated solids so a near-full bin reads as ≥85% coverage, not silhouette stickers.
         switch mat {
-        case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.72, alpha: 1)
-        case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)
-        case .paper: return SKColor(red: 0.85, green: 0.7, blue: 0.35, alpha: 1)
-        case .glass: return SKColor(red: 0.2, green: 0.9, blue: 0.95, alpha: 0.9)
+        case .metal: return SKColor(red: 0.62, green: 0.70, blue: 0.82, alpha: 1)
+        case .plastic: return SKColor(red: 0.98, green: 0.22, blue: 0.72, alpha: 1)
+        case .paper: return SKColor(red: 0.95, green: 0.72, blue: 0.28, alpha: 1)
+        case .glass: return SKColor(red: 0.18, green: 0.92, blue: 0.96, alpha: 1)
         }
     }
 
@@ -978,11 +1412,16 @@ public final class CompactorScene: SKScene {
         if cols != movedCols {
             let step = cols > movedCols ? 1 : -1
             var target = movedCols
+            var nudged = false
             while target != cols {
                 target += step
-                _ = engine.tryMove(dx: step, dy: 0)
+                if engine.tryMove(dx: step, dy: 0) { nudged = true }
             }
             movedCols = cols
+            if nudged {
+                snapActivePose()
+                onPieceSnap?()
+            }
             render(immediate: false)
         }
         let dy = p.y - start.y
@@ -1002,7 +1441,11 @@ public final class CompactorScene: SKScene {
 
         // Forgiving: small tap = rotate; clear downward flick = drop; upward = hold.
         if dist < 28, dt < 0.4 {
-            _ = engine.tryRotate()
+            if engine.tryRotate() {
+                rebuildActiveNodesIfNeeded()
+                snapActivePose()
+                onPieceSnap?()
+            }
             render(immediate: false)
         } else if dy < -40, abs(dy) > abs(dx) * 0.7 {
             engine.hardDrop()
@@ -1018,9 +1461,28 @@ public final class CompactorScene: SKScene {
         touchStart = nil
     }
 
-    public func moveLeft() { _ = engine.tryMove(dx: -1, dy: 0); render(immediate: false) }
-    public func moveRight() { _ = engine.tryMove(dx: 1, dy: 0); render(immediate: false) }
-    public func rotate() { _ = engine.tryRotate(); rebuildActiveNodesIfNeeded(); render(immediate: false) }
+    public func moveLeft() {
+        if engine.tryMove(dx: -1, dy: 0) {
+            snapActivePose()
+            onPieceSnap?()
+        }
+        render(immediate: false)
+    }
+    public func moveRight() {
+        if engine.tryMove(dx: 1, dy: 0) {
+            snapActivePose()
+            onPieceSnap?()
+        }
+        render(immediate: false)
+    }
+    public func rotate() {
+        if engine.tryRotate() {
+            rebuildActiveNodesIfNeeded()
+            snapActivePose()
+            onPieceSnap?()
+        }
+        render(immediate: false)
+    }
     public func soft() { _ = engine.softDrop(); render(immediate: false) }
     public func hard() {
         engine.hardDrop()

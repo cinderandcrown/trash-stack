@@ -10,9 +10,10 @@ Every in-game raster, font, and wav must be **CC0**, **CC-BY** (with attribution
 | Launch logo | `LaunchLogo.imageset` (@3x 600×600) | Original neon card mark; shipped at 3x so launch UIImage is ~200 pt (not clipped) |
 | Cinder & Crown mute logo | `CinderCrownMute.imageset` (@1x/@2x/@3x) | **Cinder & Crown logo, © Cinder and Crown LLC, used by permission.** Publisher ident only (phoenix + crown, no wordmark). Source PNG md5 `f4a3ffce2b58ddd4f12c010427782ac8` |
 | Ident SFX | `ember_whoosh.wav` | Original procedural ember/whoosh; respects mute |
-| Raccoon Idle / Cheer / Panic | `Resources/UI`, `Assets.xcassets`, `GameRender/.../HUD` | Original character art; rematted with opaque interior + soft exterior edge (not luminance-keyed) |
+| Raccoon Idle / Cheer / Panic | `Resources/UI`, `Assets.xcassets`, `GameRender/.../HUD` | **Original (Cinder and Crown LLC).** Authored in-repo for this title (hand-composited neon character plates; rematted with opaque interior + soft exterior edge — not luminance-keyed). Not third-party stock; not generative of unknown license. Ownership: Cinder and Crown LLC. |
 | Junk silhouettes | `can`, `bottle`, `plank`, `pipe`, `crate`, `tire`, `bentPipe`, `fridge` | Original material-language tiles (metal / plastic / glass / paper). Legacy alias files bag/box/scrap/tube deleted |
-| HUD / particles | DumpsterFrame, AlleyBackground, Spark*, Debris*, MagnetIcon, GemPack* | Original alley / neon HUD rasters authored for this title |
+| Recycle ghost plates | `GhostMetal`, `GhostPlastic`, `GhostGlass`, `GhostPaper` (Assets + GameRender/Resources/Junk) | **Original (Cinder and Crown LLC).** Hand-authored neon tile plates with material glyphs (bolt / arrows / bottle / fold). Baked in-repo with PIL; no third-party stock; no generative service. Used as recycle suck VFX. |
+| HUD / particles | DumpsterFrame, AlleyBackground, Spark*, Debris*, MagnetIcon, GemPack* | **Original (Cinder and Crown LLC).** Alley backdrop + dumpster frame + sparks/debris authored in-repo for this title (agent-assisted composite + hand cleanup). Ownership: Cinder and Crown LLC. Tooling: local image edit / bake scripts in-repo — not an external generative service of unknown terms. |
 | SFX | `lock`, `crush`, `recycle`, `combo`, `levelup`, `magnet`, `ui` `.wav` | Original / procedural one-shots |
 | BGM | `game_loop.wav`, `menu_loop.wav` | Original procedural beds, **64 s** loops (not 8 s stubs) |
 

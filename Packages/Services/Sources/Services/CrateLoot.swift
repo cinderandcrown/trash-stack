@@ -24,7 +24,8 @@ public enum CrateLoot {
     /// Human-readable odds line shown on the crate screen.
     public static var oddsDisplayLine: String {
         let gemBits = gemOutcomes.map { g in
-            let pct = Int(gemOutcomeChancePercent.rounded())
+            // One decimal so 33.3×3 reads as 100%.
+            let pct = String(format: "%.1f", gemOutcomeChancePercent)
             return "\(g) (\(pct)%)"
         }.joined(separator: " / ")
         return "Odds · Scrap \(scrapMin)-\(scrapMax) (\(scrapChancePercent)%) · Gems: \(gemBits)"

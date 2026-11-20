@@ -47,11 +47,8 @@ struct ModeSelectView: View {
                 screen = .shiftMap
                 return
             }
-            if !profile.tutorialDone {
-                screen = .tutorial
-            } else {
-                screen = .game
-            }
+            LaunchTiming.markPlayTap()
+            screen = .game
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)
@@ -165,6 +162,7 @@ struct ShiftMapView: View {
                                 guard unlocked else { return }
                                 playMode = .shift
                                 UserDefaults.standard.set(level.id, forKey: "trashStack.shiftLevel")
+                                LaunchTiming.markPlayTap()
                                 screen = .game
                             } label: {
                                 HStack {

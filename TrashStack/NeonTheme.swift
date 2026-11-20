@@ -38,19 +38,36 @@ struct BundleImage: View {
 }
 
 enum NeonTheme {
-    static let bgTop = Color(red: 0.03, green: 0.03, blue: 0.07)
-    static let bgBottom = Color(red: 0.06, green: 0.04, blue: 0.09)
+    static let bgTop = Color(red: 0.015, green: 0.02, blue: 0.06)
+    static let bgBottom = Color(red: 0.05, green: 0.03, blue: 0.10)
     /// Dim play chrome — must not compete with the neon dumpster board.
-    static let playChrome = Color(red: 0.02, green: 0.02, blue: 0.05)
-    static let panel = Color(red: 0.06, green: 0.07, blue: 0.11)
-    static let panelStroke = Color(red: 0.0, green: 0.75, blue: 0.78)
-    static let magenta = Color(red: 0.88, green: 0.22, blue: 0.68)
-    static let teal = Color(red: 0.0, green: 0.82, blue: 0.86)
+    static let playChrome = Color(red: 0.015, green: 0.018, blue: 0.04)
+    static let panel = Color(red: 0.05, green: 0.06, blue: 0.11)
+    static let panelStroke = Color(red: 0.0, green: 0.88, blue: 0.92)
+    static let magenta = Color(red: 1.0, green: 0.18, blue: 0.72)
+    static let teal = Color(red: 0.05, green: 0.95, blue: 0.92)
+    static let gold = Color(red: 1.0, green: 0.82, blue: 0.28)
     static let text = Color.white
-    static let muted = Color.white.opacity(0.62)
+    static let muted = Color.white.opacity(0.68)
 
     static var alleyGradient: LinearGradient {
-        LinearGradient(colors: [bgTop, bgBottom], startPoint: .top, endPoint: .bottom)
+        LinearGradient(
+            colors: [
+                bgTop,
+                Color(red: 0.04, green: 0.05, blue: 0.12),
+                bgBottom,
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+    }
+
+    static var premiumStroke: LinearGradient {
+        LinearGradient(
+            colors: [teal.opacity(0.95), magenta.opacity(0.75), gold.opacity(0.55)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 }
 
@@ -70,13 +87,11 @@ struct NeonPanel<Content: View>: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(NeonTheme.panel.opacity(0.92))
+                .fill(NeonTheme.panel.opacity(0.94))
+                .shadow(color: NeonTheme.teal.opacity(0.22), radius: 16, y: 0)
                 .overlay(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .stroke(
-                            LinearGradient(colors: [NeonTheme.teal.opacity(0.8), NeonTheme.magenta.opacity(0.6)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                            lineWidth: 1.5
-                        )
+                        .stroke(NeonTheme.premiumStroke, lineWidth: 1.6)
                 )
         )
     }
@@ -121,11 +136,11 @@ struct NeonButton: View {
     private var background: some View {
         switch style {
         case .primary:
-            LinearGradient(colors: [NeonTheme.teal, NeonTheme.teal.opacity(0.75)], startPoint: .leading, endPoint: .trailing)
+            LinearGradient(colors: [NeonTheme.teal, NeonTheme.gold.opacity(0.85)], startPoint: .leading, endPoint: .trailing)
         case .secondary:
-            LinearGradient(colors: [NeonTheme.magenta.opacity(0.85), NeonTheme.magenta.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
+            LinearGradient(colors: [NeonTheme.magenta, NeonTheme.magenta.opacity(0.55)], startPoint: .leading, endPoint: .trailing)
         case .ghost:
-            Color.white.opacity(0.2)
+            Color.white.opacity(0.14)
         }
     }
 

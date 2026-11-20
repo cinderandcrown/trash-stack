@@ -8,7 +8,8 @@ public struct BoardCoord: Sendable, Equatable, Hashable {
 
 public enum GameEvent: Sendable, Equatable {
     case spawned(JunkID)
-    case locked
+    /// `hard` is true after a slam drop — bigger impact juice.
+    case locked(hard: Bool)
     /// `coords` are board cells sucked into the chute (for VFX).
     case recycled(groups: Int, cells: Int, score: Int, scrap: Int, material: Material, coords: [BoardCoord])
     case pressed(cells: Int, score: Int, scrap: Int)
@@ -79,7 +80,8 @@ public struct GameState: Sendable, Equatable {
         backToBack = false
         magnetCharge = 0
         pressMeter = 0
-        pressMeterMax = 8
+        // 6 fills in a handful of drops so SLAM shows up every short run.
+        pressMeterMax = 6
         snatchAvailable = true
         orders = []
         over = false
@@ -129,7 +131,15 @@ public struct GameEngine: Sendable {
 
     private mutating func fillQueue() {
         while state.queue.count < 5 {
-            state.queue.append(bag.next())
+            var id = bag.next()
+            // Level 5+ dense junk: bias toward bulky pieces so the bin fills faster.
+            if state.level >= LevelTwist.denseJunk.rawValue {
+                let bulky: [JunkID] = [.crate, .tire, .fridge, .plank, .pipe]
+                if placeCount % 5 == 0 {
+                    id = bulky[Int(state.level + placeCount) % bulky.count]
+                }
+            }
+            state.queue.append(id)
         }
     }
 
@@ -204,7 +214,7 @@ public struct GameEngine: Sendable {
     public mutating func hardDrop() {
         guard state.active != nil, !state.over else { return }
         while tryMove(dx: 0, dy: 1) {}
-        lock()
+        lock(hard: true)
     }
 
     @discardableResult
@@ -212,16 +222,16 @@ public struct GameEngine: Sendable {
         tryMove(dx: 0, dy: 1)
     }
 
-    public mutating func lock() {
+    public mutating func lock(hard: Bool = false) {
         guard let p = state.active else { return }
         let def = p.def
         for (x, y) in p.cells {
             var cell = Cell(piece: p.id, material: def.material)
-            // Sticky / battery hazards appear after level 3 on occasional placements.
-            if state.level >= 3, placeCount % 11 == 7, p.id == .can {
+            // Per-level twists: sticky cans (L3+), leaking pipes (L4+).
+            if state.level >= LevelTwist.stickyCans.rawValue, placeCount % 11 == 7, p.id == .can {
                 cell.sticky = true
             }
-            if state.level >= 4, placeCount % 17 == 5, p.id == .pipe {
+            if state.level >= LevelTwist.leakingPipes.rawValue, placeCount % 17 == 5, p.id == .pipe {
                 cell.hazard = .leakingBattery
                 cell.material = .metal
             }
@@ -229,9 +239,9 @@ public struct GameEngine: Sendable {
         }
         state.active = nil
         placeCount += 1
-        events.append(.locked)
-        // Press meter fills on place.
-        state.pressMeter = min(state.pressMeterMax, state.pressMeter + max(1, p.cells.count / 2))
+        events.append(.locked(hard: hard))
+        // Press meter fills on place — fast enough that SLAM is a regular beat.
+        state.pressMeter = min(state.pressMeterMax, state.pressMeter + max(2, p.cells.count))
         applyHazards()
         resolveAfterLock()
     }
@@ -255,10 +265,21 @@ public struct GameEngine: Sendable {
     }
 
     private mutating func resolveAfterLock() {
+        runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3)
+        if !spawn() {
+            // game over
+        }
+    }
+
+    /// Recycle waves after a settle. First wave usually needs 4+; follow-ups can use 3+
+    /// so chains actually show up. Slam settle may start at 3 because the meter was spent.
+    @discardableResult
+    private mutating func runRecycleCascades(firstWaveMinSize: Int, followUpMinSize: Int) -> Bool {
         var chain = 0
         var any = false
         while true {
-            let groups = RecycleMatcher.findGroups(on: state.board)
+            let minSize = chain == 0 ? firstWaveMinSize : followUpMinSize
+            let groups = RecycleMatcher.findGroups(on: state.board, minSize: minSize)
             guard !groups.isEmpty else { break }
             any = true
             chain += 1
@@ -288,18 +309,11 @@ public struct GameEngine: Sendable {
         if any {
             bumpOrder(kind: .recycleAny, amount: 1)
             checkOrders()
-            let leveledBefore = state.level
-            state.level = 1 + state.lines / 8
-            if state.level > leveledBefore {
-                events.append(.leveledUp(state.level))
-            }
+            advanceLevelFromLines()
         } else {
             state.combo = 0
         }
-
-        if !spawn() {
-            // game over
-        }
+        return any
     }
 
     private mutating func applyGravity() {
@@ -346,33 +360,8 @@ public struct GameEngine: Sendable {
         events.append(.pressed(cells: coords.count, score: score, scrap: scrap))
         bumpOrder(kind: .pressSlam, amount: 1)
         applyGravity()
-        // Settling can create recycle chains.
-        var chain = 0
-        while true {
-            let groups = RecycleMatcher.findGroups(on: state.board)
-            guard !groups.isEmpty else { break }
-            chain += 1
-            var cells = 0
-            var primary = groups[0].material
-            var cleared: [BoardCoord] = []
-            for g in groups {
-                cells += g.cells.count
-                primary = g.material
-                cleared.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
-                for (x, y) in g.cells { state.board[x, y] = nil }
-                state.recycledByMaterial[g.material, default: 0] += g.cells.count
-                bumpOrderMaterial(g.material, amount: g.cells.count)
-            }
-            let sc = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
-            let sp = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
-            state.score += sc
-            state.runScrap += sp
-            state.combo = chain
-            state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: sc, scrap: sp, material: primary, coords: cleared))
-            applyGravity()
-        }
-        checkOrders()
+        // Slam already spent the meter — triples may recycle on the first settle wave.
+        _ = runRecycleCascades(firstWaveMinSize: 3, followUpMinSize: 3)
         return true
     }
 
@@ -404,33 +393,36 @@ public struct GameEngine: Sendable {
     }
 
     private mutating func resolveRecyclesOnly() {
-        var chain = 0
-        while true {
-            let groups = RecycleMatcher.findGroups(on: state.board)
-            guard !groups.isEmpty else { break }
-            chain += 1
-            var cells = 0
-            var primary = groups[0].material
-            var coords: [BoardCoord] = []
-            for g in groups {
-                cells += g.cells.count
-                primary = g.material
-                coords.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
-                for (x, y) in g.cells { state.board[x, y] = nil }
-                state.recycledByMaterial[g.material, default: 0] += g.cells.count
-                bumpOrderMaterial(g.material, amount: g.cells.count)
+        _ = runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3)
+    }
+
+    /// Clusters that are one junk away from a recycle — for telegraph glow.
+    public func nearMissClusters() -> [RecycleGroup] {
+        RecycleMatcher.findGroups(on: state.board, minSize: 3).filter { $0.cells.count == 3 }
+    }
+
+    /// Level only climbs. Never recompute below the current level (shot seeds / mid-run).
+    private mutating func advanceLevelFromLines() {
+        let leveledBefore = state.level
+        state.level = max(state.level, 1 + state.lines / 8)
+        if state.level > leveledBefore {
+            events.append(.leveledUp(state.level))
+            // Refresh orders so the new twist has a matching ticket target.
+            if state.level == leveledBefore + 1, state.orders.allSatisfy(\.done) {
+                seedOrders(level: state.level)
             }
-            let score = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
-            let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
-            state.score += score
-            state.runScrap += scrap
-            state.combo = chain
-            state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary, coords: coords))
-            if chain >= 3 { bumpOrder(kind: .recycleChain, amount: chain) }
-            applyGravity()
         }
-        checkOrders()
+    }
+
+    /// Effective lock delay — tightens under Night Rush (L7+).
+    public func lockDelaySeconds(base: Double) -> Double {
+        guard state.level >= LevelTwist.nightRush.rawValue else { return base }
+        return max(0.18, base * 0.62)
+    }
+
+    /// Keep `lines` consistent with a staged level so the next clear cannot rewind it.
+    private mutating func syncLinesFloorToLevel() {
+        state.lines = max(state.lines, (state.level - 1) * 8)
     }
 
     private mutating func bumpOrderMaterial(_ mat: Material, amount: Int) {
@@ -572,6 +564,7 @@ public struct GameEngine: Sendable {
             state.combo = 2
             state.pressMeter = 5
             state.level = 3
+            syncLinesFloorToLevel()
             state.active = ActivePiece(id: .can, x: 1, y: hid + 2)
         case "ftue":
             // Almost-cluster: 3 metal cans; active metal can completes the recycle.
@@ -610,14 +603,16 @@ public struct GameEngine: Sendable {
             }
             state.score = 7600
             state.level = 4
+            syncLinesFloorToLevel()
             state.pressMeter = state.pressMeterMax
             state.combo = 1
             state.active = ActivePiece(id: .crate, x: 3, y: hid + 2)
         case "revive", "game-over":
-            // Believable topped-out bin from "real play" — jagged, mixed materials.
-            let skyline = [12, 11, 13, 12, 14, 13, 12, 11]
+            // Believable topped-out bin — dense solid tiles so the bin behind the
+            // revive sheet still reads as a real game, not a gray void.
+            let skyline = [14, 13, 15, 14, 16, 15, 14, 13]
             for x in 0..<cols {
-                let fill = min(skyline[x], rows - hid)
+                let fill = min(skyline[x % skyline.count], rows - hid)
                 for i in 0..<fill {
                     let y = rows - 1 - i
                     let id: JunkID = [.can, .bottle, .plank, .pipe, .crate, .tire, .bentPipe, .fridge][(x * 5 + i * 3) % 8]
@@ -630,45 +625,50 @@ public struct GameEngine: Sendable {
             for x in 2..<6 {
                 state.board[x, hid] = Cell(piece: .can, material: .metal)
             }
+            // Smoke-only staged score for the revive sheet frame — live runs use natural top-out.
             state.score = 8800
             state.level = 6
+            syncLinesFloorToLevel()
             state.over = true
             state.active = nil
             state.pressMeter = 3
             events.append(.gameOver)
         case "game", "gameplay":
-            // Mid-run ~40% fill + active item + orders in progress.
-            let fillFrom = rows - 5
+            // Dense mid-run stack (~70% of visible rows) so the bin reads as a real
+            // game — solid tiles + icons with high coverage, not a sparse bottom strip.
+            let fillFrom = max(hid + 2, rows - 10)
             for y in fillFrom..<rows {
                 for x in 0..<cols {
-                    let peak = fillFrom + ((x * 5) % 3)
+                    // Jagged skyline: leave a few air pockets, never a flat carpet.
+                    let peak = fillFrom + ((x * 3 + 1) % 4)
                     if y < peak { continue }
-                    if (x + y) % 5 == 0 { continue }
+                    if (x + y * 2) % 11 == 0 { continue }
                     let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle, .bentPipe][(x + y * 3) % 7]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
             state.score = 3180
             state.level = 3
+            syncLinesFloorToLevel()
             state.combo = 1
             state.pressMeter = 6
             state.orders[0].progress = 7
             state.active = ActivePiece(id: .bottle, rot: 0, x: 3, y: hid + 1)
         case "demo", "autoplay":
-            // Start denser than before so the bin can climb into real tension.
-            for y in (rows - 6)..<rows {
+            // Dense start so the bin climbs into real tension. Level 1 only climbs — never rewinds.
+            for y in (rows - 7)..<rows {
                 for x in 0..<cols where (x + y) % 5 != 0 {
                     let id: JunkID = [.can, .tire, .plank, .pipe, .crate, .bottle][(x + y) % 6]
                     state.board[x, y] = Cell(piece: id, material: JunkCatalog.def(for: id).material)
                 }
             }
-            // Seed a near-recycle metal pocket
+            // Seed a near-recycle metal pocket for an early satisfying clear.
             for y in (rows - 3)..<rows {
                 state.board[0, y] = Cell(piece: .can, material: .metal)
                 state.board[1, y] = Cell(piece: .pipe, material: .metal)
             }
-            state.score = 900
-            state.level = 2
+            state.score = 0
+            state.level = 1
             state.pressMeter = 4
             spawn()
         case "demo-nearmiss":
@@ -687,6 +687,7 @@ public struct GameEngine: Sendable {
             }
             state.score = 12400
             state.level = 5
+            syncLinesFloorToLevel()
             state.pressMeter = 7
             state.combo = 1
             state.active = ActivePiece(id: .plank, rot: 0, x: 3, y: hid + 2)

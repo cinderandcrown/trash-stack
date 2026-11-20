@@ -477,7 +477,7 @@ struct QuestsView: View {
 struct SettingsView: View {
     @Binding var screen: AppScreen
     @EnvironmentObject var profile: PlayerProfile
-    @State private var muted = false
+    @State private var muted = UserDefaults.standard.bool(forKey: "trashStack.soundMuted")
 
     var body: some View {
         ZStack {
@@ -498,11 +498,15 @@ struct SettingsView: View {
                         Text("Sound").foregroundStyle(.white)
                     }
                     .tint(NeonTheme.teal)
+                    .onAppear {
+                        muted = UserDefaults.standard.bool(forKey: "trashStack.soundMuted")
+                        AudioService.shared.applyPersistedMute()
+                    }
                     Toggle(isOn: Binding(
                         get: { profile.classicButtons },
                         set: { profile.classicButtons = $0; profile.persist() }
                     )) {
-                        Text("Classic buttons").foregroundStyle(.white)
+                        Text("Big touch controls").foregroundStyle(.white)
                     }
                     .tint(NeonTheme.magenta)
                     Text("Local reminders")

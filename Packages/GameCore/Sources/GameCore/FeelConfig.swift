@@ -21,22 +21,23 @@ public struct FeelConfig: Codable, Sendable, Equatable {
     public var flashCooldownSec: Double
     public var nearMissRows: Int
 
+    /// Keep in sync with Resources/feel.json — a load miss must not quiet the juice.
     public static let fallback = FeelConfig(
-        gravityBaseSec: 0.62,
-        gravityMinSec: 0.12,
-        gravityLevelStep: 0.03,
-        lockDelaySec: 0.45,
-        fallLerpLateral: 18,
-        fallLerpVertical: 14,
-        recycleSuckSec: 0.25,
-        settleBounceSec: 0.16,
-        pressSlamDownSec: 0.18,
-        pressSlamUpSec: 0.22,
-        hitStopShortSec: 0.04,
-        hitStopComboSec: 0.09,
-        shakeRecycle: 6,
-        shakePress: 12,
-        flashCooldownSec: 0.12,
+        gravityBaseSec: 0.70,
+        gravityMinSec: 0.11,
+        gravityLevelStep: 0.05,
+        lockDelaySec: 0.38,
+        fallLerpLateral: 36,
+        fallLerpVertical: 26,
+        recycleSuckSec: 0.36,
+        settleBounceSec: 0.11,
+        pressSlamDownSec: 0.14,
+        pressSlamUpSec: 0.18,
+        hitStopShortSec: 0.08,
+        hitStopComboSec: 0.16,
+        shakeRecycle: 14,
+        shakePress: 20,
+        flashCooldownSec: 0.08,
         nearMissRows: 3
     )
 }

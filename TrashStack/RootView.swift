@@ -24,7 +24,8 @@ enum PublisherIdentGate {
 
 struct RootView: View {
     @EnvironmentObject var profile: PlayerProfile
-    @State private var screen: AppScreen = .title
+    /// Play-first: after the skippable C&C ident, land on the board — not a menu hub.
+    @State private var screen: AppScreen = .game
     @State private var showNotifPrompt = false
     @State private var marketingCaption = ""
     @State private var playMode: PlayMode = .endless
@@ -32,7 +33,12 @@ struct RootView: View {
     @State private var shareCardText = ""
     @State private var shareScore = 0
     @State private var showIdent = PublisherIdentGate.shouldPresent()
-    @State private var holdIdentShot = false
+    /// Must be true from first paint for ident shots — if this starts false, the sequence finishes into title before onAppear can flip it.
+    @State private var holdIdentShot: Bool = {
+        let shot = PlayerProfile.shotArgument()
+            ?? UserDefaults.standard.string(forKey: "trashStack.shot")
+        return shot == "ident" || shot == "publisher"
+    }()
 
     var body: some View {
         ZStack {
@@ -42,6 +48,11 @@ struct RootView: View {
                 PublisherIdentView(holdForShot: holdIdentShot) {
                     withAnimation(.easeInOut(duration: 0.28)) {
                         showIdent = false
+                    }
+                    // Cold launch → gameplay (smoke/shot modes still override via applyShotMode).
+                    if !Self.smokeHarnessActive {
+                        LaunchTiming.markPlayTap()
+                        screen = .game
                     }
                 }
                 .transition(.opacity)
@@ -114,32 +125,95 @@ struct RootView: View {
             if showIdent {
                 LaunchTiming.markFirstTitleFrame()
             }
+            // Always kick texture/audio warm — demo/shot paths skip the ident.
+            AssetPreloader.preloadDuringIdent()
+            AudioService.shared.applyPersistedMute()
             if let pref = PlayMode(rawValue: profile.preferredMode.rawValue) {
                 playMode = pref
             }
             applyShotMode()
         }
+        // Smoke harness: pick up shot switches from defaults or Documents/smoke-shot.txt
+        // without requiring a new PID (simctl relaunch often reuses the live process).
+        .onReceive(Timer.publish(every: 0.45, on: .main, in: .common).autoconnect()) { _ in
+            guard Self.smokeHarnessActive else { return }
+            let hasDefaults = UserDefaults.standard.string(forKey: "trashStack.shot") != nil
+            let hasFile = Self.pendingSmokeShotFile() != nil
+            guard hasDefaults || hasFile else { return }
+            applyShotMode()
+        }
+    }
+
+    /// True for CI / screenshot launches (skip-ads or an explicit shot argument).
+    private static var smokeHarnessActive: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-trashStackSkipAds") { return true }
+        if UserDefaults.standard.bool(forKey: "trashStack.skipAds") { return true }
+        if PlayerProfile.shotArgument() != nil { return true }
+        return false
+    }
+
+    /// Host-written Documents/smoke-shot.txt — survives when `simctl spawn defaults` wedges.
+    private static func pendingSmokeShotFile() -> String? {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        let url = docs.appendingPathComponent("smoke-shot.txt")
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let shot = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return shot.isEmpty ? nil : shot
+    }
+
+    private static func clearSmokeShotFile() {
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return
+        }
+        try? FileManager.default.removeItem(at: docs.appendingPathComponent("smoke-shot.txt"))
     }
 
     private func applyShotMode() {
-        let shot = profile.consumeShotMode()
+        // Prefer a freshly written defaults / Documents shot (smoke soft-switch) over the
+        // original process argument — `-trashStackShot ident` otherwise sticks
+        // for the whole process and blocks title/game switches.
+        let fromDefaults = UserDefaults.standard.string(forKey: "trashStack.shot")
+        let fromFile = Self.pendingSmokeShotFile()
+        let shot = fromDefaults
+            ?? fromFile
+            ?? profile.consumeShotMode()
             ?? PlayerProfile.shotArgument()
-            ?? UserDefaults.standard.string(forKey: "trashStack.shot")
         guard let shot, !shot.isEmpty else { return }
+        // Sticky `-trashStackShot ident` must not re-cover a soft-switched title/game
+        // when the poll only had a transient empty write.
+        if fromDefaults == nil && fromFile == nil,
+           (shot == "ident" || shot == "publisher"),
+           let active = UserDefaults.standard.string(forKey: "trashStack.shotActive"),
+           active != "ident", active != "publisher" {
+            return
+        }
         UserDefaults.standard.removeObject(forKey: "trashStack.shot")
+        Self.clearSmokeShotFile()
         UserDefaults.standard.set(shot, forKey: "trashStack.shotActive")
         switch shot {
         case "ident", "publisher":
             holdIdentShot = true
             showIdent = true
+        case "title":
+            // Soft switch off a held publisher ident without requiring process kill.
+            // Clear hold first so PublisherIdentView cannot re-stick over the title.
+            holdIdentShot = false
+            showIdent = false
+            screen = .title
+            UserDefaults.standard.set("title", forKey: "trashStack.shotActive")
         case "game", "gameplay", "compactor", "recycle", "revive", "press":
             showIdent = false
             playMode = .endless
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         case "daily":
             showIdent = false
             playMode = .daily
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         case "streak":
             showIdent = false
             let r = profile.registerDailyActivity()
@@ -188,22 +262,26 @@ struct RootView: View {
         case "demo", "autoplay":
             showIdent = false
             playMode = .endless
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         case "mkt-play":
             showIdent = false
             marketingCaption = "Night shift in a neon dumpster"
             UserDefaults.standard.set("game", forKey: "trashStack.shotActive")
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         case "mkt-crush":
             showIdent = false
             marketingCaption = "Slam the PRESS for scrap"
             UserDefaults.standard.set("compactor", forKey: "trashStack.shotActive")
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         case "mkt-recycle":
             showIdent = false
             marketingCaption = "Recycle 4+ matching materials"
             UserDefaults.standard.set("recycle", forKey: "trashStack.shotActive")
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         case "mkt-base":
             showIdent = false
             marketingCaption = "Build your Junkyard hideout"
@@ -221,10 +299,21 @@ struct RootView: View {
             marketingCaption = "Daily Dumpster — same seed worldwide"
             playMode = .daily
             UserDefaults.standard.set("daily", forKey: "trashStack.shotActive")
-            screen = .game
+            LaunchTiming.markPlayTap()
+            enterGameScreen()
         default:
             showIdent = false
             screen = .title
+        }
+    }
+
+    /// Enter gameplay, recreating GameContainerView when already on .game so shot boards re-seed.
+    private func enterGameScreen() {
+        if screen == .game {
+            screen = .title
+            DispatchQueue.main.async { screen = .game }
+        } else {
+            screen = .game
         }
     }
 

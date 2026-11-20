@@ -43,14 +43,18 @@ struct TitleView: View {
                 NeonButton(title: "PLAY") {
                     AdsService.shared.noteRunStarted()
                     AudioService.shared.playMusic("game_loop")
-                    screen = .modes
+                    LaunchTiming.markPlayTap()
+                    // Straight onto the board — how-to is an overlay, not a separate screen.
+                    screen = .game
                 }
                 .padding(.horizontal, 36)
 
                 HStack(spacing: 10) {
-                    Text("Streak \(profile.dailyStreak)d")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(NeonTheme.magenta)
+                    if profile.dailyStreak > 0 {
+                        Text("Streak \(profile.dailyStreak)d")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(NeonTheme.magenta)
+                    }
                     if profile.cratesReady > 0 {
                         Text("Crate ×\(profile.cratesReady)")
                             .font(.caption.weight(.bold))
@@ -59,6 +63,7 @@ struct TitleView: View {
                 }
 
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    NeonButton(title: "Modes", style: .secondary) { screen = .modes }
                     NeonButton(title: "Junkyard", style: .ghost) { screen = .base }
                     NeonButton(title: "Season Pass", style: .ghost) { screen = .pass }
                     NeonButton(title: "Shop", style: .ghost) { screen = .shop }

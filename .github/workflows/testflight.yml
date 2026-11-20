@@ -3,6 +3,10 @@ name: TestFlight
 # Upload ONLY on pushed tags matching testflight/*.
 # Agents push NO tags — Fire Fox / Nicholas own tagging.
 # ASC app: Trash Stack, Apple ID 6834995780, bundle com.cinderandcrown.trashstack.
+#
+# This workflow archives the native Swift + SpriteKit app (scheme TrashStack via
+# xcodegen). It does NOT ship Capacitor/web. Tag a commit that includes the
+# playable SpriteKit board (play-first launch + classic touch pad).
 
 on:
   push:
