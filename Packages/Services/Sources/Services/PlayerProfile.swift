@@ -31,7 +31,8 @@ public final class PlayerProfile: ObservableObject {
     @Published public var premiumPass: Bool = false
     @Published public var battlePassXP: Int = 0
     @Published public var tutorialDone: Bool = false
-    @Published public var classicButtons: Bool = false
+    /// Default ON — gesture-only was the #1 reason TestFlight builds felt unplayable.
+    @Published public var classicButtons: Bool = true
     @Published public var shiftProgress: Int = 0
     @Published public var lastDailyKey: String = ""
     @Published public var lastDailyScore: Int = 0
@@ -96,7 +97,13 @@ public final class PlayerProfile: ObservableObject {
         premiumPass = defaults.bool(forKey: "premiumPass")
         battlePassXP = defaults.integer(forKey: "battlePassXP")
         tutorialDone = defaults.bool(forKey: "tutorialDone")
-        classicButtons = defaults.bool(forKey: "classicButtons")
+        // Unset key → true (playable pad). Explicit false stays false for gesture fans.
+        if defaults.object(forKey: "classicButtons") == nil {
+            classicButtons = true
+            defaults.set(true, forKey: "classicButtons")
+        } else {
+            classicButtons = defaults.bool(forKey: "classicButtons")
+        }
         shiftProgress = defaults.integer(forKey: "shiftProgress")
         lastDailyKey = defaults.string(forKey: "lastDailyKey") ?? ""
         lastDailyScore = defaults.integer(forKey: "lastDailyScore")

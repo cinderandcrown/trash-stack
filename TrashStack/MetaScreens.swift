@@ -506,7 +506,7 @@ struct SettingsView: View {
                         get: { profile.classicButtons },
                         set: { profile.classicButtons = $0; profile.persist() }
                     )) {
-                        Text("Classic buttons").foregroundStyle(.white)
+                        Text("Big touch controls").foregroundStyle(.white)
                     }
                     .tint(NeonTheme.magenta)
                     Text("Local reminders")

@@ -243,6 +243,7 @@ PY
     exit 125
   fi
   raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >>/tmp/sim-recover.log 2>&1 || true
+  raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true >>/tmp/sim-recover.log 2>&1 || true
   raw_deadline 10 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >>/tmp/sim-recover.log 2>&1 || true
   note_timing step recover_simulator 240 "$((SECONDS - t0))" 0 "done:$reason"
   IN_RECOVER=0
@@ -697,6 +698,7 @@ write_shot_defaults() {
   fi
   # Best-effort defaults mirror with a short deadline; file write is authoritative.
   raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+  raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true >/dev/null 2>&1 || true
   raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true >/dev/null 2>&1 || true
   if [[ -n "$mode" ]]; then
     raw_deadline 2 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" >/dev/null 2>&1 || true
@@ -1169,6 +1171,7 @@ note_timing step boot_install 180 "$((SECONDS - SMOKE_START))" 0 "ok"
 smoke_budget
 
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 
 # Springboard icon crop (evidence for real AppIcon) — before timed launch.
@@ -1301,6 +1304,7 @@ note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 sleep 0.3
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.shot" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToTitleSec" >/dev/null 2>&1 || true

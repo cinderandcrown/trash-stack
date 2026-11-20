@@ -24,7 +24,8 @@ enum PublisherIdentGate {
 
 struct RootView: View {
     @EnvironmentObject var profile: PlayerProfile
-    @State private var screen: AppScreen = .title
+    /// Play-first: after the skippable C&C ident, land on the board — not a menu hub.
+    @State private var screen: AppScreen = .game
     @State private var showNotifPrompt = false
     @State private var marketingCaption = ""
     @State private var playMode: PlayMode = .endless
@@ -47,6 +48,11 @@ struct RootView: View {
                 PublisherIdentView(holdForShot: holdIdentShot) {
                     withAnimation(.easeInOut(duration: 0.28)) {
                         showIdent = false
+                    }
+                    // Cold launch → gameplay (smoke/shot modes still override via applyShotMode).
+                    if !Self.smokeHarnessActive {
+                        LaunchTiming.markPlayTap()
+                        screen = .game
                     }
                 }
                 .transition(.opacity)

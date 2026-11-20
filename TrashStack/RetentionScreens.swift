@@ -48,11 +48,7 @@ struct ModeSelectView: View {
                 return
             }
             LaunchTiming.markPlayTap()
-            if !profile.tutorialDone {
-                screen = .tutorial
-            } else {
-                screen = .game
-            }
+            screen = .game
         } label: {
             VStack(alignment: .leading, spacing: 6) {
                 Text(title)

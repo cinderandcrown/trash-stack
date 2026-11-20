@@ -44,12 +44,8 @@ struct TitleView: View {
                     AdsService.shared.noteRunStarted()
                     AudioService.shared.playMusic("game_loop")
                     LaunchTiming.markPlayTap()
-                    // Straight into the preferred mode — no mode-select detour.
-                    if !profile.tutorialDone {
-                        screen = .tutorial
-                    } else {
-                        screen = .game
-                    }
+                    // Straight onto the board — how-to is an overlay, not a separate screen.
+                    screen = .game
                 }
                 .padding(.horizontal, 36)
 
