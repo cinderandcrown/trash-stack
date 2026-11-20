@@ -318,4 +318,112 @@ final class GameCoreTests: XCTestCase {
             }
         }
     }
+
+    /// Rich empty-board play session for feel QA (seeds 42 & 7, 60 steps).
+    func testPlayFeelSessionSeeds42And7() throws {
+        struct Near { let material: Material; let size: Int }
+        func nearOfSize(_ board: Board, size: Int) -> [Near] {
+            var seen = Set<String>()
+            var out: [Near] = []
+            for y in 0..<board.config.rows {
+                for x in 0..<board.config.cols {
+                    let key = "\(x),\(y)"
+                    guard !seen.contains(key), let cell = board[x, y], !cell.sticky else { continue }
+                    var stack = [(x, y)]
+                    var cluster: [(Int, Int)] = []
+                    seen.insert(key)
+                    while let (cx, cy) = stack.popLast() {
+                        cluster.append((cx, cy))
+                        for (nx, ny) in [(cx + 1, cy), (cx - 1, cy), (cx, cy + 1), (cx, cy - 1)] {
+                            let nk = "\(nx),\(ny)"
+                            guard !seen.contains(nk), board.inBounds(x: nx, y: ny),
+                                  let n = board[nx, ny], !n.sticky,
+                                  n.material == cell.material else { continue }
+                            seen.insert(nk)
+                            stack.append((nx, ny))
+                        }
+                    }
+                    if cluster.count == size {
+                        out.append(Near(material: cell.material, size: size))
+                    }
+                }
+            }
+            return out
+        }
+
+        var allLines: [String] = []
+        func log(_ s: String) { allLines.append(s); print(s) }
+
+        for seed in [UInt64(42), UInt64(7)] {
+            var eng = GameEngine(seed: seed) // empty — no shot scenario
+            log("=== SEED \(seed) empty start active=\(eng.state.active?.id.rawValue ?? "nil") ===")
+            var recycleCount = 0
+            var comboPeak = 0
+            var comboGe2 = 0
+            var pressFills = 0
+            var pressSlams = 0
+            var near3Peak = 0
+            var near3Sum = 0
+            var firstRecycleStep: Int?
+            var lastPress = eng.state.pressMeter
+            var locks = 0
+
+            for step in 0..<60 {
+                if eng.state.over {
+                    log("step\(step) GAME_OVER score=\(eng.state.score) level=\(eng.state.level) locks=\(locks)")
+                    break
+                }
+                if step % 3 == 0 { _ = eng.tryRotate() }
+                _ = eng.tryMove(dx: (step % 2 == 0) ? -1 : 1, dy: 0)
+                for _ in 0..<((step % 4) + 1) { _ = eng.softDrop() }
+                eng.hardDrop()
+                locks += 1
+
+                if eng.state.pressMeter >= eng.state.pressMeterMax, step % 2 == 0 {
+                    if eng.slamPress() {
+                        pressSlams += 1
+                        log("step\(step) PRESS_SLAM score=\(eng.state.score) combo=\(eng.state.combo)")
+                    }
+                }
+
+                for e in eng.drainEvents() {
+                    switch e {
+                    case .recycled(let groups, let cells, let score, let scrap, let mat, _):
+                        recycleCount += 1
+                        if firstRecycleStep == nil { firstRecycleStep = step }
+                        let combo = eng.state.combo
+                        comboPeak = max(comboPeak, combo)
+                        if combo >= 2 { comboGe2 += 1 }
+                        log("step\(step) RECYCLE \(mat.rawValue) g=\(groups) cells=\(cells) +\(score) scrap=\(scrap) combo=\(combo) total=\(eng.state.score) press=\(eng.state.pressMeter)/\(eng.state.pressMeterMax)")
+                    case .pressed(let cells, let score, let scrap):
+                        log("step\(step) PRESSED cells=\(cells) +\(score) scrap=\(scrap)")
+                    case .leveledUp(let lvl):
+                        log("step\(step) LEVEL \(lvl)")
+                    default: break
+                    }
+                }
+
+                if eng.state.pressMeter == eng.state.pressMeterMax, lastPress < eng.state.pressMeterMax {
+                    pressFills += 1
+                    log("step\(step) PRESS_FULL \(eng.state.pressMeter)/\(eng.state.pressMeterMax)")
+                }
+                lastPress = eng.state.pressMeter
+
+                let n3 = nearOfSize(eng.state.board, size: 3)
+                near3Sum += n3.count
+                near3Peak = max(near3Peak, n3.count)
+                if !n3.isEmpty, step % 5 == 0 || n3.count >= 2 {
+                    let by = Dictionary(grouping: n3, by: \.material.rawValue).mapValues(\.count)
+                    log("step\(step) NEAR3 \(n3.count) \(by) press=\(eng.state.pressMeter)")
+                }
+            }
+
+            log("END seed=\(seed) score=\(eng.state.score) lvl=\(eng.state.level) lines=\(eng.state.lines) over=\(eng.state.over) press=\(eng.state.pressMeter)/\(eng.state.pressMeterMax)")
+            log("STATS seed=\(seed) recycles=\(recycleCount) comboPeak=\(comboPeak) combo>=2=\(comboGe2) pressFills=\(pressFills) pressSlams=\(pressSlams) near3Peak=\(near3Peak) near3Sum=\(near3Sum) firstRecycle=\(firstRecycleStep.map(String.init) ?? "none") locks=\(locks) recycledBy=\(eng.state.recycledByMaterial)")
+        }
+
+        let out = URL(fileURLWithPath: "/tmp/trash-stack-feel-play.log")
+        try allLines.joined(separator: "\n").write(to: out, atomically: true, encoding: .utf8)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: out.path))
+    }
 }
