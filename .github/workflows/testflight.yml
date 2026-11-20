@@ -49,8 +49,9 @@ permissions:
 env:
   BUNDLE_ID: com.cinderandcrown.trashstack
   BETA_GROUP: Trash Stack team
-  # Never echoed; passed only into appstore_connect which does not print addresses.
-  PRIMARY_TESTER_EMAIL: nicholas.will@cinderandcrown.com
+  # Nicholas's Apple ID / developer account (also Magpie/Neon tester).
+  PRIMARY_TESTER_EMAIL: nawill@mac.com
+  BETA_FEEDBACK_EMAIL: info@cinderandcrown.com
 
 jobs:
   # Repair path: attach an already-uploaded ASC build to the internal group.
@@ -120,7 +121,8 @@ jobs:
             --name "$BETA_GROUP" \
             --version "$VERSION" \
             --build "$BUILD" \
-            --tester-email "$PRIMARY_TESTER_EMAIL"
+            --tester-email "$PRIMARY_TESTER_EMAIL" \
+            --feedback-email "$BETA_FEEDBACK_EMAIL"
 
       - name: Summary
         env:
@@ -129,8 +131,8 @@ jobs:
         run: |
           {
             echo "### Distributed Trash Stack $VERSION ($BUILD)"
-            echo "Internal group “$BETA_GROUP” — export compliance set, build attached."
-            echo "Primary tester invite/link attempted (address not logged)."
+            echo "Internal group “$BETA_GROUP” — primary tester $PRIMARY_TESTER_EMAIL, feedback $BETA_FEEDBACK_EMAIL."
+            echo "See job log for BEFORE/AFTER tester state and invite result."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove key
@@ -363,6 +365,7 @@ jobs:
             --version "$VERSION" \
             --build "$BUILD" \
             --tester-email "$PRIMARY_TESTER_EMAIL" \
+            --feedback-email "$BETA_FEEDBACK_EMAIL" \
             --timeout 120
 
       - name: Summary

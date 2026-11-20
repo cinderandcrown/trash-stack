@@ -237,26 +237,41 @@ def ensure_internal_group(client: Client, app_id: str, name: str) -> tuple[str, 
     return created["data"]["id"], True
 
 
+def iter_collection(client: Client, path: str, query: dict[str, str] | None = None) -> list[dict[str, Any]]:
+    """Follow ASC pagination (links.next) and return every resource."""
+    items: list[dict[str, Any]] = []
+    params = dict(query or {})
+    params.setdefault("limit", "200")
+    page = client.get(path, params)
+    items.extend(page.get("data", []))
+    next_url = (page.get("links") or {}).get("next")
+    while next_url:
+        page = client.get(next_url)
+        items.extend(page.get("data", []))
+        next_url = (page.get("links") or {}).get("next")
+    return items
+
+
 def find_tester_id(client: Client, email: str) -> str | None:
     needle = email.strip().lower()
     try:
-        page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "10"})
-        for tester in page.get("data", []):
+        for tester in iter_collection(client, "/v1/betaTesters", {"filter[email]": email}):
             if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
                 return tester["id"]
-        if page.get("data"):
-            return page["data"][0]["id"]
     except ApiError:
         pass
-    # Internal testers are ASC users — match username (usually the Apple ID email).
+    # Fall back: scan team testers (Magpie/Neon may already have nawill@mac.com as d1d31281…).
     try:
-        users = client.get("/v1/users", {"filter[username]": email, "limit": "5"}).get("data", [])
-        for user in users:
+        for tester in iter_collection(client, "/v1/betaTesters"):
+            if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
+                return tester["id"]
+    except ApiError:
+        pass
+    try:
+        for user in iter_collection(client, "/v1/users", {"filter[username]": email, "limit": "5"}):
             username = (user.get("attributes") or {}).get("username", "").strip().lower()
             if username == needle:
-                # Beta tester id is not the user id; search betaTesters without filter.
-                all_testers = client.get("/v1/betaTesters", {"limit": "200"}).get("data", [])
-                for tester in all_testers:
+                for tester in iter_collection(client, "/v1/betaTesters"):
                     if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
                         return tester["id"]
     except ApiError:
@@ -264,10 +279,69 @@ def find_tester_id(client: Client, email: str) -> str | None:
     return None
 
 
-def add_tester(client: Client, group_id: str, email: str, first_name: str = "", last_name: str = "") -> str:
-    """Invite/add an internal tester by email. Never prints the address."""
+def list_group_testers(client: Client, group_id: str) -> list[dict[str, Any]]:
+    """Return {id, email, state, inviteType} for every tester on the group."""
+    rows: list[dict[str, Any]] = []
     try:
-        client.post(
+        testers = iter_collection(
+            client,
+            f"/v1/betaGroups/{group_id}/betaTesters",
+            {"fields[betaTesters]": "email,state,inviteType,firstName,lastName"},
+        )
+    except ApiError:
+        return rows
+    for tester in testers:
+        attrs = tester.get("attributes") or {}
+        rows.append(
+            {
+                "id": tester.get("id", ""),
+                "email": attrs.get("email") or "",
+                "state": attrs.get("state") or "UNKNOWN",
+                "inviteType": attrs.get("inviteType") or "UNKNOWN",
+                "firstName": attrs.get("firstName") or "",
+                "lastName": attrs.get("lastName") or "",
+            }
+        )
+    return rows
+
+
+def print_tester_roster(rows: list[dict[str, Any]], label: str) -> None:
+    print(f"=== {label} ({len(rows)} tester(s)) ===")
+    if not rows:
+        print("(none)")
+        return
+    for row in rows:
+        print(
+            f"id={row['id']} email={row['email']} state={row['state']} "
+            f"inviteType={row['inviteType']}"
+        )
+
+
+def tester_row_for_email(rows: list[dict[str, Any]], email: str) -> dict[str, Any] | None:
+    needle = email.strip().lower()
+    for row in rows:
+        if row.get("email", "").strip().lower() == needle:
+            return row
+    return None
+
+
+def add_tester(client: Client, group_id: str, email: str, first_name: str = "", last_name: str = "") -> str:
+    """Add/link an internal tester by email. Prefer linking the existing Magpie/Neon record."""
+    existing_id = find_tester_id(client, email)
+    if existing_id:
+        try:
+            client.post(
+                f"/v1/betaGroups/{group_id}/relationships/betaTesters",
+                {"data": [{"type": "betaTesters", "id": existing_id}]},
+            )
+            return f"Linked existing tester id={existing_id} to the group."
+        except ApiError as error:
+            if error.status == 409:
+                return f"Tester id={existing_id} already in the group."
+            # Fall through to create if link failed for another reason.
+
+    try:
+        created = client.post(
             "/v1/betaTesters",
             {
                 "data": {
@@ -281,15 +355,12 @@ def add_tester(client: Client, group_id: str, email: str, first_name: str = "", 
                 }
             },
         )
-        return "Tester added to the group."
+        new_id = (created.get("data") or {}).get("id", "")
+        return f"Tester created and added to the group id={new_id}."
     except ApiError as error:
         if error.status == 409:
-            try:
-                linked = link_existing_tester(client, group_id, email)
-                return linked
-            except ApiError as link_error:
-                return f"Tester was already registered; link failed ({link_error.status})."
-        return f"Could not add tester ({error.status}). Add them in App Store Connect > TestFlight."
+            return link_existing_tester(client, group_id, email)
+        return f"Could not add tester ({error.status}): {error.detail}"
 
 
 def link_existing_tester(client: Client, group_id: str, email: str) -> str:
@@ -301,11 +372,157 @@ def link_existing_tester(client: Client, group_id: str, email: str) -> str:
             f"/v1/betaGroups/{group_id}/relationships/betaTesters",
             {"data": [{"type": "betaTesters", "id": tester_id}]},
         )
-        return "Existing tester linked to the group."
+        return f"Existing tester linked to the group id={tester_id}."
     except ApiError as error:
         if error.status == 409:
-            return "Tester already in the group."
-        raise
+            return f"Tester already in the group id={tester_id}."
+        return f"Could not link existing tester ({error.status}): {error.detail}"
+
+
+def send_tester_invitation(client: Client, app_id: str, tester_id: str) -> str:
+    """POST betaTesterInvitations — (re)send the TestFlight invite email for this app."""
+    try:
+        client.post(
+            "/v1/betaTesterInvitations",
+            {
+                "data": {
+                    "type": "betaTesterInvitations",
+                    "relationships": {
+                        "app": {"data": {"type": "apps", "id": app_id}},
+                        "betaTester": {"data": {"type": "betaTesters", "id": tester_id}},
+                    },
+                }
+            },
+        )
+        return f"Invite email sent (betaTesterInvitations) for tester id={tester_id}."
+    except ApiError as error:
+        if error.status == 409:
+            return f"Invite already outstanding/accepted for tester id={tester_id} (409)."
+        return f"Could not send invite ({error.status}): {error.detail}"
+
+
+def ensure_beta_app_information(
+    client: Client,
+    app_id: str,
+    feedback_email: str,
+    description: str,
+    locale: str = "en-US",
+) -> str:
+    """Fill TestFlight 'Test Information' so invites are not blocked on missing beta app info."""
+    notes: list[str] = []
+    try:
+        locs = iter_collection(client, f"/v1/apps/{app_id}/betaAppLocalizations")
+    except ApiError as error:
+        return f"Could not read betaAppLocalizations ({error.status}): {error.detail}"
+
+    target = None
+    for loc in locs:
+        if (loc.get("attributes") or {}).get("locale") == locale:
+            target = loc
+            break
+    if target is None and locs:
+        target = locs[0]
+
+    attrs = {"feedbackEmail": feedback_email, "description": description, "locale": locale}
+    if target is None:
+        try:
+            client.post(
+                "/v1/betaAppLocalizations",
+                {
+                    "data": {
+                        "type": "betaAppLocalizations",
+                        "attributes": attrs,
+                        "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
+                    }
+                },
+            )
+            notes.append(f"Created betaAppLocalization ({locale}) with feedbackEmail + description.")
+        except ApiError as error:
+            notes.append(f"Could not create betaAppLocalization ({error.status}): {error.detail}")
+    else:
+        loc_id = target["id"]
+        existing = target.get("attributes") or {}
+        patch_attrs: dict[str, str] = {}
+        if not (existing.get("feedbackEmail") or "").strip():
+            patch_attrs["feedbackEmail"] = feedback_email
+        elif existing.get("feedbackEmail") != feedback_email:
+            patch_attrs["feedbackEmail"] = feedback_email
+        if not (existing.get("description") or "").strip():
+            patch_attrs["description"] = description
+        if patch_attrs:
+            try:
+                client.patch(
+                    f"/v1/betaAppLocalizations/{loc_id}",
+                    {"data": {"type": "betaAppLocalizations", "id": loc_id, "attributes": patch_attrs}},
+                )
+                notes.append(f"Updated betaAppLocalization fields: {', '.join(patch_attrs)}.")
+            except ApiError as error:
+                notes.append(f"Could not patch betaAppLocalization ({error.status}): {error.detail}")
+        else:
+            notes.append("betaAppLocalization already has feedbackEmail + description.")
+
+    # betaAppReviewDetail — contact block often required when ASC says Missing Beta App Information.
+    try:
+        detail_page = client.get(f"/v1/apps/{app_id}/betaAppReviewDetail")
+        detail = detail_page.get("data")
+    except ApiError as error:
+        detail = None
+        notes.append(f"betaAppReviewDetail read failed ({error.status}).")
+
+    contact = {
+        "contactEmail": feedback_email,
+        "contactFirstName": "Nicholas",
+        "contactLastName": "Will",
+        "contactPhone": "0000000000",
+    }
+    if detail is None:
+        try:
+            client.post(
+                "/v1/betaAppReviewDetails",
+                {
+                    "data": {
+                        "type": "betaAppReviewDetails",
+                        "attributes": contact,
+                        "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
+                    }
+                },
+            )
+            notes.append("Created betaAppReviewDetail contact block.")
+        except ApiError as error:
+            notes.append(f"Could not create betaAppReviewDetail ({error.status}): {error.detail}")
+    else:
+        detail_id = detail["id"]
+        existing = detail.get("attributes") or {}
+        patch = {k: v for k, v in contact.items() if not (existing.get(k) or "").strip()}
+        if patch:
+            try:
+                client.patch(
+                    f"/v1/betaAppReviewDetails/{detail_id}",
+                    {"data": {"type": "betaAppReviewDetails", "id": detail_id, "attributes": patch}},
+                )
+                notes.append(f"Updated betaAppReviewDetail: {', '.join(patch)}.")
+            except ApiError as error:
+                notes.append(f"Could not patch betaAppReviewDetail ({error.status}): {error.detail}")
+        else:
+            notes.append("betaAppReviewDetail contact already set.")
+
+    return " ".join(notes)
+
+
+def describe_build_blockers(client: Client, build_id: str, attrs: dict[str, Any]) -> str:
+    bits = [
+        f"processingState={attrs.get('processingState')}",
+        f"usesNonExemptEncryption={attrs.get('usesNonExemptEncryption')}",
+    ]
+    try:
+        detail = client.get(f"/v1/builds/{build_id}/buildBetaDetail").get("data") or {}
+        dattrs = detail.get("attributes") or {}
+        bits.append(f"internalBuildState={dattrs.get('internalBuildState')}")
+        bits.append(f"externalBuildState={dattrs.get('externalBuildState')}")
+        bits.append(f"autoNotifyEnabled={dattrs.get('autoNotifyEnabled')}")
+    except ApiError as error:
+        bits.append(f"buildBetaDetail=error:{error.status}")
+    return " ".join(bits)
 
 
 def add_account_holder(client: Client, group_id: str) -> tuple[str, str | None]:
@@ -332,31 +549,11 @@ def add_account_holder(client: Client, group_id: str) -> tuple[str, str | None]:
 
 
 def group_tester_count(client: Client, group_id: str) -> int:
-    try:
-        page = client.get(f"/v1/betaGroups/{group_id}/betaTesters", {"limit": "200"})
-        return len(page.get("data", []))
-    except ApiError:
-        return -1
+    return len(list_group_testers(client, group_id))
 
 
 def tester_present(client: Client, group_id: str, email: str) -> bool:
-    """True if the email is already a beta tester on this group. Does not print the email."""
-    needle = email.strip().lower()
-    try:
-        page = client.get(
-            f"/v1/betaGroups/{group_id}/betaTesters",
-            {"limit": "200"},
-        )
-    except ApiError:
-        try:
-            page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "5"})
-            return bool(page.get("data"))
-        except ApiError:
-            return False
-    for tester in page.get("data", []):
-        if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
-            return True
-    return False
+    return tester_row_for_email(list_group_testers(client, group_id), email) is not None
 
 
 def group_access_flags(client: Client, group_id: str) -> dict[str, Any]:
@@ -474,28 +671,65 @@ def distribute_build(
     build: str,
     tester_email: str | None,
     timeout: float,
+    feedback_email: str = "info@cinderandcrown.com",
 ) -> int:
-    """Ensure group + testers, wait/find build, set compliance, attach, report."""
+    """Ensure group + testers, beta info, invite, compliance, attach, report."""
     app_id = require_app(client, bundle_id)
+    print(f"ASC app resource id={app_id} (Trash Stack / Apple ID 6834995780).")
+
     group_id, created = ensure_internal_group(client, app_id, group_name)
     flags = group_access_flags(client, group_id)
     print(
         f"Internal group “{group_name}”: {'created' if created else 'already there'}. "
         f"hasAccessToAllBuilds={flags.get('hasAccessToAllBuilds')} isInternal={flags.get('isInternalGroup')}."
     )
-    holder_msg, holder_email = add_account_holder(client, group_id)
-    print(holder_msg)
-    holder_ok = bool(holder_email) and tester_present(client, group_id, holder_email)
-    print(f"Account holder in group: {'yes' if holder_ok else 'no'}")
 
-    tester_ok = False
+    before = list_group_testers(client, group_id)
+    print_tester_roster(before, "BEFORE")
+    before_row = tester_row_for_email(before, tester_email) if tester_email else None
     if tester_email:
-        print(add_tester(client, group_id, tester_email))
-        tester_ok = tester_present(client, group_id, tester_email)
-        print(f"Named tester in group: {'yes' if tester_ok else 'no'}")
+        if before_row:
+            print(
+                f"PRIMARY BEFORE: email={before_row['email']} state={before_row['state']} "
+                f"inviteType={before_row['inviteType']} id={before_row['id']}"
+            )
+        else:
+            print(f"PRIMARY BEFORE: email={tester_email} NOT on group")
 
-    count = group_tester_count(client, group_id)
-    print(f"Testers currently on group: {count if count >= 0 else 'unknown'}")
+    print(
+        ensure_beta_app_information(
+            client,
+            app_id,
+            feedback_email=feedback_email,
+            description="Trash Stack — neon dumpster puzzle. Match materials, slam the press, recycle junk on the night shift.",
+        )
+    )
+
+    # Prefer the Apple ID that actually owns TestFlight installs (nawill@mac.com).
+    if tester_email:
+        print(add_tester(client, group_id, tester_email, first_name="Nicholas", last_name="Will"))
+    holder_msg, holder_email = add_account_holder(client, group_id)
+    print(f"Account holder path: {holder_msg}")
+    if holder_email:
+        print(f"ASC account-holder username={holder_email}")
+
+    after_add = list_group_testers(client, group_id)
+    print_tester_roster(after_add, "AFTER ADD")
+    primary = tester_row_for_email(after_add, tester_email) if tester_email else None
+    invite_msg = "Invite skipped (no primary tester on group)."
+    if primary:
+        print(
+            f"PRIMARY AFTER ADD: email={primary['email']} state={primary['state']} "
+            f"inviteType={primary['inviteType']} id={primary['id']}"
+        )
+        if primary["state"] not in ("ACCEPTED", "INSTALLED"):
+            invite_msg = send_tester_invitation(client, app_id, primary["id"])
+        else:
+            invite_msg = f"Invite not resent — state already {primary['state']}."
+        print(invite_msg)
+    elif tester_email:
+        print(f"PRIMARY AFTER ADD: email={tester_email} still NOT on group")
+        print(invite_msg)
 
     state = wait_for_build(client, app_id, version, build, timeout)
     found = find_build(client, app_id, version, build)
@@ -507,27 +741,27 @@ def distribute_build(
 
     build_id = found["id"]
     attrs = found.get("attributes") or {}
-    print(
-        f"Build {version} ({build}): processingState={attrs.get('processingState')} "
-        f"usesNonExemptEncryption={attrs.get('usesNonExemptEncryption')}"
-    )
+    print(f"Build {version} ({build}): {describe_build_blockers(client, build_id, attrs)}")
     print(set_export_compliance(client, build_id))
     print(attach_build_to_group(client, group_id, build_id))
 
-    # Re-check presence after attach.
-    if holder_email:
-        holder_ok = tester_present(client, group_id, holder_email)
-        print(f"Account holder in group (recheck): {'yes' if holder_ok else 'no'}")
-    if tester_email:
-        tester_ok = tester_present(client, group_id, tester_email)
-        print(f"Named tester in group (recheck): {'yes' if tester_ok else 'no'}")
+    final = list_group_testers(client, group_id)
+    print_tester_roster(final, "FINAL")
+    final_row = tester_row_for_email(final, tester_email) if tester_email else None
+    if final_row:
+        print(
+            f"PRIMARY FINAL: email={final_row['email']} state={final_row['state']} "
+            f"inviteType={final_row['inviteType']} id={final_row['id']}"
+        )
+        # Resend once more if still not accepted after beta info + attach.
+        if final_row["state"] not in ("ACCEPTED", "INSTALLED"):
+            print(send_tester_invitation(client, app_id, final_row["id"]))
+    elif tester_email:
+        print(f"PRIMARY FINAL: email={tester_email} NOT on group — Nicholas will not see Trash Stack.")
+        return 1
 
     if state == "VALID":
         print("Apple finished processing. The build is in TestFlight.")
-        # Fail the job if nobody is on the group — that is the "never appears" failure mode.
-        if count == 0 and not holder_ok and not tester_ok:
-            print("ERROR: internal group has no testers — Nicholas will not see the build.")
-            return 1
         return 0
     if state == "TIMED_OUT":
         print("Apple is still processing. The build will appear in TestFlight when it finishes.")
@@ -585,7 +819,12 @@ def main(arguments: list[str]) -> int:
     distribute.add_argument("--version", required=True)
     distribute.add_argument("--build", required=True)
     distribute.add_argument("--tester-email", default="")
+    distribute.add_argument("--feedback-email", default="info@cinderandcrown.com")
     distribute.add_argument("--timeout", type=float, default=30 * 60)
+
+    list_testers = commands.add_parser("list-testers", help="list email/state/inviteType on an internal group")
+    list_testers.add_argument("--bundle-id", required=True)
+    list_testers.add_argument("--name", required=True)
 
     check_app = commands.add_parser("check-app", help="exit 0 if the ASC app record exists, else print create fields")
     check_app.add_argument("--bundle-id", required=True)
@@ -644,6 +883,11 @@ def main(arguments: list[str]) -> int:
                 return 0
             print("Apple rejected the build during processing. The reason is in the email from App Store Connect.")
             return 1
+        if options.command == "list-testers":
+            app_id = require_app(client, options.bundle_id)
+            group_id, _ = ensure_internal_group(client, app_id, options.name)
+            print_tester_roster(list_group_testers(client, group_id), options.name)
+            return 0
         if options.command == "distribute-build":
             return distribute_build(
                 client,
@@ -653,6 +897,7 @@ def main(arguments: list[str]) -> int:
                 options.build,
                 options.tester_email or None,
                 options.timeout,
+                feedback_email=options.feedback_email,
             )
     except ApiError as error:
         print(f"{error}")
