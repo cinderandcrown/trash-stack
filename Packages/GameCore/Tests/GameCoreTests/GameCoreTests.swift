@@ -211,6 +211,30 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThan(mega, double * 2)
     }
 
+    func testCascadesProduceChainsInNormalPlay() {
+        // Empty-board play used to peak at combo 1; follow-up triples should raise that.
+        var peak = 0
+        var recycleWaves = 0
+        for seed in [UInt64(7), 42, 99] {
+            var eng = GameEngine(seed: seed)
+            for _ in 0..<100 {
+                if eng.state.over { break }
+                eng.hardDrop()
+                for e in eng.drainEvents() {
+                    if case .recycled = e {
+                        recycleWaves += 1
+                        peak = max(peak, eng.state.combo)
+                    }
+                }
+            }
+            if peak >= 2 { break }
+        }
+        XCTAssertGreaterThan(recycleWaves, 0)
+        XCTAssertGreaterThanOrEqual(peak, 2, "follow-up triples should create real chains")
+        var eng = GameEngine(seed: 1)
+        XCTAssertEqual(eng.state.pressMeterMax, 6)
+    }
+
     /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).
     func testPlayLoopDumpForVerify() throws {
         var eng = GameEngine(seed: 2026_11_19)

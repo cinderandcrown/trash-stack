@@ -80,7 +80,8 @@ public struct GameState: Sendable, Equatable {
         backToBack = false
         magnetCharge = 0
         pressMeter = 0
-        pressMeterMax = 8
+        // 6 fills in a handful of drops so SLAM shows up every short run.
+        pressMeterMax = 6
         snatchAvailable = true
         orders = []
         over = false
@@ -239,8 +240,8 @@ public struct GameEngine: Sendable {
         state.active = nil
         placeCount += 1
         events.append(.locked(hard: hard))
-        // Press meter fills on place.
-        state.pressMeter = min(state.pressMeterMax, state.pressMeter + max(1, p.cells.count / 2))
+        // Press meter fills on place — fast enough that SLAM is a regular beat.
+        state.pressMeter = min(state.pressMeterMax, state.pressMeter + max(2, p.cells.count))
         applyHazards()
         resolveAfterLock()
     }
@@ -264,10 +265,21 @@ public struct GameEngine: Sendable {
     }
 
     private mutating func resolveAfterLock() {
+        runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3)
+        if !spawn() {
+            // game over
+        }
+    }
+
+    /// Recycle waves after a settle. First wave usually needs 4+; follow-ups can use 3+
+    /// so chains actually show up. Slam settle may start at 3 because the meter was spent.
+    @discardableResult
+    private mutating func runRecycleCascades(firstWaveMinSize: Int, followUpMinSize: Int) -> Bool {
         var chain = 0
         var any = false
         while true {
-            let groups = RecycleMatcher.findGroups(on: state.board)
+            let minSize = chain == 0 ? firstWaveMinSize : followUpMinSize
+            let groups = RecycleMatcher.findGroups(on: state.board, minSize: minSize)
             guard !groups.isEmpty else { break }
             any = true
             chain += 1
@@ -301,10 +313,7 @@ public struct GameEngine: Sendable {
         } else {
             state.combo = 0
         }
-
-        if !spawn() {
-            // game over
-        }
+        return any
     }
 
     private mutating func applyGravity() {
@@ -351,34 +360,8 @@ public struct GameEngine: Sendable {
         events.append(.pressed(cells: coords.count, score: score, scrap: scrap))
         bumpOrder(kind: .pressSlam, amount: 1)
         applyGravity()
-        // Settling can create recycle chains.
-        var chain = 0
-        while true {
-            let groups = RecycleMatcher.findGroups(on: state.board)
-            guard !groups.isEmpty else { break }
-            chain += 1
-            var cells = 0
-            var primary = groups[0].material
-            var cleared: [BoardCoord] = []
-            for g in groups {
-                cells += g.cells.count
-                primary = g.material
-                cleared.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
-                for (x, y) in g.cells { state.board[x, y] = nil }
-                state.recycledByMaterial[g.material, default: 0] += g.cells.count
-                bumpOrderMaterial(g.material, amount: g.cells.count)
-            }
-            let sc = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
-            let sp = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
-            state.score += sc
-            state.runScrap += sp
-            state.combo = chain
-            state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: sc, scrap: sp, material: primary, coords: cleared))
-            applyGravity()
-        }
-        checkOrders()
-        advanceLevelFromLines()
+        // Slam already spent the meter — triples may recycle on the first settle wave.
+        _ = runRecycleCascades(firstWaveMinSize: 3, followUpMinSize: 3)
         return true
     }
 
@@ -410,34 +393,12 @@ public struct GameEngine: Sendable {
     }
 
     private mutating func resolveRecyclesOnly() {
-        var chain = 0
-        while true {
-            let groups = RecycleMatcher.findGroups(on: state.board)
-            guard !groups.isEmpty else { break }
-            chain += 1
-            var cells = 0
-            var primary = groups[0].material
-            var coords: [BoardCoord] = []
-            for g in groups {
-                cells += g.cells.count
-                primary = g.material
-                coords.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
-                for (x, y) in g.cells { state.board[x, y] = nil }
-                state.recycledByMaterial[g.material, default: 0] += g.cells.count
-                bumpOrderMaterial(g.material, amount: g.cells.count)
-            }
-            let score = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
-            let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
-            state.score += score
-            state.runScrap += scrap
-            state.combo = chain
-            state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary, coords: coords))
-            if chain >= 3 { bumpOrder(kind: .recycleChain, amount: chain) }
-            applyGravity()
-        }
-        checkOrders()
-        advanceLevelFromLines()
+        _ = runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3)
+    }
+
+    /// Clusters that are one junk away from a recycle — for telegraph glow.
+    public func nearMissClusters() -> [RecycleGroup] {
+        RecycleMatcher.findGroups(on: state.board, minSize: 3).filter { $0.cells.count == 3 }
     }
 
     /// Level only climbs. Never recompute below the current level (shot seeds / mid-run).

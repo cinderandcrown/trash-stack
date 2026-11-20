@@ -1,6 +1,7 @@
 // Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 
 /// Material recycle: 4+ connected same-material cells (sticky excluded) get recycled.
+/// Cascade waves may use minSize 3 so chains actually fire after gravity.
 public struct RecycleGroup: Sendable, Equatable {
     public let material: Material
     public let cells: [(Int, Int)]

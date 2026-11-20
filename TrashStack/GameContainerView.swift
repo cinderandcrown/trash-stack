@@ -74,6 +74,7 @@ struct GameContainerView: View {
             }
 
             HStack(spacing: 12) {
+                let pressReady = pressMeter >= pressMax
                 Button {
                     scene.slamPress()
                     AudioService.shared.playSFX("crush")
@@ -81,31 +82,36 @@ struct GameContainerView: View {
                     syncHUD()
                 } label: {
                     VStack(spacing: 4) {
-                        Text("PRESS")
+                        Text(pressReady ? "SLAM!" : "PRESS")
                             .font(.caption.weight(.black))
                         ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
-                            .tint(pressMeter >= pressMax ? NeonTheme.magenta : NeonTheme.teal)
-                        Text(pressMeter >= pressMax ? "READY" : "\(pressMeter)/\(pressMax)")
+                            .tint(pressReady ? NeonTheme.gold : NeonTheme.teal)
+                        Text(pressReady ? "TAP TO CRUSH" : "\(pressMeter)/\(pressMax)")
                             .font(.caption2.monospacedDigit().weight(.bold))
                     }
-                    .foregroundStyle(pressMeter >= pressMax ? .black : .white)
+                    .foregroundStyle(pressReady ? .black : .white)
                     .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    .padding(.vertical, pressReady ? 14 : 10)
                     .frame(maxWidth: .infinity)
                     .background(
                         LinearGradient(
-                            colors: pressMeter >= pressMax
-                                ? [NeonTheme.magenta, NeonTheme.teal]
+                            colors: pressReady
+                                ? [NeonTheme.gold, NeonTheme.magenta]
                                 : [NeonTheme.panel, NeonTheme.panel],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .shadow(color: pressReady ? NeonTheme.magenta.opacity(0.55) : .clear, radius: 12, y: 0)
+                    .scaleEffect(pressReady ? 1.04 : 1)
+                    .animation(.easeOut(duration: 0.18), value: pressReady)
                 }
                 .buttonStyle(.plain)
-                .disabled(pressMeter < pressMax)
+                .disabled(!pressReady)
+                .accessibilityLabel(pressReady ? "Slam the press" : "Press meter \(pressMeter) of \(pressMax)")
 
+                // Snatch stays available but smaller when SLAM is the star.
                 Button {
                     snatchPressed = true
                     scene.magnet()
@@ -117,24 +123,29 @@ struct GameContainerView: View {
                         snatchPressed = false
                     }
                 } label: {
-                    HStack(spacing: 8) {
-                        BundleImage(name: raccoonAsset).frame(width: 28, height: 28)
+                    HStack(spacing: 6) {
+                        BundleImage(name: raccoonAsset).frame(width: pressReady ? 22 : 28, height: pressReady ? 22 : 28)
                         Text(snatchReady ? "SNATCH" : "USED")
                             .font(.caption.weight(.black))
-                            .foregroundStyle(.black)
+                            .foregroundStyle(pressReady ? .white : .black)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 14)
+                    .padding(.horizontal, pressReady ? 12 : 16)
+                    .padding(.vertical, pressReady ? 12 : 14)
                     .background(
                         LinearGradient(
                             colors: snatchReady
-                                ? [NeonTheme.teal, NeonTheme.magenta]
+                                ? (pressReady
+                                   ? [NeonTheme.panel, NeonTheme.panel]
+                                   : [NeonTheme.teal, NeonTheme.magenta])
                                 : [NeonTheme.panel, NeonTheme.panel],
                             startPoint: .leading,
                             endPoint: .trailing
                         )
                     )
                     .clipShape(Capsule())
+                    .overlay(
+                        Capsule().stroke(pressReady && snatchReady ? NeonTheme.teal.opacity(0.5) : .clear, lineWidth: 1)
+                    )
                     .opacity(snatchReady ? 1 : 0.55)
                     .scaleEffect(snatchPressed ? 0.92 : 1)
                     .animation(.easeOut(duration: 0.12), value: snatchPressed)

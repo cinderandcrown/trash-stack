@@ -59,6 +59,7 @@ public final class CompactorScene: SKScene {
     }
     private var didFireFirstGameFrame = false
     private var lastFlashAt: TimeInterval = 0
+    private var nearMissSignature: String = ""
 
     public override func didMove(to view: SKView) {
         let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
@@ -1273,6 +1274,44 @@ public final class CompactorScene: SKScene {
         rebuildActiveNodesIfNeeded()
         layoutActiveNodes()
         updateLandingGhost()
+        updateNearMissTelegraph()
+    }
+
+    /// Pulse cells that are one junk away from a recycle so the board reads as a puzzle, not noise.
+    private func updateNearMissTelegraph() {
+        let almost = engine.nearMissClusters()
+        let sig = almost
+            .map { g in g.cells.map { "\($0.0),\($0.1)" }.sorted().joined(separator: "+") + ":\(g.material.rawValue)" }
+            .sorted()
+            .joined(separator: "|")
+        guard sig != nearMissSignature else { return }
+        nearMissSignature = sig
+        enumerateChildNodes(withName: "nearMissPulse") { node, _ in
+            node.removeFromParent()
+        }
+        guard !almost.isEmpty else { return }
+        let cs = cellSize()
+        for group in almost {
+            let glow = materialGlow(group.material)
+            for (x, y) in group.cells {
+                let visY = y - engine.state.board.config.hiddenRows
+                guard visY >= 0, visY < engine.state.board.config.visibleRows else { continue }
+                let pulse = SKSpriteNode(
+                    color: glow.withAlphaComponent(0.55),
+                    size: CGSize(width: cs.width + 4, height: cs.height + 4)
+                )
+                pulse.name = "nearMissPulse"
+                pulse.position = positionFor(x: x, boardY: y)
+                pulse.zPosition = 6
+                pulse.alpha = 0.35
+                pulse.blendMode = .add
+                addChild(pulse)
+                pulse.run(SKAction.repeatForever(SKAction.sequence([
+                    SKAction.fadeAlpha(to: 0.75, duration: 0.35),
+                    SKAction.fadeAlpha(to: 0.28, duration: 0.35),
+                ])))
+            }
+        }
     }
 
     private func rebuildActiveNodesIfNeeded() {
