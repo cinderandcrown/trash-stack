@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 # Copyright © 2026 Cinder and Crown LLC. All rights reserved.
-"""Prepare App Store Connect for a MAGPIE upload, and check on the build after it.
+"""Prepare App Store Connect for a Trash Stack upload, and check on the build after it.
 
 The TestFlight workflow runs this. It needs only Python and `openssl`, both of which are
 on every GitHub runner.
 
-    appstore_connect.py ensure-bundle-id --bundle-id ID --name "MAGPIE"
-    appstore_connect.py beta-group --bundle-id ID --name "MAGPIE team"
-    appstore_connect.py wait-build --bundle-id ID --version 0.1.0 --build 42.1
+    appstore_connect.py ensure-bundle-id --bundle-id ID --name "Trash Stack"
+    appstore_connect.py beta-group --bundle-id ID --name "Trash Stack team"
+    appstore_connect.py wait-build --bundle-id ID --version 1.0.0 --build 74.1
+    appstore_connect.py distribute-build --bundle-id ID --name "Trash Stack team" \\
+        --version 1.0.0 --build 74.1 --tester-email someone@example.com
 
 The key comes from the environment: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_KEY_PATH (the .p8
 file). The job log of a public repository is public, so nothing here prints a name, an
 email address, or any part of the key.
 
-Adapted from cinderandcrown/phoenix-fox for Magpie (no Meta capabilities).
+Adapted from cinderandcrown/neon-city-bandit (Magpie pattern) + phoenix-fox.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 API = "https://api.appstoreconnect.apple.com"
-AGENT = "Magpie-CI/1.0 (+https://github.com/cinderandcrown/magpie)"
+AGENT = "TrashStack-CI/1.0 (+https://github.com/cinderandcrown/trash-stack)"
 
 
 class ApiError(Exception):
@@ -139,6 +141,9 @@ class Client:
     def post(self, path: str, body: Any) -> Any:
         return self.call("POST", path, body=body)
 
+    def patch(self, path: str, body: Any) -> Any:
+        return self.call("PATCH", path, body=body)
+
 
 def describe_errors(body: Any) -> str:
     errors = body.get("errors") if isinstance(body, dict) else None
@@ -193,7 +198,8 @@ def require_app(client: Client, identifier: str) -> str:
         return app_id
     raise SystemExit(
         f"No App Store Connect app record for {identifier}. Create it in App Store Connect "
-        f"(Apps > +) with name MAGPIE, SKU magpie, bundle id {identifier}, primary language English (U.S.)."
+        f"(Apps > +) with name Trash Stack, SKU trashstack, bundle id {identifier}, "
+        f"primary language English (U.S.)."
     )
 
 
@@ -202,6 +208,21 @@ def ensure_internal_group(client: Client, app_id: str, name: str) -> tuple[str, 
     for group in page.get("data", []):
         attributes = group["attributes"]
         if attributes.get("isInternalGroup") and attributes.get("name") == name:
+            # Older groups may lack all-builds access — turn it on so every upload lands.
+            if attributes.get("hasAccessToAllBuilds") is not True:
+                try:
+                    client.patch(
+                        f"/v1/betaGroups/{group['id']}",
+                        {
+                            "data": {
+                                "type": "betaGroups",
+                                "id": group["id"],
+                                "attributes": {"hasAccessToAllBuilds": True},
+                            }
+                        },
+                    )
+                except ApiError:
+                    pass
             return group["id"], False
     created = client.post(
         "/v1/betaGroups",
@@ -216,6 +237,53 @@ def ensure_internal_group(client: Client, app_id: str, name: str) -> tuple[str, 
     return created["data"]["id"], True
 
 
+def add_tester(client: Client, group_id: str, email: str, first_name: str = "", last_name: str = "") -> str:
+    """Invite/add an internal tester by email. Never prints the address."""
+    try:
+        client.post(
+            "/v1/betaTesters",
+            {
+                "data": {
+                    "type": "betaTesters",
+                    "attributes": {
+                        "email": email,
+                        "firstName": first_name or "",
+                        "lastName": last_name or "",
+                    },
+                    "relationships": {"betaGroups": {"data": [{"type": "betaGroups", "id": group_id}]}},
+                }
+            },
+        )
+        return "Tester added to the group."
+    except ApiError as error:
+        if error.status == 409:
+            # Already a tester — still ensure they are linked to this group.
+            try:
+                linked = link_existing_tester(client, group_id, email)
+                return linked
+            except ApiError:
+                return "Tester was already registered."
+        return f"Could not add tester ({error.status}). Add them in App Store Connect > TestFlight."
+
+
+def link_existing_tester(client: Client, group_id: str, email: str) -> str:
+    page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "10"})
+    testers = page.get("data", [])
+    if not testers:
+        return "Tester record not found after conflict."
+    tester_id = testers[0]["id"]
+    try:
+        client.post(
+            f"/v1/betaGroups/{group_id}/relationships/betaTesters",
+            {"data": [{"type": "betaTesters", "id": tester_id}]},
+        )
+        return "Existing tester linked to the group."
+    except ApiError as error:
+        if error.status == 409:
+            return "Tester already in the group."
+        raise
+
+
 def add_account_holder(client: Client, group_id: str) -> str:
     try:
         holders = client.get("/v1/users", {"filter[roles]": "ACCOUNT_HOLDER", "limit": "1"}).get("data", [])
@@ -224,40 +292,53 @@ def add_account_holder(client: Client, group_id: str) -> str:
     if not holders:
         return "No account holder was listed. Add yourself to the group in App Store Connect > TestFlight."
     holder = holders[0]["attributes"]
+    return add_tester(
+        client,
+        group_id,
+        holder["username"],
+        holder.get("firstName") or "",
+        holder.get("lastName") or "",
+    )
+
+
+def tester_present(client: Client, group_id: str, email: str) -> bool:
+    """True if the email is already a beta tester on this group. Does not print the email."""
     try:
-        client.post(
-            "/v1/betaTesters",
-            {
-                "data": {
-                    "type": "betaTesters",
-                    "attributes": {
-                        "email": holder["username"],
-                        "firstName": holder.get("firstName") or "",
-                        "lastName": holder.get("lastName") or "",
-                    },
-                    "relationships": {"betaGroups": {"data": [{"type": "betaGroups", "id": group_id}]}},
-                }
-            },
+        page = client.get(
+            f"/v1/betaGroups/{group_id}/betaTesters",
+            {"limit": "200"},
         )
-        return "The account holder is in the group."
-    except ApiError as error:
-        if error.status == 409:
-            return "The account holder was already a tester."
-        return f"Could not add the account holder ({error.status}). Add yourself to the group in App Store Connect > TestFlight."
+    except ApiError:
+        # Fallback: global filter then check relationships is expensive; treat as unknown.
+        try:
+            page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "5"})
+            return bool(page.get("data"))
+        except ApiError:
+            return False
+    needle = email.strip().lower()
+    for tester in page.get("data", []):
+        if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
+            return True
+    return False
 
 
-def build_state(client: Client, app_id: str, version: str, build: str) -> str | None:
+def find_build(client: Client, app_id: str, version: str, build: str) -> dict[str, Any] | None:
     page = client.get(
         "/v1/builds",
         {
             "filter[app]": app_id,
             "filter[version]": build,
             "filter[preReleaseVersion.version]": version,
-            "limit": "1",
+            "limit": "5",
         },
     )
     builds = page.get("data", [])
-    return builds[0]["attributes"].get("processingState") if builds else None
+    return builds[0] if builds else None
+
+
+def build_state(client: Client, app_id: str, version: str, build: str) -> str | None:
+    found = find_build(client, app_id, version, build)
+    return found["attributes"].get("processingState") if found else None
 
 
 def wait_for_build(
@@ -288,6 +369,92 @@ def wait_for_build(
         sleep(30)
 
 
+def set_export_compliance(client: Client, build_id: str) -> str:
+    """Answer export compliance: app does not use non-exempt encryption."""
+    try:
+        client.patch(
+            f"/v1/builds/{build_id}",
+            {
+                "data": {
+                    "type": "builds",
+                    "id": build_id,
+                    "attributes": {"usesNonExemptEncryption": False},
+                }
+            },
+        )
+        return "Export compliance set (usesNonExemptEncryption=false)."
+    except ApiError as error:
+        # Already answered / immutable once processed — treat as ok for distribute.
+        if error.status in (409, 422):
+            return f"Export compliance already set or not changeable ({error.status})."
+        return f"Could not set export compliance ({error.status}): {error.detail}"
+
+
+def attach_build_to_group(client: Client, group_id: str, build_id: str) -> str:
+    try:
+        client.post(
+            f"/v1/betaGroups/{group_id}/relationships/builds",
+            {"data": [{"type": "builds", "id": build_id}]},
+        )
+        return "Build attached to the internal group."
+    except ApiError as error:
+        if error.status == 409:
+            return "Build was already on the internal group."
+        # hasAccessToAllBuilds groups may reject explicit attach — still ok.
+        if error.status == 422 and "access" in error.detail.lower():
+            return "Group has access to all builds (explicit attach not needed)."
+        return f"Could not attach build ({error.status}): {error.detail}"
+
+
+def distribute_build(
+    client: Client,
+    bundle_id: str,
+    group_name: str,
+    version: str,
+    build: str,
+    tester_email: str | None,
+    timeout: float,
+) -> int:
+    """Ensure group + testers, wait/find build, set compliance, attach, report."""
+    app_id = require_app(client, bundle_id)
+    group_id, created = ensure_internal_group(client, app_id, group_name)
+    print(f"Internal group “{group_name}”: {'created' if created else 'already there'}. It gets every build.")
+    print(add_account_holder(client, group_id))
+    tester_ok = False
+    if tester_email:
+        print(add_tester(client, group_id, tester_email))
+        tester_ok = tester_present(client, group_id, tester_email)
+        print(f"Named tester in group: {'yes' if tester_ok else 'no'}")
+
+    state = wait_for_build(client, app_id, version, build, timeout)
+    found = find_build(client, app_id, version, build)
+    if not found:
+        print(f"Build {version} ({build}) is not listed in App Store Connect yet.")
+        if state == "TIMED_OUT":
+            return 0
+        return 1
+
+    build_id = found["id"]
+    attrs = found.get("attributes") or {}
+    print(f"Build id present. processingState={attrs.get('processingState')}")
+    print(set_export_compliance(client, build_id))
+    print(attach_build_to_group(client, group_id, build_id))
+
+    # Re-check presence after attach.
+    if tester_email and not tester_ok:
+        tester_ok = tester_present(client, group_id, tester_email)
+        print(f"Named tester in group (recheck): {'yes' if tester_ok else 'no'}")
+
+    if state == "VALID":
+        print("Apple finished processing. The build is in TestFlight.")
+        return 0
+    if state == "TIMED_OUT":
+        print("Apple is still processing. The build will appear in TestFlight when it finishes.")
+        return 0
+    print("Apple rejected the build during processing. The reason is in the email from App Store Connect.")
+    return 1
+
+
 def client_from_environment() -> Client:
     missing = [name for name in ("ASC_KEY_ID", "ASC_ISSUER_ID", "ASC_KEY_PATH") if not os.environ.get(name)]
     if missing:
@@ -316,12 +483,28 @@ def main(arguments: list[str]) -> int:
     group = commands.add_parser("beta-group", help="make sure an internal TestFlight group exists")
     group.add_argument("--bundle-id", required=True)
     group.add_argument("--name", required=True)
+    group.add_argument(
+        "--tester-email",
+        default="",
+        help="Also add this email as an internal tester (address never printed)",
+    )
 
     wait = commands.add_parser("wait-build", help="wait for Apple to process an uploaded build")
     wait.add_argument("--bundle-id", required=True)
     wait.add_argument("--version", required=True)
     wait.add_argument("--build", required=True)
     wait.add_argument("--timeout", type=float, default=30 * 60)
+
+    distribute = commands.add_parser(
+        "distribute-build",
+        help="ensure group/testers, set export compliance, attach build, wait if needed",
+    )
+    distribute.add_argument("--bundle-id", required=True)
+    distribute.add_argument("--name", required=True, help="Internal beta group name")
+    distribute.add_argument("--version", required=True)
+    distribute.add_argument("--build", required=True)
+    distribute.add_argument("--tester-email", default="")
+    distribute.add_argument("--timeout", type=float, default=30 * 60)
 
     check_app = commands.add_parser("check-app", help="exit 0 if the ASC app record exists, else print create fields")
     check_app.add_argument("--bundle-id", required=True)
@@ -342,8 +525,8 @@ def main(arguments: list[str]) -> int:
             print(
                 "MISSING_APP_RECORD\n"
                 "Create the app in App Store Connect with these fields:\n"
-                "  name: MAGPIE\n"
-                "  SKU: magpie\n"
+                "  name: Trash Stack\n"
+                "  SKU: trashstack\n"
                 f"  bundle id: {options.bundle_id}\n"
                 "  primary language: English (U.S.)\n"
             )
@@ -353,10 +536,17 @@ def main(arguments: list[str]) -> int:
             group_id, created = ensure_internal_group(client, app_id, options.name)
             print(f"Internal group “{options.name}”: {'created' if created else 'already there'}. It gets every build.")
             print(add_account_holder(client, group_id))
+            if options.tester_email:
+                print(add_tester(client, group_id, options.tester_email))
+                present = tester_present(client, group_id, options.tester_email)
+                print(f"Named tester in group: {'yes' if present else 'no'}")
             return 0
         if options.command == "wait-build":
             app_id = require_app(client, options.bundle_id)
             state = wait_for_build(client, app_id, options.version, options.build, options.timeout)
+            found = find_build(client, app_id, options.version, options.build)
+            if found:
+                print(set_export_compliance(client, found["id"]))
             if state == "VALID":
                 print("Apple finished processing. The build is in TestFlight.")
                 return 0
@@ -365,6 +555,16 @@ def main(arguments: list[str]) -> int:
                 return 0
             print("Apple rejected the build during processing. The reason is in the email from App Store Connect.")
             return 1
+        if options.command == "distribute-build":
+            return distribute_build(
+                client,
+                options.bundle_id,
+                options.name,
+                options.version,
+                options.build,
+                options.tester_email or None,
+                options.timeout,
+            )
     except ApiError as error:
         print(f"{error}")
         if error.status in (401, 403):
