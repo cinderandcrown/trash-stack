@@ -44,3 +44,4 @@ xcodebuild*.log
 # Xcode / generated project (always regenerate with xcodegen)
 xcuserdata/
 *.xcworkspace/
+ts-icon/
