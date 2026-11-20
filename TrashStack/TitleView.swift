@@ -17,16 +17,15 @@ struct TitleView: View {
             if heavyReady {
                 AlleyBackdrop(includeGradient: false)
             }
-            VStack(spacing: 14) {
-                Spacer(minLength: 24)
+            VStack(spacing: 12) {
                 BundleImage(name: "BanditHero")
                     .scaledToFit()
-                    .frame(width: 148, height: 148)
+                    .frame(width: 132, height: 132)
                     .offset(y: bob ? -6 : 6)
                     .shadow(color: NeonTheme.teal.opacity(0.45), radius: 18)
                     .accessibilityLabel("The Bandit")
                 Text("TRASH STACK")
-                    .font(.system(size: 40, weight: .black, design: .rounded))
+                    .font(.system(size: 38, weight: .black, design: .rounded))
                     .foregroundStyle(
                         LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
                     )
@@ -67,7 +66,7 @@ struct TitleView: View {
                     }
                 }
 
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     NeonButton(title: "Modes", style: .secondary) { screen = .modes }
                     NeonButton(title: "Junkyard", style: .ghost) { screen = .base }
                     NeonButton(title: "Season Pass", style: .ghost) { screen = .pass }
@@ -80,11 +79,16 @@ struct TitleView: View {
                 .padding(.horizontal, 22)
 
                 Text("Free to play · odds shown · no real-money gambling · no wagers")
-                    .font(.caption)
+                    .font(.caption2)
                     .foregroundStyle(Color.white.opacity(0.7))
-                Spacer(minLength: 12)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 4)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .padding(.horizontal, 8)
+            .safeAreaPadding(.top, 12)
+            .safeAreaPadding(.bottom, 12)
         }
         .onAppear {
             // Idempotent: publisher ident stamps first frame on cold launch; this covers skip/shot paths.

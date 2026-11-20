@@ -72,6 +72,13 @@ public final class CompactorScene: SKScene {
     private var didFireFirstGameFrame = false
     private var lastFlashAt: TimeInterval = 0
     private var nearMissSignature: String = ""
+    /// Paced cascade settle timer — next wave after cascadeStepSec.
+    private var cascadeSettleAcc: TimeInterval = 0
+    /// Anchored combo counter above the board (one label, ticks/pulses).
+    private var comboCounterNode: SKLabelNode?
+    /// Red danger rim when the stack nears the top.
+    private var dangerRim: SKShapeNode?
+    private var dangerHeartbeatAcc: TimeInterval = 0
 
     public override func didMove(to view: SKView) {
         let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
@@ -96,6 +103,7 @@ public final class CompactorScene: SKScene {
             _ = representativeTexture(for: mat)
             _ = ghostPlateTexture(for: mat)
         }
+        engine.paceCascades = true
         rebuild()
     }
 
@@ -118,13 +126,16 @@ public final class CompactorScene: SKScene {
 
     public func reset(seed: UInt64 = UInt64.random(in: 1...999_999)) {
         engine = GameEngine(seed: seed)
+        engine.paceCascades = true
         gravityAcc = 0
         groundedElapsed = 0
         lockResets = 0
+        cascadeSettleAcc = 0
         clearTouchState()
         raccoonMood = .idle
         discoUntil = 0
         cheerUntil = 0
+        updateComboCounter(forceHide: true)
         render(immediate: true)
     }
 
@@ -148,9 +159,11 @@ public final class CompactorScene: SKScene {
     public func applyShot(_ shot: String) {
         pendingShot = shot
         engine.applyShotScenario(shot)
+        engine.paceCascades = true
         gravityAcc = 0
         groundedElapsed = 0
         lockResets = 0
+        cascadeSettleAcc = 0
         clearTouchState()
         if shot == "recycle" { raccoonMood = .cheer }
         else if shot == "compactor" || shot == "press" { raccoonMood = .cheer }
@@ -466,8 +479,14 @@ public final class CompactorScene: SKScene {
 
     private func cellSize() -> CGSize {
         let cols = CGFloat(engine.state.board.config.cols)
-        // Nearly full SpriteView width — height letterboxing left a ~40% empty bar above.
-        let s = size.width * 0.995 / cols
+        let rows = CGFloat(engine.state.board.config.visibleRows)
+        // ~8px side margins; fit height so the bin uses the SpriteView, not letterbox bars.
+        let sidePad: CGFloat = 8
+        let topPad: CGFloat = 28 // room for anchored combo counter
+        let bottomPad: CGFloat = 4
+        let maxByW = max(8, (size.width - sidePad * 2) / cols)
+        let maxByH = max(8, (size.height - topPad - bottomPad) / rows)
+        let s = min(maxByW, maxByH)
         return CGSize(width: s, height: s)
     }
 
@@ -477,11 +496,12 @@ public final class CompactorScene: SKScene {
         let rows = CGFloat(engine.state.board.config.visibleRows)
         let totalW = cs.width * cols
         let totalH = cs.height * rows
-        // Top-align the bin — drop the empty horizontal bar above the playfield.
-        let topPad = max(4, cs.height * 0.08)
+        // Center in the SpriteView with a small top band for the combo counter.
+        let topPad: CGFloat = 28
+        let y = max(0, (size.height - totalH - topPad) * 0.5)
         return CGPoint(
             x: (size.width - totalW) / 2,
-            y: max(0, size.height - totalH - topPad)
+            y: y
         )
     }
 
@@ -525,6 +545,8 @@ public final class CompactorScene: SKScene {
 
         // Continuous visual smoothing toward discrete logic pose.
         smoothActivePose(dt: dt)
+        tickDangerRim(dt: Double(dt))
+        tickPacedCascade(dt: Double(dt))
 
         if autoplay {
             // Never stay paused during demo — smoke recordVideo must show live motion.
@@ -536,13 +558,21 @@ public final class CompactorScene: SKScene {
                 onToast?("SO CLOSE")
                 raccoonMood = .panic
             }
-            // Faster cadence so a ~45s clip shows locks, clears, and SLAM.
+            // Hold autoplay while a cascade settles so chains are readable on camera.
+            if engine.cascadeActive {
+                render(immediate: false)
+                return
+            }
+            // Faster cadence so a ~45–60s clip shows locks, clears, and SLAM.
             gravityAcc += Double(dt)
-            if gravityAcc > 0.14 {
+            if gravityAcc > 0.16 {
                 gravityAcc = 0
                 if !engine.state.over {
                     engine.autoplayStep()
                     handleEvents()
+                    if engine.cascadeActive {
+                        cascadeSettleAcc = 0
+                    }
                 }
                 if engine.state.over {
                     demoPhase = 2
@@ -552,6 +582,8 @@ public final class CompactorScene: SKScene {
             }
             return
         }
+        // Next piece / gravity wait until cascade waves finish.
+        if engine.cascadeActive { return }
         guard !engine.state.over, engine.state.active != nil else { return }
         // Speeds up every level; floor keeps it readable.
         let grav = max(feel.gravityMinSec, feel.gravityBaseSec - Double(engine.state.level) * feel.gravityLevelStep)
@@ -608,9 +640,93 @@ public final class CompactorScene: SKScene {
         clearTouchState()
         engine.lock(hard: hard)
         handleEvents()
+        if engine.cascadeActive {
+            cascadeSettleAcc = 0
+        }
         hasVisualPose = false
         render(immediate: false)
-        if engine.state.over { onGameOver?(engine.state) }
+        // Never fire game-over mid-cascade — wait for settle.
+        if engine.state.over, !engine.cascadeActive { onGameOver?(engine.state) }
+    }
+
+    /// Advance paced recycle waves ~300ms apart so chains are readable.
+    private func tickPacedCascade(dt: Double) {
+        guard engine.cascadeActive else { return }
+        cascadeSettleAcc += dt
+        let step = max(0.25, min(0.35, feel.cascadeStepSec))
+        guard cascadeSettleAcc >= step else { return }
+        cascadeSettleAcc = 0
+        let more = engine.advanceCascade()
+        handleEvents()
+        render(immediate: false)
+        updateComboCounter()
+        if !more, engine.state.over {
+            onGameOver?(engine.state)
+        }
+    }
+
+    private func tickDangerRim(dt: Double) {
+        let danger = engine.isInDanger() || engine.isNearOverflow(threshold: feel.nearMissRows)
+        if danger {
+            if dangerRim == nil {
+                let origin = gridOrigin()
+                let cs = cellSize()
+                let cols = CGFloat(engine.state.board.config.cols)
+                let rows = CGFloat(engine.state.board.config.visibleRows)
+                let rim = SKShapeNode(rectOf: CGSize(width: cs.width * cols + 6, height: cs.height * rows + 6), cornerRadius: 8)
+                rim.strokeColor = SKColor(red: 1, green: 0.2, blue: 0.25, alpha: 0.85)
+                rim.fillColor = .clear
+                rim.lineWidth = 3
+                rim.position = CGPoint(x: origin.x + cs.width * cols / 2, y: origin.y + cs.height * rows / 2)
+                rim.zPosition = 46
+                rim.name = "dangerRim"
+                addChild(rim)
+                dangerRim = rim
+            }
+            dangerHeartbeatAcc += dt
+            let pulse = 0.45 + 0.40 * abs(sin(dangerHeartbeatAcc * .pi * 2.2))
+            dangerRim?.alpha = CGFloat(pulse)
+            dangerRim?.isHidden = false
+        } else {
+            dangerRim?.isHidden = true
+            dangerHeartbeatAcc = 0
+        }
+    }
+
+    private func updateComboCounter(forceHide: Bool = false) {
+        let combo = engine.state.combo
+        if forceHide || combo < 2 {
+            comboCounterNode?.run(SKAction.sequence([
+                SKAction.fadeOut(withDuration: 0.15),
+                SKAction.removeFromParent(),
+            ]))
+            comboCounterNode = nil
+            return
+        }
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = CGFloat(engine.state.board.config.cols)
+        let label: SKLabelNode
+        if let existing = comboCounterNode {
+            label = existing
+        } else {
+            label = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+            label.fontSize = 22
+            label.fontColor = SKColor(red: 0.2, green: 1, blue: 0.85, alpha: 1)
+            label.horizontalAlignmentMode = .center
+            label.zPosition = 92
+            addChild(label)
+            comboCounterNode = label
+        }
+        label.text = "CHAIN ×\(combo)"
+        label.position = CGPoint(x: origin.x + cs.width * cols * 0.5, y: origin.y + cs.height * CGFloat(engine.state.board.config.visibleRows) + 6)
+        label.setScale(1)
+        label.alpha = 1
+        label.removeAllActions()
+        label.run(SKAction.sequence([
+            SKAction.scale(to: 1.18, duration: 0.08),
+            SKAction.scale(to: 1.0, duration: 0.12),
+        ]))
     }
 
     /// Move/rotate while grounded burns one lock reset; at the cap we hard-settle.
@@ -674,7 +790,8 @@ public final class CompactorScene: SKScene {
                 if hard {
                     let pieceW = cellSize().width * CGFloat(max(1, engine.state.active?.def.rotations.first?.count ?? 2))
                     presentSlamBurst(at: lockPt, pieceWidth: max(cellSize().width * 2.2, pieceW * 1.35))
-                    boardFlash(color: SKColor(red: 1, green: 0.95, blue: 0.75, alpha: 0.6))
+                    // Local glow only — never a full-board white flash.
+                    subtleGlow(color: SKColor(red: 1, green: 0.95, blue: 0.75, alpha: 0.35))
                     hitStop(seconds: feel.hitStopShortSec * 0.85)
                 } else {
                     hitStop(seconds: feel.hitStopShortSec * 0.35)
@@ -705,35 +822,27 @@ public final class CompactorScene: SKScene {
                 let combo = max(1, engine.state.combo)
                 presentClearBurst(across: coords)
                 recycleSuck(coords: coords, material: material, points: score, combo: combo, snaps: snaps)
+                // Local cell glow + tiny bg pulse (≤10%) — no full-board white flash.
                 subtleGlow(color: materialGlow(material))
-                boardFlash(color: materialGlow(material).withAlphaComponent(0.75 + min(0.2, CGFloat(combo) * 0.04)))
-                let shakeMul = 1.0 + min(1.2, Double(combo - 1) * 0.28)
-                // Shake scales with lines/combo — crunch without covering the bin.
-                screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul * (1 + Double(min(4, cells)) * 0.08))
-                hitStop(seconds: 0.06)
+                softBackgroundPulse()
+                glowClearedCells(coords: coords, material: material)
+                let shakeMul = 1.0 + min(0.6, Double(combo - 1) * 0.15)
+                screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul * (1 + Double(min(4, cells)) * 0.05))
+                hitStop(seconds: 0.04)
+                updateComboCounter()
                 if combo >= 3 {
-                    discoUntil = CACurrentMediaTime() + 1.1
+                    discoUntil = CACurrentMediaTime() + 0.6
                     raccoonMood = .disco
-                    presentComboBanner(combo: combo)
-                    presentComboRing(combo: combo)
-                    onToast?("CHAIN ×\(combo)")
-                } else if combo >= 2 {
-                    presentComboBanner(combo: combo)
-                    presentComboRing(combo: combo)
-                    onToast?("CHAIN ×\(combo)")
-                    cheerUntil = CACurrentMediaTime() + 1.2
-                    raccoonMood = .cheer
                 } else {
-                    onToast?("RECYCLE +\(score)")
-                    cheerUntil = CACurrentMediaTime() + 1.0
+                    cheerUntil = CACurrentMediaTime() + 0.9
                     raccoonMood = .cheer
                 }
-                // Score popups beside the board (not over the falling area).
+                // Small score pop — fades in 0.6s; combo lives on the anchored counter.
                 spawnScorePipsBesideBoard(points: score)
                 spawnParticle(
                     named: combo >= 3 ? "SparkMagenta" : "SparkTeal",
                     at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45),
-                    count: min(52, 14 + cells * 2 + combo * 4)
+                    count: min(28, 8 + cells + combo * 2)
                 )
                 _ = cells
             case .pressed(let cells, _, _):
@@ -867,57 +976,61 @@ public final class CompactorScene: SKScene {
         ]))
     }
 
-    private func boardFlash(color: SKColor) {
+    /// Full-board white flashes removed — keep a ≤10% brightness pulse on the bin backdrop.
+    private func softBackgroundPulse() {
         let now = CACurrentMediaTime()
         guard now - lastFlashAt >= feel.flashCooldownSec else { return }
         lastFlashAt = now
-        let origin = gridOrigin()
-        let cs = cellSize()
-        let cols = CGFloat(engine.state.board.config.cols)
-        let rows = CGFloat(engine.state.board.config.visibleRows)
-        let flash = SKSpriteNode(
-            color: color,
-            size: CGSize(width: cs.width * cols - 4, height: cs.height * rows - 4)
-        )
-        flash.position = CGPoint(x: origin.x + cs.width * cols / 2, y: origin.y + cs.height * rows / 2)
-        flash.zPosition = 48
-        flash.alpha = 0
-        flash.blendMode = .add
-        addChild(flash)
-        flash.run(SKAction.sequence([
-            SKAction.fadeAlpha(to: 0.85, duration: 0.04),
-            SKAction.fadeOut(withDuration: 0.18),
-            SKAction.removeFromParent(),
-        ]))
+        guard let bin = childNode(withName: "//binInterior") as? SKSpriteNode else { return }
+        bin.removeAction(forKey: "softPulse")
+        let pulse = SKAction.sequence([
+            SKAction.fadeAlpha(to: 1.0, duration: 0.01),
+            SKAction.customAction(withDuration: 0.08) { node, t in
+                let k = min(1, t / 0.08)
+                (node as? SKSpriteNode)?.colorBlendFactor = 0.10 * k
+                (node as? SKSpriteNode)?.color = .white
+            },
+            SKAction.customAction(withDuration: 0.18) { node, t in
+                let k = 1 - min(1, t / 0.18)
+                (node as? SKSpriteNode)?.colorBlendFactor = 0.10 * k
+            },
+            SKAction.run { bin.colorBlendFactor = 0 },
+        ])
+        bin.run(pulse, withKey: "softPulse")
+    }
+
+    private func glowClearedCells(coords: [BoardCoord], material: Material) {
+        let glowColor = materialGlow(material)
+        for c in coords {
+            let pt = positionFor(x: c.x, boardY: c.y)
+            let cs = cellSize()
+            let glow = SKSpriteNode(color: glowColor, size: CGSize(width: cs.width * 0.92, height: cs.height * 0.92))
+            glow.position = pt
+            glow.zPosition = 40
+            glow.alpha = 0
+            glow.blendMode = .add
+            addChild(glow)
+            glow.run(SKAction.sequence([
+                SKAction.fadeAlpha(to: 0.7, duration: 0.05),
+                SKAction.group([
+                    SKAction.fadeOut(withDuration: 0.28),
+                    SKAction.scale(to: 1.25, duration: 0.28),
+                ]),
+                SKAction.removeFromParent(),
+            ]))
+        }
+    }
+
+    /// Legacy no-op — callers migrated to softBackgroundPulse / local glow.
+    private func boardFlash(color: SKColor) {
+        _ = color
+        softBackgroundPulse()
     }
 
     private func presentComboBanner(combo: Int) {
-        let banner = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        banner.text = combo >= 5 ? "MEGA CHAIN ×\(combo)" : (combo >= 3 ? "CHAIN ×\(combo)" : "CHAIN ×\(combo)")
-        banner.fontSize = combo >= 5 ? 42 : (combo >= 3 ? 36 : 30)
-        banner.fontColor = combo >= 5
-            ? SKColor(red: 1, green: 0.35, blue: 0.85, alpha: 1)
-            : (combo >= 3
-               ? SKColor(red: 0.2, green: 1, blue: 0.85, alpha: 1)
-               : SKColor(red: 0.95, green: 0.95, blue: 1, alpha: 1))
-        banner.position = CGPoint(x: size.width * 0.5, y: size.height * 0.58)
-        banner.zPosition = 90
-        banner.setScale(0.45)
-        banner.alpha = 0
-        addChild(banner)
-        let hold = min(1.1, 0.45 + Double(combo) * 0.08)
-        banner.run(SKAction.sequence([
-            SKAction.group([
-                SKAction.fadeAlpha(to: 1, duration: 0.08),
-                SKAction.scale(to: combo >= 5 ? 1.35 : 1.18, duration: 0.14),
-            ]),
-            SKAction.wait(forDuration: hold),
-            SKAction.group([
-                SKAction.fadeOut(withDuration: 0.2),
-                SKAction.scale(to: 0.8, duration: 0.2),
-            ]),
-            SKAction.removeFromParent(),
-        ]))
+        // Anchored counter above the board replaces mid-screen stacked banners.
+        _ = combo
+        updateComboCounter()
     }
 
     private func snapActivePose() {
@@ -1542,22 +1655,26 @@ public final class CompactorScene: SKScene {
         return .idle
     }
 
-    /// Score float beside the bin so it never covers falling junk.
+    /// Small score float — fades within 0.6s; never stacks with chain banners.
     private func spawnScorePipsBesideBoard(points: Int) {
         let label = SKLabelNode(text: "+\(points)")
         label.fontName = "Menlo-Bold"
-        label.fontSize = 18
+        label.fontSize = 14
         label.fontColor = SKColor(red: 0.2, green: 1, blue: 0.95, alpha: 1)
-        label.horizontalAlignmentMode = .left
+        label.horizontalAlignmentMode = .center
         let origin = gridOrigin()
         let gridW = cellSize().width * CGFloat(engine.state.board.config.cols)
-        label.position = CGPoint(x: origin.x + gridW + 8, y: origin.y + cellSize().height * 4)
-        label.zPosition = 90
+        label.position = CGPoint(
+            x: origin.x + gridW * 0.5,
+            y: origin.y + cellSize().height * CGFloat(engine.state.board.config.visibleRows) * 0.55
+        )
+        label.zPosition = 88
+        label.alpha = 0.95
         addChild(label)
         label.run(SKAction.sequence([
             SKAction.group([
-                SKAction.moveBy(x: 0, y: 36, duration: 0.55),
-                SKAction.fadeOut(withDuration: 0.55),
+                SKAction.moveBy(x: 0, y: 28, duration: 0.6),
+                SKAction.fadeOut(withDuration: 0.6),
             ]),
             SKAction.removeFromParent(),
         ]))
@@ -1737,34 +1854,47 @@ public final class CompactorScene: SKScene {
         render(immediate: false)
     }
     public func hard() {
+        guard !engine.cascadeActive else { return }
         softDragging = false
         clearTouchState()
         engine.hardDrop()
         groundedElapsed = 0
         lockResets = 0
         handleEvents()
+        if engine.cascadeActive { cascadeSettleAcc = 0 }
         hasVisualPose = false
         render(immediate: false)
-        if engine.state.over { onGameOver?(engine.state) }
+        if engine.state.over, !engine.cascadeActive { onGameOver?(engine.state) }
     }
-    public func stash() { engine.stash(); hasVisualPose = false; render(immediate: true) }
+    public func stash() {
+        guard !engine.cascadeActive else { return }
+        engine.stash()
+        hasVisualPose = false
+        render(immediate: true)
+    }
     public func magnet() {
-        // Legacy hook → Snatch random for HUD button compat during transition.
-        guard engine.state.snatchAvailable else { return }
+        // Legacy hook → Snatch random (optional classic pad / long-press).
+        guard !engine.cascadeActive, engine.state.snatchAvailable else { return }
         playSnatchGrab()
         _ = engine.snatchRandom()
         handleEvents()
         render(immediate: false)
     }
     public func slamPress() {
+        guard !engine.cascadeActive else { return }
         _ = engine.slamPress()
         handleEvents()
+        if engine.cascadeActive { cascadeSettleAcc = 0 }
+        softBackgroundPulse()
         render(immediate: false)
     }
     public func revive() {
         engine.revive()
+        engine.paceCascades = true
         raccoonMood = .idle
+        cascadeSettleAcc = 0
         hasVisualPose = false
+        updateComboCounter(forceHide: true)
         render(immediate: true)
     }
 }

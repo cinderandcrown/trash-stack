@@ -40,6 +40,23 @@ public final class GameKitService: NSObject, ObservableObject {
 
     private var matchmakingTask: Task<Void, Never>?
     private var botFallbackArmed = false
+    /// While true, achievement banners stay quiet — queue until end of run.
+    private var deferAchievementBanners = false
+    private var pendingAchievements: [(id: String, percent: Double)] = []
+
+    /// Call when entering / leaving live play so banners don't cover the HUD mid-run.
+    public func setPlayDeferral(_ deferring: Bool) {
+        deferAchievementBanners = deferring
+#if canImport(GameKit)
+        if deferring {
+            GKAccessPoint.shared.isActive = false
+            GKAccessPoint.shared.showHighlights = false
+        }
+#endif
+        if !deferring {
+            Task { await flushPendingAchievements() }
+        }
+    }
 
     public func authenticate() async {
 #if canImport(GameKit)
@@ -106,19 +123,40 @@ public final class GameKitService: NSObject, ObservableObject {
     }
 
     public func reportAchievement(_ id: String, percent: Double = 100) async {
-#if canImport(GameKit)
-        if authenticated, !stubMode {
-            let a = GKAchievement(identifier: id)
-            a.percentComplete = percent
-            a.showsCompletionBanner = percent >= 100
-            try? await GKAchievement.report([a])
-        }
-#endif
         UserDefaults.standard.set(percent, forKey: "gk.achievement.\(id)")
         // Cross-game badge: once Trash Stack unlocks Bandit of Both Worlds, leave a flag
         // Neon City Bandit can read via the shared Game Center group / same achievement id.
         if id == AchievementID.banditOfBothWorlds, percent >= 100 {
             UserDefaults.standard.set(true, forKey: "cc.banditOfBothWorlds.unlocked")
+        }
+        if deferAchievementBanners {
+            // Queue for end-of-run — never flash a banner over the live HUD.
+            if let idx = pendingAchievements.firstIndex(where: { $0.id == id }) {
+                pendingAchievements[idx].percent = max(pendingAchievements[idx].percent, percent)
+            } else {
+                pendingAchievements.append((id, percent))
+            }
+            return
+        }
+        await reportAchievementNow(id, percent: percent, showBanner: percent >= 100)
+    }
+
+    private func reportAchievementNow(_ id: String, percent: Double, showBanner: Bool) async {
+#if canImport(GameKit)
+        if authenticated, !stubMode {
+            let a = GKAchievement(identifier: id)
+            a.percentComplete = percent
+            a.showsCompletionBanner = showBanner
+            try? await GKAchievement.report([a])
+        }
+#endif
+    }
+
+    private func flushPendingAchievements() async {
+        let batch = pendingAchievements
+        pendingAchievements.removeAll()
+        for item in batch {
+            await reportAchievementNow(item.id, percent: item.percent, showBanner: item.percent >= 100)
         }
     }
 

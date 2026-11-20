@@ -199,18 +199,22 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(BoardGym.allCases.count, 5)
         XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
         XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.34, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 16, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.68, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 10, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.72, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.cascadeStepSec, 0.30, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.dasDelaySec, 0.16, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.045, accuracy: 0.001)
     }
 
-    func testComboScoreEscalatesHard() {
+    func testComboScoreEscalatesWithCap() {
         let single = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 1)
         let double = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 2)
         let mega = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 4)
+        let capped = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 9)
         XCTAssertEqual(double, single * 2)
-        XCTAssertGreaterThan(mega, double * 2)
+        XCTAssertEqual(mega, single * 3) // hard cap
+        XCTAssertEqual(capped, mega)
+        XCTAssertEqual(Scoring.linesPerLevel, 14)
     }
 
     func testCascadesProduceChainsInNormalPlay() {
@@ -234,7 +238,7 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThan(recycleWaves, 0)
         XCTAssertGreaterThanOrEqual(peak, 2, "follow-up triples should create real chains")
         var eng = GameEngine(seed: 1)
-        XCTAssertEqual(eng.state.pressMeterMax, 6)
+        XCTAssertEqual(eng.state.pressMeterMax, 10)
     }
 
     /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).

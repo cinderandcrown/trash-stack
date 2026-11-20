@@ -66,24 +66,16 @@ struct GameContainerView: View {
 
     var body: some View {
         ZStack {
+            NeonTheme.playChrome.ignoresSafeArea()
             VStack(spacing: 0) {
                 leanHudBar
-                // No reserved empty toast bar — only claim height when a toast is live.
-                if toastText != nil {
-                    toastBanner
-                }
+                    .padding(.horizontal, 8)
 
-                // Full-bleed board — bandit + next/hold overlay so cells can use ~full width.
+                // Board fills remaining height; ~8px side margins via scene cellSize.
                 SpriteView(scene: scene)
                     .background(Color(red: 0.05, green: 0.06, blue: 0.10))
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .topLeading) {
-                        BanditLoopView(mood: raccoonMood, size: 64)
-                            .scaleEffect(raccoonBounce)
-                            .padding(.leading, 6)
-                            .padding(.top, 6)
-                    }
                     .overlay(alignment: .topTrailing) {
                         miniNextHold
                             .padding(.trailing, 6)
@@ -101,34 +93,43 @@ struct GameContainerView: View {
                                 .padding(.top, 8)
                         }
                     }
-                    .overlay(alignment: .topLeading) {
+                    .overlay(alignment: .top) {
                         if showGestureHint {
-                            Text("Drag · tap L/R rotate · swipe ↓ drop · ↑ hold")
+                            Text("Tap rotate · drag move · swipe ↓ drop · ↑ hold")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
                                 .padding(8)
                                 .background(Color.black.opacity(0.7))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .padding(.leading, 72)
-                                .padding(.top, 8)
+                                .padding(.top, 36)
                                 .transition(.opacity)
                         }
                     }
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, 8)
 
                 if profile.classicButtons {
                     classicPad
                 }
 
-                // At most ONE power button — SLAM when charged, else SNATCH when available.
+                // One big SLAM only when charged — sits above the home indicator.
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                    .padding(.top, 4)
             }
-            .background(NeonTheme.playChrome.ignoresSafeArea())
-            .safeAreaPadding(.top, 2)
-            .safeAreaPadding(.bottom, 4)
+            .safeAreaPadding(.top, 8)
+            .safeAreaPadding(.bottom, 10)
             .allowsHitTesting(!showHowTo && !isPaused)
+
+            // Toasts above HUD / buttons — never behind the control layer.
+            if toastText != nil {
+                VStack {
+                    toastBanner
+                        .padding(.top, 56)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+                .zIndex(60)
+            }
 
             if showHowTo {
                 HowToPlayOverlay {
@@ -162,6 +163,7 @@ struct GameContainerView: View {
         .onDisappear {
             scoreAnimTask?.cancel(); scoreAnimTask = nil
             gestureHintTask?.cancel()
+            GameKitService.shared.setPlayDeferral(false)
         }
         .onChange(of: hudScore) { _, newValue in animateScore(to: newValue) }
         .onChange(of: scenePhase) { _, phase in
@@ -240,9 +242,10 @@ struct GameContainerView: View {
         }
     }
 
-    /// Lean top bar: pause · score · level · ONE current goal.
+    /// Lean top bar: pause · bandit · score · level · ONE current goal.
+    /// Bandit sits beside the HUD (not on the board) so the bin keeps full width.
     private var leanHudBar: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
             Button {
                 AudioService.shared.playSFX("ui")
                 enterPause(as: .user)
@@ -256,27 +259,33 @@ struct GameContainerView: View {
             }
             .buttonStyle(.plain)
 
-            Text("\(displayScore)")
-                .font(.system(size: 26, weight: .black, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-                .contentTransition(.numericText())
+            BanditLoopView(mood: raccoonMood, size: 52)
+                .scaleEffect(raccoonBounce)
+                .accessibilityLabel("The Bandit")
 
-            Text("LVL \(hudLevel)")
-                .font(.caption.weight(.black).monospacedDigit())
-                .foregroundStyle(NeonTheme.magenta)
-
-            if let goal = orders.first(where: { !$0.done }) ?? orders.first {
-                Text(goal.label)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(goal.done ? NeonTheme.teal : NeonTheme.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(displayScore)")
+                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText())
+                HStack(spacing: 8) {
+                    Text("LVL \(hudLevel)")
+                        .font(.caption.weight(.black).monospacedDigit())
+                        .foregroundStyle(NeonTheme.magenta)
+                    if let goal = orders.first(where: { !$0.done }) ?? orders.first {
+                        Text(goal.label)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(goal.done ? NeonTheme.teal : NeonTheme.muted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
     }
 
     private var toastBanner: some View {
@@ -324,57 +333,29 @@ struct GameContainerView: View {
         let pressReady = pressMeter >= pressMax
         return Group {
             if pressReady {
+                // Only big control: SLAM when charged (above home indicator).
                 Button {
                     scene.slamPress()
                     AudioService.shared.playSFX("crush")
                     HapticsService.shared.clear()
                     syncHUD()
                 } label: {
-                    Text("SLAM! TAP TO CRUSH")
-                        .font(.headline.weight(.black))
+                    Text("SLAM")
+                        .font(.title3.weight(.black))
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 16)
                         .background(LinearGradient(colors: [NeonTheme.gold, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
                 .buttonStyle(.plain)
-            } else if snatchReady {
-                Button {
-                    snatchPressed = true
-                    scene.magnet()
-                    AudioService.shared.playSFX("magnet")
-                    HapticsService.shared.tap()
-                    if !profile.snatchTipShown {
-                        profile.snatchTipShown = true
-                        profile.persist()
-                        showSnatchTip = true
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 2_200_000_000)
-                            showSnatchTip = false
-                        }
-                    }
-                    syncHUD()
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 180_000_000)
-                        snatchPressed = false
-                    }
-                } label: {
-                    Text("SNATCH")
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .scaleEffect(snatchPressed ? 0.95 : 1)
-                }
-                .buttonStyle(.plain)
+                .accessibilityLabel("Slam press")
             } else {
-                // Meter only — no second competing button.
+                // Slim meter — no wall of buttons; snatch stays gesture/classic-pad only.
                 ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
                     .tint(NeonTheme.teal)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
+                    .accessibilityLabel("Press meter \(pressMeter) of \(pressMax)")
             }
         }
     }
@@ -540,22 +521,18 @@ struct GameContainerView: View {
     }
 
     private func showToast(_ text: String) {
-        // One banner at a time — queue extras instead of stacking.
-        toastQueue.append(text)
-        pumpToast()
-    }
-
-    private func pumpToast() {
-        guard toastTask == nil, let next = toastQueue.first else { return }
-        toastText = next
+        // Latest-only: drop stale queued toasts; never more than one pending.
+        toastQueue = [text]
+        // If something is already showing, replace it immediately with the newest.
+        toastTask?.cancel()
+        toastTask = nil
+        toastText = text
         toastTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_100_000_000)
-            if !Task.isCancelled {
-                toastText = nil
-                if !toastQueue.isEmpty { toastQueue.removeFirst() }
-                toastTask = nil
-                pumpToast()
-            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            toastText = nil
+            toastQueue.removeAll()
+            toastTask = nil
         }
     }
 
@@ -582,12 +559,18 @@ struct GameContainerView: View {
         scene.configureForProMotion(false)
         LaunchTiming.markPlayTap()
         AudioService.shared.applyPersistedMute()
+        // Quiet GC banners / access point while the run is live.
+        GameKitService.shared.setPlayDeferral(true)
+        GameKitService.shared.configureAccessPoint(show: false)
         // Demo/shot paths skip the ident — still warm textures before first board paint.
         AssetPreloader.preloadDuringIdent()
-        // First launch: big pad + short how-to. Smoke/shot paths skip the overlay.
+        // First launch: how-to overlay. Smoke/shot paths skip. Buttons off by default.
         let shotPeek = UserDefaults.standard.string(forKey: "trashStack.shotActive")
             ?? PlayerProfile.shotArgument()
         let isShot = shotPeek != nil && !(shotPeek?.isEmpty ?? true)
+        if !isShot {
+            profile.classicButtons = false
+        }
         if !profile.tutorialDone, !isShot {
             showHowTo = true
             scene.isPaused = true
@@ -794,6 +777,8 @@ struct GameContainerView: View {
         lastState = state
         // Prefer the locked top-out score if something mutated state afterward.
         if overScore == 0 { captureGameOverScore(state.score) }
+        // Calm moment — flush queued achievements / allow banners again.
+        GameKitService.shared.setPlayDeferral(false)
         if !continued {
             showContinue = true
             return
@@ -812,6 +797,8 @@ struct GameContainerView: View {
         isNewBest = false
         raccoonMood = .idle
         nearMiss = false
+        GameKitService.shared.setPlayDeferral(true)
+        GameKitService.shared.configureAccessPoint(show: false)
         if playMode == .daily {
             scene.applyShot("daily")
         } else {
