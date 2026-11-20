@@ -6,6 +6,8 @@ public enum PlayMode: String, Sendable, CaseIterable, Codable {
     case shift
     case endless
     case daily
+    /// Real-time 1v1 — TRASH TALK.
+    case trashTalk
 }
 
 public struct ShiftLevel: Sendable, Equatable, Identifiable {
@@ -107,4 +109,45 @@ public enum AchievementID {
     public static let dailyClear = "ts_daily_clear"
     public static let streakSeven = "ts_streak_7"
     public static let snatchUsed = "ts_snatch"
+    // TRASH TALK / competition
+    public static let firstTrashTalkWin = "ts_tt_first_win"
+    public static let trashTalkWinStreak3 = "ts_tt_streak_3"
+    public static let trashTalkWinStreak5 = "ts_tt_streak_5"
+    public static let fourRowClear = "ts_four_clear"
+    public static let sendTenJunk = "ts_junk_10"
+    public static let sendFiftyJunk = "ts_junk_50"
+    public static let weeklyTop10 = "ts_weekly_top10"
+    public static let weeklyChampion = "ts_weekly_champ"
+    public static let allTime10k = "ts_score_10k"
+    public static let allTime50k = "ts_score_50k"
+    public static let beatFriendScore = "ts_beat_friend"
+    public static let rematchWin = "ts_tt_rematch_win"
+    public static let surviveNearMiss = "ts_near_miss"
+    /// Shared with Neon City Bandit via Game Center group (same identifier in both apps).
+    public static let banditOfBothWorlds = "cc_bandit_of_both_worlds"
+
+    public static var allConfigured: [(id: String, name: String, points: Int)] {
+        [
+            (firstRecycle, "First Recycle", 5),
+            (chainFive, "Chain Reaction", 10),
+            (pressSlam, "Press Operator", 5),
+            (dailyClear, "Daily Dump Cleared", 5),
+            (streakSeven, "Week on the Job", 15),
+            (snatchUsed, "Sticky Fingers", 5),
+            (firstTrashTalkWin, "First Trash Talk Win", 10),
+            (trashTalkWinStreak3, "Trash Talk Streak ×3", 15),
+            (trashTalkWinStreak5, "Trash Talk Streak ×5", 25),
+            (fourRowClear, "Quad Clear", 10),
+            (sendTenJunk, "Junk Courier", 10),
+            (sendFiftyJunk, "Junk Tycoon", 20),
+            (weeklyTop10, "Weekly Top 10", 15),
+            (weeklyChampion, "Weekly Champion", 50),
+            (allTime10k, "Night Shift 10K", 10),
+            (allTime50k, "Night Shift 50K", 25),
+            (beatFriendScore, "Beat a Friend", 10),
+            (rematchWin, "Rematch Revenge", 10),
+            (surviveNearMiss, "Lip of the Bin", 5),
+            (banditOfBothWorlds, "Bandit of Both Worlds", 50),
+        ]
+    }
 }

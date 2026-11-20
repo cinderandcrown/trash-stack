@@ -112,6 +112,23 @@ public final class CompactorScene: SKScene {
         render(immediate: true)
     }
 
+    /// TRASH TALK: queue incoming junk rows (warning meter, then land).
+    public func queueJunk(rows: Int) {
+        engine.queueJunk(rows: rows)
+        handleEvents()
+        render(immediate: false)
+    }
+
+    @discardableResult
+    public func tickJunkWarning(dt: Double) -> Bool {
+        let landed = engine.tickJunkWarning(dt: dt)
+        if landed || engine.state.pendingJunkRows > 0 {
+            handleEvents()
+            render(immediate: false)
+        }
+        return landed
+    }
+
     public func applyShot(_ shot: String) {
         pendingShot = shot
         engine.applyShotScenario(shot)
@@ -475,6 +492,12 @@ public final class CompactorScene: SKScene {
 
         let nextMood = computeRaccoonMood()
         if nextMood != raccoonMood { raccoonMood = nextMood }
+
+        // TRASH TALK junk warning → land (no-op when pendingJunkRows == 0).
+        if engine.state.pendingJunkRows > 0 {
+            _ = engine.tickJunkWarning(dt: Double(dt))
+            handleEvents()
+        }
 
         // Continuous visual smoothing toward discrete logic pose.
         smoothActivePose(dt: dt)

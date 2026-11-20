@@ -96,6 +96,104 @@ class AppLookupTests(unittest.TestCase):
         self.assertIsNone(asc.find_app(client, "com.cinderandcrown.trashstack"))
 
 
+class GameCenterCapabilityTests(unittest.TestCase):
+    def test_capability_already_enabled(self) -> None:
+        send = FakeSend(
+            {
+                ("GET", "/v1/bundleIds"): (
+                    200,
+                    {
+                        "data": [
+                            {
+                                "id": "BID1",
+                                "type": "bundleIds",
+                                "attributes": {
+                                    "identifier": "com.cinderandcrown.trashstack",
+                                    "name": "Trash Stack",
+                                },
+                            }
+                        ]
+                    },
+                ),
+                ("GET", "/v1/bundleIds/BID1/bundleIdCapabilities"): (
+                    200,
+                    {
+                        "data": [
+                            {
+                                "id": "CAP1",
+                                "type": "bundleIdCapabilities",
+                                "attributes": {"capabilityType": "GAME_CENTER"},
+                            }
+                        ]
+                    },
+                ),
+            }
+        )
+        client = asc.Client(token=lambda: "t", send=send)
+        self.assertTrue(asc.ensure_bundle_game_center_capability(client, "com.cinderandcrown.trashstack"))
+        self.assertFalse(any(c[0] == "POST" for c in send.calls))
+
+    def test_capability_enabled_when_missing(self) -> None:
+        send = FakeSend(
+            {
+                ("GET", "/v1/bundleIds"): (
+                    200,
+                    {
+                        "data": [
+                            {
+                                "id": "BID1",
+                                "type": "bundleIds",
+                                "attributes": {
+                                    "identifier": "com.cinderandcrown.trashstack",
+                                    "name": "Trash Stack",
+                                },
+                            }
+                        ]
+                    },
+                ),
+                ("GET", "/v1/bundleIds/BID1/bundleIdCapabilities"): (
+                    200,
+                    {"data": []},
+                ),
+                ("POST", "/v1/bundleIdCapabilities"): (
+                    201,
+                    {
+                        "data": {
+                            "id": "CAPNEW",
+                            "type": "bundleIdCapabilities",
+                            "attributes": {"capabilityType": "GAME_CENTER"},
+                        }
+                    },
+                ),
+            }
+        )
+        # After POST, re-list returns GAME_CENTER.
+        original = send.__call__
+        calls = {"n": 0}
+
+        def send_with_relist(method: str, url: str, headers: dict[str, str], body: bytes | None):
+            path = url.split("?", 1)[0].replace(asc.API, "")
+            if method == "GET" and path.endswith("/bundleIdCapabilities"):
+                calls["n"] += 1
+                if calls["n"] > 1:
+                    return 200, json.dumps(
+                        {
+                            "data": [
+                                {
+                                    "id": "CAPNEW",
+                                    "type": "bundleIdCapabilities",
+                                    "attributes": {"capabilityType": "GAME_CENTER"},
+                                }
+                            ]
+                        }
+                    ).encode()
+            return original(method, url, headers, body)
+
+        client = asc.Client(token=lambda: "t", send=send_with_relist)
+        self.assertTrue(asc.ensure_bundle_game_center_capability(client, "com.cinderandcrown.trashstack"))
+        self.assertTrue(any(c[0] == "POST" and "bundleIdCapabilities" in c[1] for c in send.calls))
+
+
 class ExportComplianceTests(unittest.TestCase):
     def test_set_export_compliance_patches_build(self) -> None:
         send = FakeSend({("PATCH", "/v1/builds/B1"): (200, {"data": {"id": "B1"}})})

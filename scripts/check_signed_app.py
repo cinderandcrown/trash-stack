@@ -61,6 +61,10 @@ def problems(
         entitlements.get("get-task-allow") is not True,
         "This is a development signature. App Store Connect refuses it.",
     )
+    expect(
+        entitlements.get("com.apple.developer.game-center") is True,
+        "Game Center entitlement missing from the signed app (App ID capability / profile).",
+    )
     return found
 
 

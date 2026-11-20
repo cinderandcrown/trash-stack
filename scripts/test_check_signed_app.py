@@ -21,6 +21,7 @@ class CheckSignedAppTests(unittest.TestCase):
         entitlements = {
             "application-identifier": "GDNRT9DJ58.com.cinderandcrown.magpie",
             "com.apple.developer.team-identifier": "GDNRT9DJ58",
+            "com.apple.developer.game-center": True,
         }
         self.assertEqual(
             csa.problems(info, entitlements, "GDNRT9DJ58", "com.cinderandcrown.magpie", "0.1.0", "3.1"),
@@ -36,6 +37,7 @@ class CheckSignedAppTests(unittest.TestCase):
         entitlements = {
             "application-identifier": "GDNRT9DJ58.com.cinderandcrown.magpie",
             "com.apple.developer.team-identifier": "GDNRT9DJ58",
+            "com.apple.developer.game-center": True,
         }
         found = csa.problems(
             info, entitlements, "GDNRT9DJ58", "com.cinderandcrown.magpie", "0.1.0", "1",
@@ -77,6 +79,7 @@ class CheckSignedAppTests(unittest.TestCase):
                     {
                         "application-identifier": "GDNRT9DJ58.com.cinderandcrown.magpie",
                         "com.apple.developer.team-identifier": "GDNRT9DJ58",
+                        "com.apple.developer.game-center": True,
                     }
                 )
             )

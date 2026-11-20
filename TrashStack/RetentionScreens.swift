@@ -27,7 +27,60 @@ struct ModeSelectView: View {
                         : "One seeded puzzle for everyone today",
                     mode: .daily
                 )
-                Text("Shift districts coming soon — Endless + Daily ship first.")
+                Button {
+                    AudioService.shared.playSFX("ui")
+                    screen = .trashTalk
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("TRASH TALK")
+                            .font(.headline.weight(.black))
+                            .foregroundStyle(.white)
+                        Text("1v1 live · send junk · last bin standing · free")
+                            .font(.caption)
+                            .foregroundStyle(NeonTheme.muted)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(NeonTheme.panel.opacity(0.92))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(NeonTheme.magenta.opacity(0.65), lineWidth: 1.2)
+                    )
+                    .padding(.horizontal, 16)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    playMode = .endless
+                    profile.preferredMode = .endless
+                    profile.persist()
+                    AudioService.shared.playSFX("ui")
+                    // Weekly tournament uses the shared week seed in Endless; scores go to trashstack_weekly.
+                    UserDefaults.standard.set(true, forKey: "tt.weeklyRun")
+                    LaunchTiming.markPlayTap()
+                    screen = .game
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Weekly Tournament")
+                            .font(.headline.weight(.black))
+                            .foregroundStyle(.white)
+                        Text("Same seed all week · Game Center weekly board")
+                            .font(.caption)
+                            .foregroundStyle(NeonTheme.muted)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(NeonTheme.panel.opacity(0.92))
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(NeonTheme.teal.opacity(0.55), lineWidth: 1.2)
+                    )
+                    .padding(.horizontal, 16)
+                }
+                .buttonStyle(.plain)
+                Text("No paid entries · no wagers · no real-value prizes.")
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(NeonTheme.muted)
                     .padding(.horizontal, 20)

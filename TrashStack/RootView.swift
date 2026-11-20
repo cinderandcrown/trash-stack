@@ -5,7 +5,7 @@ import Services
 import GameCore
 
 enum AppScreen: String {
-    case title, modes, shiftMap, game, base, pass, shop, quests, settings, tutorial, notif, marketing, streak, dailyShare
+    case title, modes, shiftMap, game, trashTalk, base, pass, shop, quests, settings, tutorial, notif, marketing, streak, dailyShare
 }
 
 enum PublisherIdentGate {
@@ -77,6 +77,8 @@ struct RootView: View {
                             screen = .streak
                         }
                     )
+                case .trashTalk:
+                    TrashTalkView(screen: $screen)
                 case .base: JunkyardView(screen: $screen)
                 case .pass: SeasonPassView(screen: $screen)
                 case .shop: ShopView(screen: $screen)
