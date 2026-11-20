@@ -21,6 +21,7 @@ struct GameContainerView: View {
     @State private var displayScore = 0
     @State private var hudLevel = 1
     @State private var raccoonMood: CompactorScene.RaccoonMood = .idle
+    @State private var raccoonBounce: CGFloat = 1.0
     @State private var showPause = false
     @State private var scoreAnimTask: Task<Void, Never>?
     @State private var sheetScoreAnimTask: Task<Void, Never>?
@@ -287,11 +288,20 @@ struct GameContainerView: View {
             BundleImage(name: raccoonAsset)
                 .scaledToFit()
                 .frame(width: 52, height: 52)
+                .scaleEffect(raccoonBounce)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                         .stroke(NeonTheme.magenta.opacity(0.7), lineWidth: 1.2)
                 )
+                .accessibilityLabel("Bandit raccoon placeholder")
+                .onChange(of: raccoonMood) { _, _ in
+                    // Squash/bounce when the mascot pose slot changes (placeholder until on-model art).
+                    raccoonBounce = 0.82
+                    withAnimation(.spring(response: 0.28, dampingFraction: 0.45)) {
+                        raccoonBounce = 1.0
+                    }
+                }
 
             VStack(alignment: .leading, spacing: 2) {
                 Text("\(displayScore)")
@@ -428,6 +438,7 @@ struct GameContainerView: View {
         switch raccoonMood {
         case .cheer: return "RaccoonCheer"
         case .panic: return "RaccoonPanic"
+        case .gameOver: return "RaccoonGameOver"
         case .idle: return "RaccoonIdle"
         }
     }

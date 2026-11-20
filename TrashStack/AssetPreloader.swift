@@ -14,8 +14,10 @@ enum AssetPreloader {
         guard !started else { return }
         started = true
         let names = CompactorScene.requiredJunkTextureNames + [
-            "AlleyBackground", "DumpsterFrame",
-            "RaccoonIdle", "RaccoonCheer", "RaccoonPanic",
+            "AlleyBackground", "DumpsterFrame", "BinInterior",
+            "CellPlate", "Slam01", "Slam02", "ClearBurst",
+            // Neutral Bandit placeholders until on-model cyberpunk poses arrive.
+            "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "RaccoonGameOver",
             "SparkGold", "SparkTeal", "SparkMagenta",
             "DebrisMetal", "DebrisNeon", "MagnetIcon",
         ]

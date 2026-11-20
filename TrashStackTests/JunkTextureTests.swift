@@ -33,7 +33,12 @@ final class JunkTextureTests: XCTestCase {
     }
 
     func testHudAndBoardArtPresent() {
-        for name in ["DumpsterFrame", "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "MagnetIcon", "SparkTeal"] {
+        for name in [
+            "DumpsterFrame", "BinInterior", "CellPlate",
+            "Slam01", "Slam02", "ClearBurst",
+            "RaccoonIdle", "RaccoonCheer", "RaccoonPanic", "RaccoonGameOver",
+            "MagnetIcon", "SparkTeal",
+        ] {
             XCTAssertNotNil(
                 JunkTextureLoader.image(named: name),
                 "Missing HUD art '\(name)'"

@@ -58,35 +58,37 @@ public struct JunkDef: Sendable, Equatable {
 
 public enum JunkCatalog {
     /// Compactor-bin junk items. See docs/DESIGN.md.
+    /// Visual tile art (Higgsfield pack): one material look per piece type.
+    /// Recycle matching still uses the four Material buckets (metal/glass/plastic/paper).
     public static let all: [JunkDef] = [
         JunkDef(id: .can, material: .metal, textureName: "can", rotations: [
             [[0, 0]],
         ], weight: 14),
-        JunkDef(id: .bottle, material: .glass, textureName: "bottle", rotations: [
+        JunkDef(id: .bottle, material: .glass, textureName: "glass", rotations: [
             [[0, 0], [0, 1]],
             [[0, 0], [1, 0]],
         ], weight: 12),
-        JunkDef(id: .plank, material: .paper, textureName: "plank", rotations: [
+        JunkDef(id: .plank, material: .paper, textureName: "cardboard", rotations: [
             [[0, 0], [1, 0], [2, 0]],
             [[0, 0], [0, 1], [0, 2]],
         ], weight: 10),
-        JunkDef(id: .pipe, material: .metal, textureName: "pipe", rotations: [
+        JunkDef(id: .pipe, material: .metal, textureName: "plastic", rotations: [
             [[0, 0], [1, 0], [2, 0]],
             [[0, 0], [0, 1], [0, 2]],
         ], weight: 10),
-        JunkDef(id: .crate, material: .paper, textureName: "crate", rotations: [
+        JunkDef(id: .crate, material: .paper, textureName: "pizza", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1]],
         ], weight: 9),
         JunkDef(id: .tire, material: .plastic, textureName: "tire", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1]],
         ], weight: 9),
-        JunkDef(id: .bentPipe, material: .metal, textureName: "bentPipe", rotations: [
+        JunkDef(id: .bentPipe, material: .metal, textureName: "banana", rotations: [
             [[0, 0], [0, 1], [1, 1]],
             [[0, 1], [1, 0], [1, 1]],
             [[0, 0], [1, 0], [1, 1]],
             [[0, 0], [1, 0], [0, 1]],
         ], weight: 10),
-        JunkDef(id: .fridge, material: .metal, textureName: "fridge", rotations: [
+        JunkDef(id: .fridge, material: .metal, textureName: "cardboard", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2]],
             [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]],
         ], weight: 3),
