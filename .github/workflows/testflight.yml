@@ -233,6 +233,17 @@ jobs:
             exit "$code"
           fi
 
+      # Before archive/export so cloud-managed profiles include Game Center.
+      # Idempotent + config-only (no App Store version submit/release).
+      - name: Configure Game Center (App ID + leaderboards + achievements)
+        if: steps.gate.outputs.ready == 'true'
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          python3 scripts/appstore_connect.py configure-game-center \
+            --bundle-id "$BUNDLE_ID"
+
       - name: Install XcodeGen and generate
         if: steps.gate.outputs.ready == 'true'
         run: |

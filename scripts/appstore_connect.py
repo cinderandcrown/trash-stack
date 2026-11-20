@@ -6,10 +6,15 @@ The TestFlight workflow runs this. It needs only Python and `openssl`, both of w
 on every GitHub runner.
 
     appstore_connect.py ensure-bundle-id --bundle-id ID --name "Trash Stack"
+    appstore_connect.py configure-game-center --bundle-id ID
     appstore_connect.py beta-group --bundle-id ID --name "Trash Stack team"
     appstore_connect.py wait-build --bundle-id ID --version 1.0.0 --build 74.1
     appstore_connect.py distribute-build --bundle-id ID --name "Trash Stack team" \\
         --version 1.0.0 --build 74.1 --tester-email someone@example.com
+
+configure-game-center is idempotent and config-only: enables GAME_CENTER on the App ID
+(so cloud-managed profiles include it), then creates missing leaderboards/achievements.
+It never submits or releases an App Store version. TestFlight runs it before signing.
 
 The key comes from the environment: ASC_KEY_ID, ASC_ISSUER_ID, and ASC_KEY_PATH (the .p8
 file). The job log of a public repository is public, so nothing here prints a name, an
@@ -838,30 +843,101 @@ ACHIEVEMENTS = [
 ]
 
 
+def list_bundle_capabilities(client: Client, bundle_record_id: str) -> set[str]:
+    page = client.get(
+        f"/v1/bundleIds/{bundle_record_id}/bundleIdCapabilities",
+        {"limit": "200", "fields[bundleIdCapabilities]": "capabilityType"},
+    )
+    out: set[str] = set()
+    for row in page.get("data", []):
+        cap = (row.get("attributes") or {}).get("capabilityType")
+        if cap:
+            out.add(cap)
+    return out
+
+
+def ensure_bundle_game_center_capability(client: Client, bundle_identifier: str) -> bool:
+    """Enable GAME_CENTER on the App ID so provisioning profiles include the entitlement.
+
+    Idempotent. Returns True when the capability is present after this call.
+    Automatic App Store export (`-allowProvisioningUpdates`) regenerates the
+    profile with Game Center once the App ID has the capability.
+    """
+    bundle = find_bundle(client, bundle_identifier)
+    if not bundle:
+        raise SystemExit(f"No App ID for {bundle_identifier}. Run ensure-bundle-id first.")
+    caps = list_bundle_capabilities(client, bundle["id"])
+    if "GAME_CENTER" in caps:
+        print(f"App ID {bundle_identifier}: GAME_CENTER capability already enabled.")
+        return True
+    try:
+        client.post(
+            "/v1/bundleIdCapabilities",
+            {
+                "data": {
+                    "type": "bundleIdCapabilities",
+                    "attributes": {"capabilityType": "GAME_CENTER"},
+                    "relationships": {
+                        "bundleId": {"data": {"type": "bundleIds", "id": bundle["id"]}},
+                    },
+                }
+            },
+        )
+        print(f"App ID {bundle_identifier}: enabled GAME_CENTER capability.")
+    except ApiError as error:
+        # Concurrent enable or already-on → treat as success after re-check.
+        if error.status not in (409, 422):
+            raise
+        print(f"App ID {bundle_identifier}: GAME_CENTER enable raced ({error.status}); re-checking.")
+    caps = list_bundle_capabilities(client, bundle["id"])
+    if "GAME_CENTER" not in caps:
+        raise SystemExit(f"App ID {bundle_identifier}: GAME_CENTER capability still missing after enable.")
+    print(f"App ID {bundle_identifier}: GAME_CENTER confirmed on App ID (profiles will pick it up on export).")
+    return True
+
+
 def ensure_game_center_detail(client: Client, app_id: str) -> str:
-    """Enable Game Center for the app; return gameCenterDetail id."""
-    existing = client.get(
-        f"/v1/apps/{app_id}/gameCenterDetail",
-        {"fields[gameCenterDetails]": "challengeEnabled"},
-    )
-    data = existing.get("data")
-    if isinstance(data, dict) and data.get("id"):
-        print(f"Game Center detail already present ({data['id']}).")
-        return data["id"]
-    created = client.post(
-        "/v1/gameCenterDetails",
-        {
-            "data": {
-                "type": "gameCenterDetails",
-                "relationships": {
-                    "app": {"data": {"type": "apps", "id": app_id}},
-                },
-            }
-        },
-    )
-    detail_id = created["data"]["id"]
-    print(f"Enabled Game Center detail ({detail_id}).")
-    return detail_id
+    """Enable Game Center for the app; return gameCenterDetail id. Idempotent."""
+    try:
+        existing = client.get(
+            f"/v1/apps/{app_id}/gameCenterDetail",
+            {"fields[gameCenterDetails]": "challengeEnabled"},
+        )
+        data = existing.get("data")
+        if isinstance(data, dict) and data.get("id"):
+            print(f"Game Center detail already present ({data['id']}).")
+            return data["id"]
+    except ApiError as error:
+        # 404 / empty relationship → create; other errors bubble.
+        if error.status != 404:
+            raise
+    try:
+        created = client.post(
+            "/v1/gameCenterDetails",
+            {
+                "data": {
+                    "type": "gameCenterDetails",
+                    "relationships": {
+                        "app": {"data": {"type": "apps", "id": app_id}},
+                    },
+                }
+            },
+        )
+        detail_id = created["data"]["id"]
+        print(f"Enabled Game Center detail ({detail_id}).")
+        return detail_id
+    except ApiError as error:
+        if error.status in (409, 422):
+            # Already enabled — re-fetch.
+            existing = client.get(
+                f"/v1/apps/{app_id}/gameCenterDetail",
+                {"fields[gameCenterDetails]": "challengeEnabled"},
+            )
+            data = existing.get("data")
+            if isinstance(data, dict) and data.get("id"):
+                print(f"Game Center detail already present ({data['id']}).")
+                return data["id"]
+        raise
 
 
 def list_leaderboard_vendor_ids(client: Client, detail_id: str) -> set[str]:
@@ -910,32 +986,49 @@ def ensure_leaderboards(client: Client, detail_id: str) -> None:
             created = client.post("/v1/gameCenterLeaderboards", body)
             lb_id = created["data"]["id"]
             print(f"Leaderboard {spec['vendorId']}: created ({lb_id}).")
-            client.post(
-                "/v1/gameCenterLeaderboardLocalizations",
-                {
-                    "data": {
-                        "type": "gameCenterLeaderboardLocalizations",
-                        "attributes": {
-                            "locale": spec["locale"],
-                            "name": spec["name"],
-                            "formatterOverride": spec["formatter"],
-                        },
-                        "relationships": {
-                            "gameCenterLeaderboard": {
-                                "data": {"type": "gameCenterLeaderboards", "id": lb_id}
-                            }
-                        },
-                    }
-                },
-            )
+            try:
+                client.post(
+                    "/v1/gameCenterLeaderboardLocalizations",
+                    {
+                        "data": {
+                            "type": "gameCenterLeaderboardLocalizations",
+                            "attributes": {
+                                "locale": spec["locale"],
+                                "name": spec["name"],
+                                "formatterOverride": spec["formatter"],
+                            },
+                            "relationships": {
+                                "gameCenterLeaderboard": {
+                                    "data": {"type": "gameCenterLeaderboards", "id": lb_id}
+                                }
+                            },
+                        }
+                    },
+                )
+            except ApiError as loc_error:
+                if loc_error.status not in (409, 422):
+                    raise
+                print(f"Leaderboard {spec['vendorId']}: localization already present.")
         except ApiError as error:
             # Recurrence fields may be rejected on older API shapes — retry without them.
-            if "recurrence" in attributes and error.status in (400, 409):
+            if any(k in attributes for k in ("recurrenceStartDate", "recurrenceDuration", "recurrenceRule")) and error.status in (
+                400,
+                409,
+                422,
+            ):
                 for key in ("recurrenceStartDate", "recurrenceDuration", "recurrenceRule"):
                     attributes.pop(key, None)
                 body["data"]["attributes"] = attributes
-                created = client.post("/v1/gameCenterLeaderboards", body)
-                print(f"Leaderboard {spec['vendorId']}: created without recurrence ({created['data']['id']}).")
+                try:
+                    created = client.post("/v1/gameCenterLeaderboards", body)
+                    print(f"Leaderboard {spec['vendorId']}: created without recurrence ({created['data']['id']}).")
+                except ApiError as retry_error:
+                    if retry_error.status in (409, 422):
+                        print(f"Leaderboard {spec['vendorId']}: already there (conflict).")
+                    else:
+                        raise
+            elif error.status in (409, 422):
+                print(f"Leaderboard {spec['vendorId']}: already there (conflict).")
             else:
                 raise
 
@@ -959,45 +1052,56 @@ def ensure_achievements(client: Client, detail_id: str) -> None:
         if vendor in have:
             print(f"Achievement {vendor}: already there.")
             continue
-        created = client.post(
-            "/v1/gameCenterAchievements",
-            {
-                "data": {
-                    "type": "gameCenterAchievements",
-                    "attributes": {
-                        "referenceName": name,
-                        "vendorIdentifier": vendor,
-                        "points": points,
-                        "showBeforeEarned": True,
-                        "repeatable": False,
-                    },
-                    "relationships": {
-                        "gameCenterDetail": {"data": {"type": "gameCenterDetails", "id": detail_id}},
-                    },
-                }
-            },
-        )
-        ach_id = created["data"]["id"]
-        print(f"Achievement {vendor}: created ({ach_id}).")
-        client.post(
-            "/v1/gameCenterAchievementLocalizations",
-            {
-                "data": {
-                    "type": "gameCenterAchievementLocalizations",
-                    "attributes": {
-                        "locale": "en-US",
-                        "name": name,
-                        "beforeEarnedDescription": f"Earn: {name}",
-                        "afterEarnedDescription": f"Unlocked: {name}",
-                    },
-                    "relationships": {
-                        "gameCenterAchievement": {
-                            "data": {"type": "gameCenterAchievements", "id": ach_id}
+        try:
+            created = client.post(
+                "/v1/gameCenterAchievements",
+                {
+                    "data": {
+                        "type": "gameCenterAchievements",
+                        "attributes": {
+                            "referenceName": name,
+                            "vendorIdentifier": vendor,
+                            "points": points,
+                            "showBeforeEarned": True,
+                            "repeatable": False,
+                        },
+                        "relationships": {
+                            "gameCenterDetail": {"data": {"type": "gameCenterDetails", "id": detail_id}},
+                        },
+                    }
+                },
+            )
+            ach_id = created["data"]["id"]
+            print(f"Achievement {vendor}: created ({ach_id}).")
+            try:
+                client.post(
+                    "/v1/gameCenterAchievementLocalizations",
+                    {
+                        "data": {
+                            "type": "gameCenterAchievementLocalizations",
+                            "attributes": {
+                                "locale": "en-US",
+                                "name": name,
+                                "beforeEarnedDescription": f"Earn: {name}",
+                                "afterEarnedDescription": f"Unlocked: {name}",
+                            },
+                            "relationships": {
+                                "gameCenterAchievement": {
+                                    "data": {"type": "gameCenterAchievements", "id": ach_id}
+                                }
+                            },
                         }
                     },
-                }
-            },
-        )
+                )
+            except ApiError as loc_error:
+                if loc_error.status not in (409, 422):
+                    raise
+                print(f"Achievement {vendor}: localization already present.")
+        except ApiError as error:
+            if error.status in (409, 422):
+                print(f"Achievement {vendor}: already there (conflict).")
+            else:
+                raise
 
 
 def ensure_game_center_group(client: Client, group_name: str = "Cinder Crown Bandit Universe") -> str | None:
@@ -1026,13 +1130,26 @@ def ensure_game_center_group(client: Client, group_name: str = "Cinder Crown Ban
 
 
 def configure_game_center(client: Client, bundle_id: str) -> int:
-    app_id = require_app(client, bundle_id)
+    """Idempotent Game Center setup for TestFlight (config only — no release).
+
+    1. Enable GAME_CENTER on the App ID (so cloud-managed profiles include it).
+    2. Enable gameCenterDetail + create missing leaderboards / achievements.
+    """
+    ensure_bundle_game_center_capability(client, bundle_id)
+    app_id = find_app(client, bundle_id)
+    if not app_id:
+        print(
+            f"No ASC app record for {bundle_id} yet — App ID GAME_CENTER is on; "
+            "leaderboards/achievements will be created on the next run after the app exists."
+        )
+        print("No App Store version was submitted or released.")
+        return 0
     detail_id = ensure_game_center_detail(client, app_id)
     ensure_leaderboards(client, detail_id)
     ensure_achievements(client, detail_id)
     ensure_game_center_group(client)
     print(
-        "Game Center config done (detail + leaderboards + achievements). "
+        "Game Center config done (App ID capability + detail + leaderboards + achievements). "
         "No App Store version was submitted or released."
     )
     return 0
