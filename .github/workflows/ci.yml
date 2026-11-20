@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: AppIcon md5 gate (bandit dumpster icon A)
+        run: python3 scripts/check_appicon_md5.py
       - name: Script unit tests
         run: python3 -m unittest discover -s scripts -v
 
