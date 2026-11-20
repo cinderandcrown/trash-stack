@@ -80,6 +80,52 @@ final class AssetAlphaTests: XCTestCase {
         }
     }
 
+    /// BanditLoops must keep real alpha — opaque wan2_7 frames broke portrait animation.
+    func testBanditLoopCornersAreTransparent() {
+        for name in ["idle_front_00", "cheer_00", "panic_00"] {
+            guard let img = JunkTextureLoader.image(named: name) ?? loadBanditFrame(name),
+                  let cg = img.cgImage else {
+                XCTFail("Missing BanditLoop \(name)")
+                continue
+            }
+            let w = cg.width
+            let h = cg.height
+            var data = [UInt8](repeating: 0, count: w * h * 4)
+            let cs = CGColorSpaceCreateDeviceRGB()
+            guard let ctx = CGContext(
+                data: &data, width: w, height: h, bitsPerComponent: 8, bytesPerRow: w * 4,
+                space: cs, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                XCTFail("No context for \(name)")
+                continue
+            }
+            ctx.draw(cg, in: CGRect(x: 0, y: 0, width: w, height: h))
+            let corners = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+            for (x, y) in corners {
+                let a = data[(y * w + x) * 4 + 3]
+                XCTAssertEqual(a, 0, "\(name) corner (\(x),\(y)) must be transparent, got alpha \(a)")
+            }
+            var transparent = 0
+            for i in stride(from: 3, to: data.count, by: 4) {
+                if data[i] == 0 { transparent += 1 }
+            }
+            XCTAssertGreaterThan(transparent, 1000, "\(name) must have true alpha")
+        }
+    }
+
+    private func loadBanditFrame(_ name: String) -> UIImage? {
+        for bundle in JunkTextureLoader.candidateBundles() {
+            if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: "BanditLoops"),
+               let img = UIImage(contentsOfFile: url.path) {
+                return img
+            }
+            if let img = UIImage(named: name, in: bundle, compatibleWith: nil) {
+                return img
+            }
+        }
+        return nil
+    }
+
     func testJunkSilhouettesHaveCornerAlpha() {
         for def in JunkCatalog.all {
             guard let img = JunkTextureLoader.image(named: def.textureName),

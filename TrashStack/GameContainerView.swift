@@ -13,6 +13,7 @@ struct GameContainerView: View {
     var onDailyFinished: ((Int, String) -> Void)? = nil
     var onStreakReward: ((Int, Int, Int) -> Void)? = nil
     @EnvironmentObject var profile: PlayerProfile
+    @Environment(\.scenePhase) private var scenePhase
     @State private var scene = CompactorScene(size: CGSize(width: 390, height: 780))
     @State private var showContinue = false
     @State private var lastState: GameState?
@@ -22,7 +23,7 @@ struct GameContainerView: View {
     @State private var hudLevel = 1
     @State private var raccoonMood: CompactorScene.RaccoonMood = .idle
     @State private var raccoonBounce: CGFloat = 1.0
-    @State private var showPause = false
+    @State private var pauseGate = PauseGate()
     @State private var scoreAnimTask: Task<Void, Never>?
     @State private var sheetScoreAnimTask: Task<Void, Never>?
     @State private var pressMeter = 0
@@ -36,6 +37,7 @@ struct GameContainerView: View {
     @State private var toastQueue: [String] = []
     @State private var toastTask: Task<Void, Never>? = nil
     @State private var snatchPressed = false
+    @State private var showSnatchTip = false
     @State private var completedOrderFlash: String? = nil
     @State private var rewardFly: String? = nil
     /// Locked at top-out — never a stale HUD or smoke-staged value.
@@ -45,19 +47,48 @@ struct GameContainerView: View {
     @State private var isNewBest = false
     /// First-launch how-to (skippable) — replaces the old TutorialView gate.
     @State private var showHowTo = false
+    @State private var showGestureHint = false
+    @State private var gestureHintTask: Task<Void, Never>?
+
+    private var isPaused: Bool { pauseGate.isPaused }
+
+    /// Demo / CI smoke autoplay — must not resign-pause (recordVideo would freeze the clip).
+    private static var isDemoOrSmokeAutoplay: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-autoplay") { return true }
+        if let shot = PlayerProfile.shotArgument(), shot == "demo" || shot == "autoplay" { return true }
+        if let active = UserDefaults.standard.string(forKey: "trashStack.shotActive"),
+           active == "demo" || active == "autoplay" {
+            return true
+        }
+        return false
+    }
 
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
-                hudBar
-                orderStrip
-                toastBanner
-                previewHoldBar
+                leanHudBar
+                // No reserved empty toast bar — only claim height when a toast is live.
+                if toastText != nil {
+                    toastBanner
+                }
 
+                // Full-bleed board — bandit + next/hold overlay so cells can use ~full width.
                 SpriteView(scene: scene)
                     .background(Color(red: 0.05, green: 0.06, blue: 0.10))
-                    .ignoresSafeArea(edges: .horizontal)
-                    .layoutPriority(1)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .topLeading) {
+                        BanditLoopView(mood: raccoonMood, size: 64)
+                            .scaleEffect(raccoonBounce)
+                            .padding(.leading, 6)
+                            .padding(.top, 6)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        miniNextHold
+                            .padding(.trailing, 6)
+                            .padding(.top, 6)
+                    }
                     .overlay(alignment: .top) {
                         if nearMiss || (lastState?.over == true) {
                             Text(lastState?.over == true ? "BIN OVERFLOW" : "BIN ALMOST FULL")
@@ -70,102 +101,34 @@ struct GameContainerView: View {
                                 .padding(.top, 8)
                         }
                     }
+                    .overlay(alignment: .topLeading) {
+                        if showGestureHint {
+                            Text("Drag · tap L/R rotate · swipe ↓ drop · ↑ hold")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(8)
+                                .background(Color.black.opacity(0.7))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .padding(.leading, 72)
+                                .padding(.top, 8)
+                                .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 2)
 
-                // Always show the big pad unless the player explicitly chose gestures in Settings.
                 if profile.classicButtons {
                     classicPad
-                } else {
-                    gestureHint
                 }
 
-                HStack(spacing: 12) {
-                    let pressReady = pressMeter >= pressMax
-                    Button {
-                        scene.slamPress()
-                        AudioService.shared.playSFX("crush")
-                        HapticsService.shared.clear()
-                        syncHUD()
-                    } label: {
-                        VStack(spacing: 4) {
-                            Text(pressReady ? "SLAM!" : "PRESS")
-                                .font(.caption.weight(.black))
-                            ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
-                                .tint(pressReady ? NeonTheme.gold : NeonTheme.teal)
-                            Text(pressReady ? "TAP TO CRUSH" : "\(pressMeter)/\(pressMax)")
-                                .font(.caption2.monospacedDigit().weight(.bold))
-                        }
-                        .foregroundStyle(pressReady ? .black : .white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, pressReady ? 14 : 10)
-                        .frame(maxWidth: .infinity)
-                        .background(
-                            LinearGradient(
-                                colors: pressReady
-                                    ? [NeonTheme.gold, NeonTheme.magenta]
-                                    : [NeonTheme.panel, NeonTheme.panel],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .shadow(color: pressReady ? NeonTheme.magenta.opacity(0.55) : .clear, radius: 12, y: 0)
-                        .scaleEffect(pressReady ? 1.04 : 1)
-                        .animation(.easeOut(duration: 0.18), value: pressReady)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!pressReady)
-                    .accessibilityLabel(pressReady ? "Slam the press" : "Press meter \(pressMeter) of \(pressMax)")
-
-                    // Snatch stays available but smaller when SLAM is the star.
-                    Button {
-                        snatchPressed = true
-                        scene.magnet()
-                        AudioService.shared.playSFX("magnet")
-                        HapticsService.shared.tap()
-                        syncHUD()
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 180_000_000)
-                            snatchPressed = false
-                        }
-                    } label: {
-                        HStack(spacing: 6) {
-                            BundleImage(name: raccoonAsset).frame(width: pressReady ? 22 : 28, height: pressReady ? 22 : 28)
-                            Text(snatchReady ? "SNATCH" : "USED")
-                                .font(.caption.weight(.black))
-                                .foregroundStyle(pressReady ? .white : .black)
-                        }
-                        .padding(.horizontal, pressReady ? 12 : 16)
-                        .padding(.vertical, pressReady ? 12 : 14)
-                        .background(
-                            LinearGradient(
-                                colors: snatchReady
-                                    ? (pressReady
-                                       ? [NeonTheme.panel, NeonTheme.panel]
-                                       : [NeonTheme.teal, NeonTheme.magenta])
-                                    : [NeonTheme.panel, NeonTheme.panel],
-                                startPoint: .leading,
-                                endPoint: .trailing
-                            )
-                        )
-                        .clipShape(Capsule())
-                        .overlay(
-                            Capsule().stroke(pressReady && snatchReady ? NeonTheme.teal.opacity(0.5) : .clear, lineWidth: 1)
-                        )
-                        .opacity(snatchReady ? 1 : 0.55)
-                        .scaleEffect(snatchPressed ? 0.92 : 1)
-                        .animation(.easeOut(duration: 0.12), value: snatchPressed)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!snatchReady)
-                }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+                // At most ONE power button — SLAM when charged, else SNATCH when available.
+                powerRow
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
             }
-            // Quiet chrome — board owns the color; HUD stays dim and in safe areas.
             .background(NeonTheme.playChrome.ignoresSafeArea())
-            .safeAreaPadding(.top, 4)
-            .safeAreaPadding(.bottom, 6)
-            .allowsHitTesting(!showHowTo)
+            .safeAreaPadding(.top, 2)
+            .safeAreaPadding(.bottom, 4)
+            .allowsHitTesting(!showHowTo && !isPaused)
 
             if showHowTo {
                 HowToPlayOverlay {
@@ -174,31 +137,47 @@ struct GameContainerView: View {
                 .transition(.opacity)
                 .zIndex(40)
             }
+
+            if showSnatchTip {
+                Text("SNATCH — Bandit grabs a sticky block")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .padding(10)
+                    .background(NeonTheme.magenta.opacity(0.9))
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .padding(.bottom, 120)
+                    .frame(maxHeight: .infinity, alignment: .bottom)
+                    .transition(.opacity)
+                    .zIndex(35)
+            }
+
+            // Idempotent pause overlay — NOT a sheet (sheets flickered on TestFlight).
+            if isPaused {
+                pauseOverlay
+                    .transition(.opacity)
+                    .zIndex(50)
+            }
         }
         .onAppear(perform: bootstrap)
-        .onDisappear { scoreAnimTask?.cancel(); scoreAnimTask = nil }
+        .onDisappear {
+            scoreAnimTask?.cancel(); scoreAnimTask = nil
+            gestureHintTask?.cancel()
+        }
         .onChange(of: hudScore) { _, newValue in animateScore(to: newValue) }
-        .sheet(isPresented: $showPause) {
-            ZStack {
-                NeonTheme.bgBottom.ignoresSafeArea()
-                NeonPanel {
-                    VStack(spacing: 16) {
-                        Text("PAUSED").font(.title2.bold()).foregroundStyle(NeonTheme.teal)
-                        Text("Match 4+ of the same material to recycle. Fill the PRESS meter, then slam.")
-                            .font(.caption)
-                            .foregroundStyle(NeonTheme.muted)
-                            .multilineTextAlignment(.center)
-                        NeonButton(title: "Resume") { showPause = false }
-                        NeonButton(title: "Quit to title", style: .ghost) {
-                            showPause = false
-                            AudioService.shared.playMusic("menu_loop")
-                            screen = .title
-                        }
-                    }
-                }
-                .padding()
+        .onChange(of: scenePhase) { _, phase in
+            // Auto-pause on resign. Becoming active again does NOT unpause.
+            // Exception: demo/autoplay/smoke must keep running — simctl recordVideo
+            // briefly flips inactive and was freezing the 45s clip on one frame.
+            if phase == .inactive || phase == .background {
+                if Self.isDemoOrSmokeAutoplay { return }
+                enterPause(as: .resign)
             }
-            .presentationDetents([.medium])
+        }
+        .onChange(of: raccoonMood) { _, _ in
+            raccoonBounce = 0.82
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.45)) {
+                raccoonBounce = 1.0
+            }
         }
         .sheet(isPresented: $showContinue) {
             ZStack {
@@ -261,194 +240,193 @@ struct GameContainerView: View {
         }
     }
 
-    private var hudBar: some View {
+    /// Lean top bar: pause · score · level · ONE current goal.
+    private var leanHudBar: some View {
         HStack(alignment: .center, spacing: 10) {
             Button {
                 AudioService.shared.playSFX("ui")
-                showPause = true
+                enterPause(as: .user)
             } label: {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.1))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(
-                                    LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .topLeading, endPoint: .bottomTrailing),
-                                    lineWidth: 1.4
-                                )
-                        )
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 16, weight: .black))
-                        .foregroundStyle(NeonTheme.teal)
-                }
-                .frame(width: 44, height: 44)
+                Image(systemName: "pause.fill")
+                    .font(.system(size: 16, weight: .black))
+                    .foregroundStyle(NeonTheme.teal)
+                    .frame(width: 40, height: 40)
+                    .background(Color.white.opacity(0.1))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
             .buttonStyle(.plain)
 
-            BundleImage(name: raccoonAsset)
-                .scaledToFit()
-                .frame(width: 52, height: 52)
-                .scaleEffect(raccoonBounce)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(NeonTheme.magenta.opacity(0.7), lineWidth: 1.2)
-                )
-                .accessibilityLabel("The Bandit")
-                .onChange(of: raccoonMood) { _, _ in
-                    // Squash/bounce when the mascot pose slot changes (placeholder until on-model art).
-                    raccoonBounce = 0.82
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.45)) {
-                        raccoonBounce = 1.0
-                    }
-                }
+            Text("\(displayScore)")
+                .font(.system(size: 26, weight: .black, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .contentTransition(.numericText())
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(displayScore)")
-                    .font(.system(size: 28, weight: .black, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(
-                        LinearGradient(colors: [.white, NeonTheme.teal], startPoint: .leading, endPoint: .trailing)
-                    )
-                    .shadow(color: NeonTheme.teal.opacity(0.55), radius: 6, y: 0)
-                    .contentTransition(.numericText())
-                Text("LVL \(hudLevel)")
-                    .font(.caption.weight(.bold).monospacedDigit())
-                    .foregroundStyle(NeonTheme.magenta)
+            Text("LVL \(hudLevel)")
+                .font(.caption.weight(.black).monospacedDigit())
+                .foregroundStyle(NeonTheme.magenta)
+
+            if let goal = orders.first(where: { !$0.done }) ?? orders.first {
+                Text(goal.label)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(goal.done ? NeonTheme.teal : NeonTheme.muted)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
             }
-
             Spacer(minLength: 0)
-
-            VStack(alignment: .trailing, spacing: 4) {
-                CurrencyChip(kind: .scrap, value: profile.scrap)
-                if profile.highScore > 0 {
-                    Text("HI \(profile.highScore)")
-                        .font(.caption2.weight(.bold).monospacedDigit())
-                        .foregroundStyle(NeonTheme.muted)
-                }
-            }
         }
-        .padding(.horizontal, 12)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
-    }
-
-    private var orderStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(orders) { order in
-                    HStack(spacing: 6) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(order.label)
-                                .font(.caption2.weight(.bold))
-                                .foregroundStyle(order.done ? NeonTheme.teal : .white)
-                                .lineLimit(1)
-                            ProgressView(value: Double(min(order.progress, order.target)), total: Double(max(1, order.target)))
-                                .tint(order.done ? NeonTheme.teal : NeonTheme.magenta)
-                        }
-                        if order.done || completedOrderFlash == order.id {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(NeonTheme.teal)
-                                .transition(.scale.combined(with: .opacity))
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .background(Color.white.opacity(order.done ? 0.12 : 0.07))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(completedOrderFlash == order.id ? NeonTheme.teal : .clear, lineWidth: 1.5)
-                    )
-                }
-                if let rewardFly {
-                    Text(rewardFly)
-                        .font(.caption.weight(.black))
-                        .foregroundStyle(NeonTheme.magenta)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                }
-            }
-            .padding(.horizontal, 12)
-            .animation(.easeOut(duration: 0.35), value: completedOrderFlash)
-            .animation(.easeOut(duration: 0.35), value: rewardFly)
-        }
-        .frame(height: orders.isEmpty ? 0 : 44)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     private var toastBanner: some View {
         Group {
             if let toastText {
                 Text(toastText)
-                    .font(.system(.title3, design: .rounded).weight(.black))
+                    .font(.system(.callout, design: .rounded).weight(.black))
                     .foregroundStyle(toastText.contains("CHAIN") ? NeonTheme.magenta : NeonTheme.teal)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
                     .background(Color.black.opacity(0.72))
-                    .overlay(Rectangle().fill(NeonTheme.teal.opacity(0.35)).frame(height: 2), alignment: .bottom)
-                    .transition(.scale.combined(with: .opacity))
+                    .transition(.opacity)
             }
         }
-        .frame(height: toastText == nil ? 0 : 44)
-        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: toastText)
+        .frame(minHeight: toastText == nil ? 0 : 36)
+        .animation(.easeOut(duration: 0.2), value: toastText)
     }
 
-    private var previewHoldBar: some View {
-        HStack(spacing: 12) {
-            VStack(spacing: 4) {
-                Text("NEXT").font(.system(size: 9, weight: .black)).foregroundStyle(NeonTheme.muted)
-                HStack(spacing: 6) {
-                    ForEach(Array(preview.prefix(2).enumerated()), id: \.offset) { _, id in
-                        BundleImage(name: JunkCatalog.textureName(for: id))
-                            .scaledToFit()
-                            .frame(width: 28, height: 28)
+    private var miniNextHold: some View {
+        VStack(spacing: 6) {
+            Text("NEXT").font(.system(size: 8, weight: .black)).foregroundStyle(NeonTheme.muted)
+            ForEach(Array(preview.prefix(2).enumerated()), id: \.offset) { _, id in
+                BundleImage(name: JunkCatalog.textureName(for: id))
+                    .scaledToFit()
+                    .frame(width: 26, height: 26)
+            }
+            Text("HOLD").font(.system(size: 8, weight: .black)).foregroundStyle(NeonTheme.muted)
+            if let holdItem {
+                BundleImage(name: JunkCatalog.textureName(for: holdItem))
+                    .scaledToFit()
+                    .frame(width: 26, height: 26)
+            } else {
+                RoundedRectangle(cornerRadius: 5)
+                    .stroke(NeonTheme.teal.opacity(0.35), lineWidth: 1)
+                    .frame(width: 26, height: 26)
+            }
+        }
+    }
+
+    private var powerRow: some View {
+        let pressReady = pressMeter >= pressMax
+        return Group {
+            if pressReady {
+                Button {
+                    scene.slamPress()
+                    AudioService.shared.playSFX("crush")
+                    HapticsService.shared.clear()
+                    syncHUD()
+                } label: {
+                    Text("SLAM! TAP TO CRUSH")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(.black)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(LinearGradient(colors: [NeonTheme.gold, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            } else if snatchReady {
+                Button {
+                    snatchPressed = true
+                    scene.magnet()
+                    AudioService.shared.playSFX("magnet")
+                    HapticsService.shared.tap()
+                    if !profile.snatchTipShown {
+                        profile.snatchTipShown = true
+                        profile.persist()
+                        showSnatchTip = true
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 2_200_000_000)
+                            showSnatchTip = false
+                        }
+                    }
+                    syncHUD()
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 180_000_000)
+                        snatchPressed = false
+                    }
+                } label: {
+                    Text("SNATCH")
+                        .font(.headline.weight(.black))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .scaleEffect(snatchPressed ? 0.95 : 1)
+                }
+                .buttonStyle(.plain)
+            } else {
+                // Meter only — no second competing button.
+                ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
+                    .tint(NeonTheme.teal)
+                    .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private var pauseOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.78).ignoresSafeArea()
+            VStack(spacing: 14) {
+                Text("PAUSED")
+                    .font(.title.weight(.black))
+                    .foregroundStyle(NeonTheme.teal)
+                Text("Match 4+ of the same material. Fill PRESS, then SLAM.")
+                    .font(.caption)
+                    .foregroundStyle(NeonTheme.muted)
+                    .multilineTextAlignment(.center)
+                // Extra goals live here — not on the live HUD.
+                ForEach(orders) { order in
+                    HStack {
+                        Text(order.label)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(order.done ? NeonTheme.teal : .white)
+                        Spacer()
+                        Text("\(order.progress)/\(order.target)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(NeonTheme.muted)
                     }
                 }
-            }
-            Spacer()
-            Text(playMode == .daily ? "DAILY" : (playMode == .shift ? "SHIFT" : "ENDLESS"))
-                .font(.caption2.weight(.black))
-                .foregroundStyle(NeonTheme.teal)
-            Spacer()
-            Button {
-                scene.stash()
-                AudioService.shared.playSFX("ui")
-                syncHUD()
-            } label: {
-                VStack(spacing: 4) {
-                    Text("HOLD").font(.system(size: 9, weight: .black)).foregroundStyle(NeonTheme.muted)
-                    if let holdItem {
-                        BundleImage(name: JunkCatalog.textureName(for: holdItem))
-                            .scaledToFit()
-                            .frame(width: 28, height: 28)
-                    } else {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(NeonTheme.teal.opacity(0.4), lineWidth: 1)
-                            .frame(width: 28, height: 28)
-                    }
+                NeonButton(title: "Resume") {
+                    resumePause()
+                }
+                NeonButton(title: "Quit to title", style: .ghost) {
+                    resumePause()
+                    AudioService.shared.playMusic("menu_loop")
+                    screen = .title
                 }
             }
-            .buttonStyle(.plain)
+            .padding(22)
+            .background(NeonTheme.panel.opacity(0.96))
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .padding(.horizontal, 28)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 4)
+        .accessibilityLabel("Paused")
     }
 
-    private var raccoonAsset: String {
-        switch raccoonMood {
-        case .cheer: return "RaccoonCheer"
-        case .panic: return "RaccoonPanic"
-        case .gameOver: return "RaccoonGameOver"
-        case .idle: return "RaccoonIdle"
-        }
+    private func enterPause(as reason: PauseGate.Reason) {
+        guard pauseGate.pause(as: reason) else { return }
+        scene.isPaused = true
     }
 
-    private var gestureHint: some View {
-        Text("Drag anywhere · Tap rotate · Swipe down to drop")
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(NeonTheme.muted.opacity(0.85))
-            .padding(.vertical, 6)
-            .accessibilityLabel("Drag anywhere to move, tap to rotate, swipe down to drop")
+    private func resumePause() {
+        guard pauseGate.resume() else { return }
+        scene.isPaused = false
     }
 
     private var classicPad: some View {
@@ -515,7 +493,8 @@ struct GameContainerView: View {
 
     private func dismissHowTo() {
         profile.tutorialDone = true
-        profile.classicButtons = true
+        // Gesture-first by default; Settings → Buttons for the classic pad.
+        profile.classicButtons = false
         profile.persist()
         showHowTo = false
         scene.isPaused = false
@@ -525,6 +504,16 @@ struct GameContainerView: View {
         syncHUD()
         displayScore = scene.engine.state.score
         showToast("Drop the can onto the metal pile")
+        presentGestureHint()
+    }
+
+    private func presentGestureHint() {
+        showGestureHint = true
+        gestureHintTask?.cancel()
+        gestureHintTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            showGestureHint = false
+        }
     }
 
     private func syncHUD() {
@@ -599,13 +588,11 @@ struct GameContainerView: View {
         let shotPeek = UserDefaults.standard.string(forKey: "trashStack.shotActive")
             ?? PlayerProfile.shotArgument()
         let isShot = shotPeek != nil && !(shotPeek?.isEmpty ?? true)
-        if !profile.classicButtons, defaultsUnsetClassicOrFirstRun() {
-            profile.classicButtons = true
-            profile.persist()
-        }
         if !profile.tutorialDone, !isShot {
             showHowTo = true
             scene.isPaused = true
+        } else if !profile.classicButtons, !isShot {
+            presentGestureHint()
         }
         let shot = shotPeek
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
@@ -690,6 +677,11 @@ struct GameContainerView: View {
                 HapticsService.shared.tap()
             }
         }
+        scene.onMood = { mood in
+            Task { @MainActor in
+                raccoonMood = mood
+            }
+        }
         scene.onEvents = { [weak scene] events in
             Task { @MainActor in
                 guard let scene else { return }
@@ -706,17 +698,22 @@ struct GameContainerView: View {
                             AudioService.shared.playSFX("lock", pitch: 0.78)
                             HapticsService.shared.lock()
                         }
-                    case .recycled:
+                    case .recycled(_, let cells, _, _, _, _):
                         let combo = max(1, scene.engine.state.combo)
                         let pitch = 1.0 + Double(combo) * 0.12
                         AudioService.shared.playSFX("recycle", pitch: pitch)
+                        AudioService.shared.playSFX("crush", pitch: 1.15)
                         if combo >= 2 {
                             AudioService.shared.playSFX("combo", pitch: min(1.9, pitch + 0.08))
                         }
                         if combo >= 4 {
                             AudioService.shared.playSFX("levelup", pitch: 1.15)
+                            HapticsService.shared.clear()
+                        } else if cells >= 8 {
+                            HapticsService.shared.clear()
+                        } else {
+                            HapticsService.shared.recycle()
                         }
-                        HapticsService.shared.recycle()
                         Task { await GameKitService.shared.reportAchievement(AchievementID.firstRecycle) }
                         if scene.engine.state.combo >= 5 {
                             Task { await GameKitService.shared.reportAchievement(AchievementID.chainFive) }
@@ -753,11 +750,6 @@ struct GameContainerView: View {
         syncHUD()
         displayScore = scene.engine.state.score
         AudioService.shared.playMusic("game_loop")
-    }
-
-    /// Treat missing classicButtons preference as "show the pad" for TestFlight recoverability.
-    private func defaultsUnsetClassicOrFirstRun() -> Bool {
-        UserDefaults.standard.object(forKey: "classicButtons") == nil || !profile.tutorialDone
     }
 
     @MainActor
@@ -972,6 +964,12 @@ struct RepeatPadButton: View {
                         repeatTask = nil
                     }
             )
+            .onDisappear {
+                // Lost touch / view teardown must never leave SOFT latched.
+                pressed = false
+                repeatTask?.cancel()
+                repeatTask = nil
+            }
             .accessibilityLabel(accessibility)
             .accessibilityAddTraits(.isButton)
     }
@@ -989,13 +987,17 @@ struct HowToPlayOverlay: View {
                     .font(.system(.title2, design: .rounded).weight(.black))
                     .foregroundStyle(NeonTheme.teal)
                 VStack(alignment: .leading, spacing: 12) {
-                    howRow("◀ ▶", "Move the falling junk")
-                    howRow("↻", "Rotate")
-                    howRow("DROP", "Slam it into the bin")
+                    howRow("DRAG", "Slide left/right on the board")
+                    howRow("TAP", "Left = rotate CCW · Right = CW")
+                    howRow("SWIPE ↓", "Fast = hard drop · Slow = soft")
+                    howRow("SWIPE ↑", "Hold the piece")
                     howRow("4+", "Match 4 of the same material to recycle")
-                    howRow("PRESS", "Fill the meter, then SLAM for scrap")
+                    howRow("SLAM", "Fill the meter, then crush the bottom")
                 }
                 .padding(.horizontal, 8)
+                Text("Want buttons? Settings → Buttons")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(NeonTheme.muted)
                 NeonButton(title: "GOT IT — PLAY") {
                     onDismiss()
                 }

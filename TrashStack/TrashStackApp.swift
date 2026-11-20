@@ -26,9 +26,8 @@ struct TrashStackApp: App {
                 .task {
                     // Never block first paint on ATT/UMP/GAD/StoreKit/audio decode.
                     // Ads bootstrap only from Shop visit or opt-in rewarded (see AdsBootstrap call sites).
-                    let skipAds = ProcessInfo.processInfo.arguments.contains("-trashStackSkipAds")
-                        || UserDefaults.standard.bool(forKey: "trashStack.skipAds")
-                    if !skipAds {
+                    // XCTest host must also skip — GameKit/StoreKit RPC deadlocks kill CI bootstrapping.
+                    if !ProcessInfo.processInfo.isTrashStackTestHost {
                         try? await Task.sleep(nanoseconds: 500_000_000)
                         await StoreKitService.shared.loadProducts()
                         await GameKitService.shared.authenticate()

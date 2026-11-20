@@ -9,6 +9,7 @@ import subprocess
 import sys
 
 PREFERRED = (
+    "iPhone 17",
     "iPhone 16",
     "iPhone 15",
     "iPhone 14",

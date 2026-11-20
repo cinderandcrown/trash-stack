@@ -21,14 +21,15 @@ public enum LevelTwist: Int, Sendable, CaseIterable, Equatable {
         case .nightWarmup: return "Night shift open"
         case .quickerFall: return "Fall speeds up"
         case .stickyCans: return "Sticky cans appear"
-        case .leakingPipes: return "Leaking pipes convert neighbors"
+        case .leakingPipes: return "Pipes leak — convert neighbors"
         case .denseJunk: return "Heavier junk in the bag"
         case .alleyGusts: return "Alley gusts nudge pieces"
         case .nightRush: return "Lock window tightens"
         }
     }
 
+    /// Compact toast — must fit a phone banner without truncating mid-word.
     public var toastTitle: String {
-        "Level \(rawValue) · \(playerBlurb)"
+        "Lv \(rawValue) · \(playerBlurb)"
     }
 }

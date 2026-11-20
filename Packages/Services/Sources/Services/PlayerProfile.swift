@@ -31,8 +31,10 @@ public final class PlayerProfile: ObservableObject {
     @Published public var premiumPass: Bool = false
     @Published public var battlePassXP: Int = 0
     @Published public var tutorialDone: Bool = false
-    /// Default ON — gesture-only was the #1 reason TestFlight builds felt unplayable.
-    @Published public var classicButtons: Bool = true
+    /// Optional classic pad. Default OFF — gesture-first board is the primary scheme.
+    @Published public var classicButtons: Bool = false
+    /// One-shot snatch claw tooltip.
+    @Published public var snatchTipShown: Bool = false
     @Published public var shiftProgress: Int = 0
     @Published public var lastDailyKey: String = ""
     @Published public var lastDailyScore: Int = 0
@@ -97,13 +99,14 @@ public final class PlayerProfile: ObservableObject {
         premiumPass = defaults.bool(forKey: "premiumPass")
         battlePassXP = defaults.integer(forKey: "battlePassXP")
         tutorialDone = defaults.bool(forKey: "tutorialDone")
-        // Unset key → true (playable pad). Explicit false stays false for gesture fans.
+        // Unset → gestures (false). Explicit true keeps the classic pad for players who want it.
         if defaults.object(forKey: "classicButtons") == nil {
-            classicButtons = true
-            defaults.set(true, forKey: "classicButtons")
+            classicButtons = false
+            defaults.set(false, forKey: "classicButtons")
         } else {
             classicButtons = defaults.bool(forKey: "classicButtons")
         }
+        snatchTipShown = defaults.bool(forKey: "snatchTipShown")
         shiftProgress = defaults.integer(forKey: "shiftProgress")
         lastDailyKey = defaults.string(forKey: "lastDailyKey") ?? ""
         lastDailyScore = defaults.integer(forKey: "lastDailyScore")
@@ -133,6 +136,7 @@ public final class PlayerProfile: ObservableObject {
         defaults.set(battlePassXP, forKey: "battlePassXP")
         defaults.set(tutorialDone, forKey: "tutorialDone")
         defaults.set(classicButtons, forKey: "classicButtons")
+        defaults.set(snatchTipShown, forKey: "snatchTipShown")
         defaults.set(shiftProgress, forKey: "shiftProgress")
         defaults.set(lastDailyKey, forKey: "lastDailyKey")
         defaults.set(lastDailyScore, forKey: "lastDailyScore")

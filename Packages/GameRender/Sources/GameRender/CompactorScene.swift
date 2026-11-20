@@ -11,6 +11,8 @@ public final class CompactorScene: SKScene {
     public var engine = GameEngine(seed: UInt64.random(in: 1...UInt64.max))
     public var onGameOver: ((GameState) -> Void)?
     public var onEvents: (([GameEvent]) -> Void)?
+    /// Fired when bandit mood changes so SwiftUI loops (idle/cheer/panic) stay in sync.
+    public var onMood: ((RaccoonMood) -> Void)?
     public var autoplay = false
     /// Demo-only elapsed time for scripted near-miss → game-over beats.
     private var autoplayElapsed: TimeInterval = 0
@@ -20,7 +22,7 @@ public final class CompactorScene: SKScene {
     public var raccoonMood: RaccoonMood = .idle
     public var feel: FeelConfig = ConfigLoader.feelOrFallback()
 
-    public enum RaccoonMood: Equatable { case idle, cheer, panic, gameOver }
+    public enum RaccoonMood: Equatable { case idle, cheer, panic, disco, gameOver }
 
     private var cellNodes: [[SKSpriteNode?]] = []
     private var activeNodes: [SKSpriteNode] = []
@@ -31,7 +33,11 @@ public final class CompactorScene: SKScene {
     private var alleyNode: SKSpriteNode?
     private var pressPlate: SKSpriteNode?
     private var gravityAcc: TimeInterval = 0
-    private var lockAcc: TimeInterval = 0
+    /// Continuous grounded timer (seconds) — not gravity-tick based.
+    private var groundedElapsed: TimeInterval = 0
+    /// Move/rotate resets of the lock timer; hard-locks at maxLockResets.
+    private var lockResets: Int = 0
+    private let maxLockResets = 15
     private var lastTime: TimeInterval = 0
     private var fpsSamples: [Double] = []
     private var didBuild = false
@@ -43,10 +49,16 @@ public final class CompactorScene: SKScene {
     private var visualY: CGFloat = 0
     private var hasVisualPose = false
     private var snatchBusy = false
+    /// Brief disco flash after a big combo clear.
+    private var discoUntil: TimeInterval = 0
+    private var cheerUntil: TimeInterval = 0
 
     private var touchStart: CGPoint?
     private var touchStartTime: TimeInterval = 0
     private var movedCols: Int = 0
+    /// Accumulated finger delta in points for 1:1 column tracking.
+    private var dragAccumX: CGFloat = 0
+    private var softDragging = false
 
     /// Small toast text for SwiftUI banner (not big mid-board labels).
     public var onToast: ((String) -> Void)?
@@ -107,8 +119,12 @@ public final class CompactorScene: SKScene {
     public func reset(seed: UInt64 = UInt64.random(in: 1...999_999)) {
         engine = GameEngine(seed: seed)
         gravityAcc = 0
-        lockAcc = 0
+        groundedElapsed = 0
+        lockResets = 0
+        clearTouchState()
         raccoonMood = .idle
+        discoUntil = 0
+        cheerUntil = 0
         render(immediate: true)
     }
 
@@ -133,7 +149,9 @@ public final class CompactorScene: SKScene {
         pendingShot = shot
         engine.applyShotScenario(shot)
         gravityAcc = 0
-        lockAcc = 0
+        groundedElapsed = 0
+        lockResets = 0
+        clearTouchState()
         if shot == "recycle" { raccoonMood = .cheer }
         else if shot == "compactor" || shot == "press" { raccoonMood = .cheer }
         else if shot == "revive" || shot == "game-over" { raccoonMood = .gameOver }
@@ -151,7 +169,8 @@ public final class CompactorScene: SKScene {
         demoPhase = 0
         removeAction(forKey: "demoChoreography")
         run(SKAction.sequence([
-            SKAction.wait(forDuration: 16),
+            // Early SLAM so a ~45s smoke clip always shows the press beat.
+            SKAction.wait(forDuration: 8),
             SKAction.run { [weak self] in
                 guard let self, !self.engine.state.over else { return }
                 self.engine.fillPressMeter()
@@ -159,7 +178,7 @@ public final class CompactorScene: SKScene {
                 self.handleEvents()
                 self.render(immediate: false)
             },
-            SKAction.wait(forDuration: 8),
+            SKAction.wait(forDuration: 6),
             SKAction.run { [weak self] in
                 guard let self, !self.engine.state.over else { return }
                 if self.engine.state.snatchAvailable {
@@ -238,12 +257,13 @@ public final class CompactorScene: SKScene {
 
         if let frameTex = tex("DumpsterFrame") {
             let frame = SKSpriteNode(texture: frameTex)
-            frame.size = CGSize(width: gridW + cs.width * 0.9, height: gridH + cs.height * 1.1)
-            frame.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2 - cs.height * 0.05)
+            // Tight frame around the grid — no huge empty dumpster margin.
+            frame.size = CGSize(width: gridW + cs.width * 0.22, height: gridH + cs.height * 0.35)
+            frame.position = CGPoint(x: origin.x + gridW / 2, y: origin.y + gridH / 2 - cs.height * 0.02)
             frame.zPosition = 0
             addChild(frame)
         } else {
-            let frame = SKShapeNode(rectOf: CGSize(width: gridW + 12, height: gridH + 12), cornerRadius: 10)
+            let frame = SKShapeNode(rectOf: CGSize(width: gridW + 8, height: gridH + 8), cornerRadius: 10)
             frame.strokeColor = SKColor(red: 0, green: 0.95, blue: 1, alpha: 0.75)
             frame.fillColor = SKColor(red: 0.04, green: 0.05, blue: 0.09, alpha: 0.55)
             frame.lineWidth = 3
@@ -251,13 +271,14 @@ public final class CompactorScene: SKScene {
             addChild(frame)
         }
 
+        // Slim neon rails hug the grid — no wide empty dumpster side space.
         for side in [-1, 1] {
             let rail = SKSpriteNode(
-                color: SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 0.65),
-                size: CGSize(width: max(5, cs.width * 0.12), height: gridH)
+                color: SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 0.7),
+                size: CGSize(width: max(3, cs.width * 0.06), height: gridH)
             )
             rail.position = CGPoint(
-                x: origin.x + gridW / 2 + CGFloat(side) * (gridW / 2 + cs.width * 0.28),
+                x: origin.x + gridW / 2 + CGFloat(side) * (gridW / 2 + rail.size.width * 0.6),
                 y: origin.y + gridH / 2
             )
             rail.zPosition = 2
@@ -445,10 +466,8 @@ public final class CompactorScene: SKScene {
 
     private func cellSize() -> CGSize {
         let cols = CGFloat(engine.state.board.config.cols)
-        let rows = CGFloat(engine.state.board.config.visibleRows)
-        let byWidth = size.width * 0.85 / cols
-        let byHeight = size.height * 0.92 / rows
-        let s = min(byWidth, byHeight)
+        // Nearly full SpriteView width — height letterboxing left a ~40% empty bar above.
+        let s = size.width * 0.995 / cols
         return CGSize(width: s, height: s)
     }
 
@@ -458,9 +477,11 @@ public final class CompactorScene: SKScene {
         let rows = CGFloat(engine.state.board.config.visibleRows)
         let totalW = cs.width * cols
         let totalH = cs.height * rows
+        // Top-align the bin — drop the empty horizontal bar above the playfield.
+        let topPad = max(4, cs.height * 0.08)
         return CGPoint(
             x: (size.width - totalW) / 2,
-            y: (size.height - totalH) / 2 - size.height * 0.02
+            y: max(0, size.height - totalH - topPad)
         )
     }
 
@@ -491,7 +512,10 @@ public final class CompactorScene: SKScene {
         lastTime = currentTime
 
         let nextMood = computeRaccoonMood()
-        if nextMood != raccoonMood { raccoonMood = nextMood }
+        if nextMood != raccoonMood {
+            raccoonMood = nextMood
+            onMood?(nextMood)
+        }
 
         // TRASH TALK junk warning → land (no-op when pendingJunkRows == 0).
         if engine.state.pendingJunkRows > 0 {
@@ -503,6 +527,8 @@ public final class CompactorScene: SKScene {
         smoothActivePose(dt: dt)
 
         if autoplay {
+            // Never stay paused during demo — smoke recordVideo must show live motion.
+            if isPaused { isPaused = false }
             autoplayElapsed += TimeInterval(dt)
             // Live-run tension only — never applyShotScenario mid-demo (that rolled level/score backwards).
             if demoPhase == 0, engine.isNearOverflow(threshold: feel.nearMissRows) {
@@ -510,8 +536,9 @@ public final class CompactorScene: SKScene {
                 onToast?("SO CLOSE")
                 raccoonMood = .panic
             }
+            // Faster cadence so a ~45s clip shows locks, clears, and SLAM.
             gravityAcc += Double(dt)
-            if gravityAcc > 0.28 {
+            if gravityAcc > 0.14 {
                 gravityAcc = 0
                 if !engine.state.over {
                     engine.autoplayStep()
@@ -531,29 +558,82 @@ public final class CompactorScene: SKScene {
         // Level 6+: rare alley gust nudges the active piece sideways.
         if engine.state.level >= LevelTwist.alleyGusts.rawValue, Int.random(in: 0...240) == 0 {
             let dir = Bool.random() ? 1 : -1
-            if engine.tryMove(dx: dir, dy: 0) {
+            if noteLockResetMove({ engine.tryMove(dx: dir, dy: 0) }) {
                 snapActivePose()
                 onPieceSnap?()
                 onToast?("Gust!")
             }
         }
+        // Continuous grounded lock timer — never depends on a latched soft-drop button.
+        tickGroundedLock(dt: Double(dt))
         gravityAcc += Double(dt)
         if gravityAcc >= grav {
             gravityAcc = 0
-            if !engine.softDrop() {
-                lockAcc += grav
-                let lockNeed = engine.lockDelaySeconds(base: feel.lockDelaySec)
-                if lockAcc > lockNeed {
-                    lockAcc = 0
-                    engine.lock()
-                    handleEvents()
-                    if engine.state.over { onGameOver?(engine.state) }
-                }
-            } else {
-                lockAcc = 0
+            if engine.softDrop() {
+                groundedElapsed = 0
             }
             render(immediate: false)
         }
+        // Soft-drag (slow finger down) — one cell at a time, never latches after touch loss.
+        if softDragging {
+            _ = engine.softDrop()
+            if engine.isGrounded() {
+                softDragging = false
+            }
+            render(immediate: false)
+        }
+    }
+
+    private func tickGroundedLock(dt: Double) {
+        guard engine.state.active != nil, !engine.state.over else {
+            groundedElapsed = 0
+            lockResets = 0
+            return
+        }
+        guard engine.isGrounded() else {
+            groundedElapsed = 0
+            return
+        }
+        groundedElapsed += dt
+        let lockNeed = engine.lockDelaySeconds(base: feel.lockDelaySec)
+        if groundedElapsed >= lockNeed || lockResets >= maxLockResets {
+            forceLock()
+        }
+    }
+
+    private func forceLock(hard: Bool = false) {
+        groundedElapsed = 0
+        lockResets = 0
+        softDragging = false
+        clearTouchState()
+        engine.lock(hard: hard)
+        handleEvents()
+        hasVisualPose = false
+        render(immediate: false)
+        if engine.state.over { onGameOver?(engine.state) }
+    }
+
+    /// Move/rotate while grounded burns one lock reset; at the cap we hard-settle.
+    @discardableResult
+    private func noteLockResetMove(_ body: () -> Bool) -> Bool {
+        let wasGrounded = engine.isGrounded()
+        let ok = body()
+        guard ok else { return false }
+        if wasGrounded || engine.isGrounded() {
+            lockResets += 1
+            groundedElapsed = 0
+            if lockResets >= maxLockResets {
+                forceLock()
+            }
+        }
+        return true
+    }
+
+    private func clearTouchState() {
+        touchStart = nil
+        dragAccumX = 0
+        movedCols = 0
+        softDragging = false
     }
 
     private func smoothActivePose(dt: CGFloat) {
@@ -628,17 +708,28 @@ public final class CompactorScene: SKScene {
                 subtleGlow(color: materialGlow(material))
                 boardFlash(color: materialGlow(material).withAlphaComponent(0.75 + min(0.2, CGFloat(combo) * 0.04)))
                 let shakeMul = 1.0 + min(1.2, Double(combo - 1) * 0.28)
-                screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul)
-                if combo >= 2 {
+                // Shake scales with lines/combo — crunch without covering the bin.
+                screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul * (1 + Double(min(4, cells)) * 0.08))
+                hitStop(seconds: 0.06)
+                if combo >= 3 {
+                    discoUntil = CACurrentMediaTime() + 1.1
+                    raccoonMood = .disco
                     presentComboBanner(combo: combo)
                     presentComboRing(combo: combo)
                     onToast?("CHAIN ×\(combo)")
+                } else if combo >= 2 {
+                    presentComboBanner(combo: combo)
+                    presentComboRing(combo: combo)
+                    onToast?("CHAIN ×\(combo)")
+                    cheerUntil = CACurrentMediaTime() + 1.2
                     raccoonMood = .cheer
                 } else {
                     onToast?("RECYCLE +\(score)")
+                    cheerUntil = CACurrentMediaTime() + 1.0
                     raccoonMood = .cheer
                 }
-                spawnScorePips(points: score, near: coords.first.map { positionFor(x: $0.x, boardY: $0.y) })
+                // Score popups beside the board (not over the falling area).
+                spawnScorePipsBesideBoard(points: score)
                 spawnParticle(
                     named: combo >= 3 ? "SparkMagenta" : "SparkTeal",
                     at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45),
@@ -647,6 +738,7 @@ public final class CompactorScene: SKScene {
                 _ = cells
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
+                cheerUntil = CACurrentMediaTime() + 1.2
                 raccoonMood = .cheer
                 onToast?("Press slam")
             case .orderCompleted(let order):
@@ -1111,7 +1203,8 @@ public final class CompactorScene: SKScene {
             ghost.zPosition = 57
             addChild(ghost)
             // Snappier on big chains so the bin clears with punch.
-            let dur = max(0.22, feel.recycleSuckSec - Double(max(0, combo - 1)) * 0.03)
+            // Keep clear juice under 300ms so the next piece spawns with no dead air.
+            let dur = min(0.28, max(0.16, feel.recycleSuckSec - Double(max(0, combo - 1)) * 0.04))
             let hold = max(0.08, dur * 0.4)
             let tail = max(0.08, dur - hold)
             let suck = SKAction.sequence([
@@ -1431,6 +1524,7 @@ public final class CompactorScene: SKScene {
 
     private func computeRaccoonMood() -> RaccoonMood {
         if engine.state.over { return .gameOver }
+        if CACurrentMediaTime() < discoUntil { return .disco }
         let cfg = engine.state.board.config
         var filled = 0
         let visible = cfg.visibleRows * cfg.cols
@@ -1441,9 +1535,32 @@ public final class CompactorScene: SKScene {
             }
         }
         let fill = Double(filled) / Double(visible)
+        // Panic when the bin is high — overrides a lingering cheer.
         if fill >= 0.70 { return .panic }
+        if CACurrentMediaTime() < cheerUntil { return .cheer }
         if engine.state.combo >= 2 { return .cheer }
         return .idle
+    }
+
+    /// Score float beside the bin so it never covers falling junk.
+    private func spawnScorePipsBesideBoard(points: Int) {
+        let label = SKLabelNode(text: "+\(points)")
+        label.fontName = "Menlo-Bold"
+        label.fontSize = 18
+        label.fontColor = SKColor(red: 0.2, green: 1, blue: 0.95, alpha: 1)
+        label.horizontalAlignmentMode = .left
+        let origin = gridOrigin()
+        let gridW = cellSize().width * CGFloat(engine.state.board.config.cols)
+        label.position = CGPoint(x: origin.x + gridW + 8, y: origin.y + cellSize().height * 4)
+        label.zPosition = 90
+        addChild(label)
+        label.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.moveBy(x: 0, y: 36, duration: 0.55),
+                SKAction.fadeOut(withDuration: 0.55),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
     }
 
     /// 2-frame slam burst; art has padding so we scale up to ~piece width.
@@ -1507,13 +1624,17 @@ public final class CompactorScene: SKScene {
         touchStart = t.location(in: self)
         touchStartTime = CACurrentMediaTime()
         movedCols = 0
+        dragAccumX = 0
+        softDragging = false
     }
 
     public override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let t = touches.first, let start = touchStart, engine.state.active != nil else { return }
         let p = t.location(in: self)
         let dx = p.x - start.x
+        let dy = p.y - start.y
         let colW = max(1, cellSize().width)
+        // 1:1 finger → column with ease snap (not a hard teleport).
         let cols = Int((dx / colW).rounded())
         if cols != movedCols {
             let step = cols > movedCols ? 1 : -1
@@ -1521,77 +1642,106 @@ public final class CompactorScene: SKScene {
             var nudged = false
             while target != cols {
                 target += step
-                if engine.tryMove(dx: step, dy: 0) { nudged = true }
+                if noteLockResetMove({ engine.tryMove(dx: step, dy: 0) }) { nudged = true }
+                else { break }
             }
-            movedCols = cols
+            movedCols = target
             if nudged {
-                snapActivePose()
+                // Ease toward discrete cell — smoothActivePose does the rest.
                 onPieceSnap?()
             }
             render(immediate: false)
         }
-        let dy = p.y - start.y
-        if dy < -cellSize().height * 0.8 {
-            _ = engine.softDrop()
-            render(immediate: false)
+        // Slow drag down = soft drop; never latches past touch end/cancel.
+        if dy < -cellSize().height * 0.55, abs(dy) > abs(dx) * 0.6 {
+            softDragging = true
+        } else if abs(dx) > abs(dy) {
+            softDragging = false
         }
     }
 
     public override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        defer { clearTouchState() }
         guard let t = touches.first, let start = touchStart else { return }
         let p = t.location(in: self)
         let dx = p.x - start.x
         let dy = p.y - start.y
-        let dt = CACurrentMediaTime() - touchStartTime
+        let elapsed = CACurrentMediaTime() - touchStartTime
         let dist = hypot(dx, dy)
+        let origin = gridOrigin()
+        let midX = origin.x + cellSize().width * CGFloat(engine.state.board.config.cols) * 0.5
 
-        // Forgiving: small tap = rotate; clear downward flick = drop; upward = hold.
-        if dist < 28, dt < 0.4 {
-            if engine.tryRotate() {
+        // Tap: left half CCW, right half CW.
+        if dist < 32, elapsed < 0.35 {
+            let clockwise = start.x >= midX
+            if noteLockResetMove({ engine.tryRotate(clockwise: clockwise) }) {
                 rebuildActiveNodesIfNeeded()
                 snapActivePose()
                 onPieceSnap?()
             }
             render(immediate: false)
-        } else if dy < -40, abs(dy) > abs(dx) * 0.7 {
+            return
+        }
+        // Fast swipe down = hard drop.
+        if dy < -48, abs(dy) > abs(dx) * 0.7, elapsed < 0.35 {
+            softDragging = false
             engine.hardDrop()
+            groundedElapsed = 0
+            lockResets = 0
             handleEvents()
             hasVisualPose = false
             render(immediate: false)
             if engine.state.over { onGameOver?(engine.state) }
-        } else if dy > 50, abs(dy) > abs(dx) {
+            return
+        }
+        // Swipe up = HOLD.
+        if dy > 52, abs(dy) > abs(dx) {
             engine.stash()
+            groundedElapsed = 0
+            lockResets = 0
             hasVisualPose = false
             render(immediate: true)
         }
-        touchStart = nil
+    }
+
+    public override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        // Lost touch must never latch soft-drop or block locking.
+        clearTouchState()
     }
 
     public func moveLeft() {
-        if engine.tryMove(dx: -1, dy: 0) {
+        if noteLockResetMove({ engine.tryMove(dx: -1, dy: 0) }) {
             snapActivePose()
             onPieceSnap?()
         }
         render(immediate: false)
     }
     public func moveRight() {
-        if engine.tryMove(dx: 1, dy: 0) {
+        if noteLockResetMove({ engine.tryMove(dx: 1, dy: 0) }) {
             snapActivePose()
             onPieceSnap?()
         }
         render(immediate: false)
     }
     public func rotate() {
-        if engine.tryRotate() {
+        if noteLockResetMove({ engine.tryRotate(clockwise: true) }) {
             rebuildActiveNodesIfNeeded()
             snapActivePose()
             onPieceSnap?()
         }
         render(immediate: false)
     }
-    public func soft() { _ = engine.softDrop(); render(immediate: false) }
+    public func soft() {
+        // One soft step only — never a latched repeat from a lost touch.
+        _ = engine.softDrop()
+        render(immediate: false)
+    }
     public func hard() {
+        softDragging = false
+        clearTouchState()
         engine.hardDrop()
+        groundedElapsed = 0
+        lockResets = 0
         handleEvents()
         hasVisualPose = false
         render(immediate: false)
@@ -1601,6 +1751,7 @@ public final class CompactorScene: SKScene {
     public func magnet() {
         // Legacy hook → Snatch random for HUD button compat during transition.
         guard engine.state.snatchAvailable else { return }
+        playSnatchGrab()
         _ = engine.snatchRandom()
         handleEvents()
         render(immediate: false)

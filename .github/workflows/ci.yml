@@ -21,6 +21,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: AppIcon md5 gate (bandit dumpster icon A)
+        run: python3 scripts/check_appicon_md5.py
       - name: Script unit tests
         run: python3 -m unittest discover -s scripts -v
 
@@ -112,21 +114,45 @@ jobs:
 
       - name: Unit tests
         id: tests
-        timeout-minutes: 15
+        timeout-minutes: 20
         run: |
           set -o pipefail
           device="$(python3 scripts/pick_iphone_simulator.py)"
           echo "device=$device" >> "$GITHUB_OUTPUT"
           echo "Simulator: $device"
-          xcodebuild test-without-building \
-            -project TrashStack.xcodeproj \
-            -scheme TrashStack \
-            -destination "platform=iOS Simulator,id=$device" \
-            -derivedDataPath DerivedData \
-            -resultBundlePath TestResults.xcresult \
-            -parallel-testing-enabled NO \
-          | tee xcodebuild-test.log \
-          | xcbeautify --renderer github-actions || (tail -n 80 xcodebuild-test.log; exit 1)
+          # Pre-boot + readiness: avoids XCTest host "RPC timeout / never finished bootstrapping" flakes.
+          xcrun simctl boot "$device" 2>/dev/null || true
+          xcrun simctl bootstatus "$device" -b || true
+          run_tests() {
+            rm -rf TestResults.xcresult
+            set +e
+            xcodebuild test-without-building \
+              -project TrashStack.xcodeproj \
+              -scheme TrashStack \
+              -destination "platform=iOS Simulator,id=$device" \
+              -derivedDataPath DerivedData \
+              -resultBundlePath TestResults.xcresult \
+              -parallel-testing-enabled NO \
+              | tee xcodebuild-test.log \
+              | xcbeautify --renderer github-actions
+            local ec=${PIPESTATUS[0]}
+            set -e
+            return "$ec"
+          }
+          if ! run_tests; then
+            # One retry after a clean sim bounce — bootstrap deadlocks are infra, not product asserts.
+            if grep -Eqi 'bootstrapping|RPC timeout|Apparently deadlocked|DTServiceHubClient|Early unexpected exit' xcodebuild-test.log; then
+              echo "Simulator bootstrap flake — bouncing device and retrying once"
+              xcrun simctl shutdown "$device" 2>/dev/null || true
+              sleep 2
+              xcrun simctl boot "$device" 2>/dev/null || true
+              xcrun simctl bootstatus "$device" -b || true
+              run_tests || (tail -n 80 xcodebuild-test.log; exit 1)
+            else
+              tail -n 80 xcodebuild-test.log
+              exit 1
+            fi
+          fi
 
       # TODO(smoke-flake): simulator_smoke is non-blocking until io/bootstatus flakes
       # are fixed. Keep uploading artifacts for Magpie/eyes. Unit tests still gate.

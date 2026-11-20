@@ -11,7 +11,7 @@ enum BundleArt {
         if let img = UIImage(named: name) { return img }
         for bundle in JunkTextureLoader.candidateBundles() {
             if let img = UIImage(named: name, in: bundle, compatibleWith: nil) { return img }
-            for sub in ["UI", "Resources/UI", "Junk", "HUD", "Resources/Junk", "Resources/HUD"] {
+            for sub in ["UI", "Resources/UI", "Junk", "HUD", "Resources/Junk", "Resources/HUD", "BanditLoops", "Resources/BanditLoops"] {
                 if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
                    let img = UIImage(contentsOfFile: url.path) {
                     return img

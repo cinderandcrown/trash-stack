@@ -506,9 +506,12 @@ struct SettingsView: View {
                         get: { profile.classicButtons },
                         set: { profile.classicButtons = $0; profile.persist() }
                     )) {
-                        Text("Big touch controls").foregroundStyle(.white)
+                        Text("Buttons (classic pad)").foregroundStyle(.white)
                     }
                     .tint(NeonTheme.magenta)
+                    Text("Off = gesture-first board (drag, tap rotate, swipe drop/hold).")
+                        .font(.caption2)
+                        .foregroundStyle(NeonTheme.muted)
                     Text("Local reminders")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(NeonTheme.muted)

@@ -39,6 +39,8 @@ struct RootView: View {
             ?? UserDefaults.standard.string(forKey: "trashStack.shot")
         return shot == "ident" || shot == "publisher"
     }()
+    /// Bump to force GameContainerView recreate without flashing the title menu.
+    @State private var gameEpoch = 0
 
     var body: some View {
         ZStack {
@@ -77,6 +79,7 @@ struct RootView: View {
                             screen = .streak
                         }
                     )
+                    .id(gameEpoch)
                 case .trashTalk:
                     TrashTalkView(screen: $screen)
                 case .base: JunkyardView(screen: $screen)
@@ -312,11 +315,9 @@ struct RootView: View {
     /// Enter gameplay, recreating GameContainerView when already on .game so shot boards re-seed.
     private func enterGameScreen() {
         if screen == .game {
-            screen = .title
-            DispatchQueue.main.async { screen = .game }
-        } else {
-            screen = .game
+            gameEpoch &+= 1
         }
+        screen = .game
     }
 
     private func sampleShareGrid() -> [[GameCore.Material?]] {

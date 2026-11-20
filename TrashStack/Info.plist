@@ -26,8 +26,9 @@
 	<dict>
 		<key>UIColorName</key>
 		<string>LaunchBackgroundColor</string>
+		<!-- Cinder & Crown mute logo — TS standard first paint (not the neon title card). -->
 		<key>UIImageName</key>
-		<string>LaunchLogo</string>
+		<string>CinderCrownMute</string>
 		<key>UIImageRespectsSafeAreaInsets</key>
 		<true/>
 	</dict>

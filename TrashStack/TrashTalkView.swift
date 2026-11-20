@@ -266,6 +266,7 @@ struct TrashTalkView: View {
         switch raccoonMood {
         case .cheer: return "RaccoonCheer"
         case .panic: return "RaccoonPanic"
+        case .disco: return BundleArt.uiImage("RaccoonDisco") != nil ? "RaccoonDisco" : "RaccoonCheer"
         case .gameOver: return "RaccoonGameOver"
         case .idle: return "RaccoonIdle"
         }

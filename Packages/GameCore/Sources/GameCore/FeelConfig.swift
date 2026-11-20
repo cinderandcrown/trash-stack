@@ -32,7 +32,7 @@ public struct FeelConfig: Codable, Sendable, Equatable {
         gravityBaseSec: 0.68,
         gravityMinSec: 0.11,
         gravityLevelStep: 0.048,
-        lockDelaySec: 0.36,
+        lockDelaySec: 0.50,
         fallLerpLateral: 42,
         fallLerpVertical: 30,
         recycleSuckSec: 0.34,
