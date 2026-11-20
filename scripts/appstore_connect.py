@@ -237,6 +237,33 @@ def ensure_internal_group(client: Client, app_id: str, name: str) -> tuple[str, 
     return created["data"]["id"], True
 
 
+def find_tester_id(client: Client, email: str) -> str | None:
+    needle = email.strip().lower()
+    try:
+        page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "10"})
+        for tester in page.get("data", []):
+            if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
+                return tester["id"]
+        if page.get("data"):
+            return page["data"][0]["id"]
+    except ApiError:
+        pass
+    # Internal testers are ASC users — match username (usually the Apple ID email).
+    try:
+        users = client.get("/v1/users", {"filter[username]": email, "limit": "5"}).get("data", [])
+        for user in users:
+            username = (user.get("attributes") or {}).get("username", "").strip().lower()
+            if username == needle:
+                # Beta tester id is not the user id; search betaTesters without filter.
+                all_testers = client.get("/v1/betaTesters", {"limit": "200"}).get("data", [])
+                for tester in all_testers:
+                    if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
+                        return tester["id"]
+    except ApiError:
+        pass
+    return None
+
+
 def add_tester(client: Client, group_id: str, email: str, first_name: str = "", last_name: str = "") -> str:
     """Invite/add an internal tester by email. Never prints the address."""
     try:
@@ -257,21 +284,18 @@ def add_tester(client: Client, group_id: str, email: str, first_name: str = "", 
         return "Tester added to the group."
     except ApiError as error:
         if error.status == 409:
-            # Already a tester — still ensure they are linked to this group.
             try:
                 linked = link_existing_tester(client, group_id, email)
                 return linked
-            except ApiError:
-                return "Tester was already registered."
+            except ApiError as link_error:
+                return f"Tester was already registered; link failed ({link_error.status})."
         return f"Could not add tester ({error.status}). Add them in App Store Connect > TestFlight."
 
 
 def link_existing_tester(client: Client, group_id: str, email: str) -> str:
-    page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "10"})
-    testers = page.get("data", [])
-    if not testers:
+    tester_id = find_tester_id(client, email)
+    if not tester_id:
         return "Tester record not found after conflict."
-    tester_id = testers[0]["id"]
     try:
         client.post(
             f"/v1/betaGroups/{group_id}/relationships/betaTesters",
@@ -284,42 +308,63 @@ def link_existing_tester(client: Client, group_id: str, email: str) -> str:
         raise
 
 
-def add_account_holder(client: Client, group_id: str) -> str:
+def add_account_holder(client: Client, group_id: str) -> tuple[str, str | None]:
+    """Returns (status message, account-holder username/email if known)."""
     try:
         holders = client.get("/v1/users", {"filter[roles]": "ACCOUNT_HOLDER", "limit": "1"}).get("data", [])
     except ApiError as error:
-        return f"Could not read the team's users ({error.status}). Add yourself to the group in App Store Connect > TestFlight."
+        return (
+            f"Could not read the team's users ({error.status}). Add yourself to the group in App Store Connect > TestFlight.",
+            None,
+        )
     if not holders:
-        return "No account holder was listed. Add yourself to the group in App Store Connect > TestFlight."
+        return ("No account holder was listed. Add yourself to the group in App Store Connect > TestFlight.", None)
     holder = holders[0]["attributes"]
-    return add_tester(
+    username = holder.get("username") or ""
+    msg = add_tester(
         client,
         group_id,
-        holder["username"],
+        username,
         holder.get("firstName") or "",
         holder.get("lastName") or "",
     )
+    return msg, username
+
+
+def group_tester_count(client: Client, group_id: str) -> int:
+    try:
+        page = client.get(f"/v1/betaGroups/{group_id}/betaTesters", {"limit": "200"})
+        return len(page.get("data", []))
+    except ApiError:
+        return -1
 
 
 def tester_present(client: Client, group_id: str, email: str) -> bool:
     """True if the email is already a beta tester on this group. Does not print the email."""
+    needle = email.strip().lower()
     try:
         page = client.get(
             f"/v1/betaGroups/{group_id}/betaTesters",
             {"limit": "200"},
         )
     except ApiError:
-        # Fallback: global filter then check relationships is expensive; treat as unknown.
         try:
             page = client.get("/v1/betaTesters", {"filter[email]": email, "limit": "5"})
             return bool(page.get("data"))
         except ApiError:
             return False
-    needle = email.strip().lower()
     for tester in page.get("data", []):
         if (tester.get("attributes") or {}).get("email", "").strip().lower() == needle:
             return True
     return False
+
+
+def group_access_flags(client: Client, group_id: str) -> dict[str, Any]:
+    try:
+        group = client.get(f"/v1/betaGroups/{group_id}").get("data", {})
+        return group.get("attributes") or {}
+    except ApiError:
+        return {}
 
 
 def find_build(client: Client, app_id: str, version: str, build: str) -> dict[str, Any] | None:
@@ -391,19 +436,34 @@ def set_export_compliance(client: Client, build_id: str) -> str:
 
 
 def attach_build_to_group(client: Client, group_id: str, build_id: str) -> str:
+    """Link build ↔ internal group. Prefer build→groups; fall back to group→builds."""
     try:
         client.post(
-            f"/v1/betaGroups/{group_id}/relationships/builds",
-            {"data": [{"type": "builds", "id": build_id}]},
+            f"/v1/builds/{build_id}/relationships/betaGroups",
+            {"data": [{"type": "betaGroups", "id": group_id}]},
         )
         return "Build attached to the internal group."
     except ApiError as error:
         if error.status == 409:
             return "Build was already on the internal group."
-        # hasAccessToAllBuilds groups may reject explicit attach — still ok.
-        if error.status == 422 and "access" in error.detail.lower():
+        # Internal "all builds" groups reject explicit membership — that is success.
+        detail = (error.detail or "").lower()
+        if error.status == 422 and ("internal" in detail or "access" in detail or "all build" in detail):
             return "Group has access to all builds (explicit attach not needed)."
-        return f"Could not attach build ({error.status}): {error.detail}"
+        # Try the opposite relationship direction once.
+        try:
+            client.post(
+                f"/v1/betaGroups/{group_id}/relationships/builds",
+                {"data": [{"type": "builds", "id": build_id}]},
+            )
+            return "Build attached to the internal group (via group relationship)."
+        except ApiError as error2:
+            if error2.status == 409:
+                return "Build was already on the internal group."
+            detail2 = (error2.detail or "").lower()
+            if error2.status == 422 and ("internal" in detail2 or "access" in detail2 or "all build" in detail2):
+                return "Group has access to all builds (explicit attach not needed)."
+            return f"Could not attach build ({error.status}/{error2.status}): {error.detail}"
 
 
 def distribute_build(
@@ -418,13 +478,24 @@ def distribute_build(
     """Ensure group + testers, wait/find build, set compliance, attach, report."""
     app_id = require_app(client, bundle_id)
     group_id, created = ensure_internal_group(client, app_id, group_name)
-    print(f"Internal group “{group_name}”: {'created' if created else 'already there'}. It gets every build.")
-    print(add_account_holder(client, group_id))
+    flags = group_access_flags(client, group_id)
+    print(
+        f"Internal group “{group_name}”: {'created' if created else 'already there'}. "
+        f"hasAccessToAllBuilds={flags.get('hasAccessToAllBuilds')} isInternal={flags.get('isInternalGroup')}."
+    )
+    holder_msg, holder_email = add_account_holder(client, group_id)
+    print(holder_msg)
+    holder_ok = bool(holder_email) and tester_present(client, group_id, holder_email)
+    print(f"Account holder in group: {'yes' if holder_ok else 'no'}")
+
     tester_ok = False
     if tester_email:
         print(add_tester(client, group_id, tester_email))
         tester_ok = tester_present(client, group_id, tester_email)
         print(f"Named tester in group: {'yes' if tester_ok else 'no'}")
+
+    count = group_tester_count(client, group_id)
+    print(f"Testers currently on group: {count if count >= 0 else 'unknown'}")
 
     state = wait_for_build(client, app_id, version, build, timeout)
     found = find_build(client, app_id, version, build)
@@ -436,17 +507,27 @@ def distribute_build(
 
     build_id = found["id"]
     attrs = found.get("attributes") or {}
-    print(f"Build id present. processingState={attrs.get('processingState')}")
+    print(
+        f"Build {version} ({build}): processingState={attrs.get('processingState')} "
+        f"usesNonExemptEncryption={attrs.get('usesNonExemptEncryption')}"
+    )
     print(set_export_compliance(client, build_id))
     print(attach_build_to_group(client, group_id, build_id))
 
     # Re-check presence after attach.
-    if tester_email and not tester_ok:
+    if holder_email:
+        holder_ok = tester_present(client, group_id, holder_email)
+        print(f"Account holder in group (recheck): {'yes' if holder_ok else 'no'}")
+    if tester_email:
         tester_ok = tester_present(client, group_id, tester_email)
         print(f"Named tester in group (recheck): {'yes' if tester_ok else 'no'}")
 
     if state == "VALID":
         print("Apple finished processing. The build is in TestFlight.")
+        # Fail the job if nobody is on the group — that is the "never appears" failure mode.
+        if count == 0 and not holder_ok and not tester_ok:
+            print("ERROR: internal group has no testers — Nicholas will not see the build.")
+            return 1
         return 0
     if state == "TIMED_OUT":
         print("Apple is still processing. The build will appear in TestFlight when it finishes.")
@@ -534,12 +615,20 @@ def main(arguments: list[str]) -> int:
         if options.command == "beta-group":
             app_id = require_app(client, options.bundle_id)
             group_id, created = ensure_internal_group(client, app_id, options.name)
-            print(f"Internal group “{options.name}”: {'created' if created else 'already there'}. It gets every build.")
-            print(add_account_holder(client, group_id))
+            flags = group_access_flags(client, group_id)
+            print(
+                f"Internal group “{options.name}”: {'created' if created else 'already there'}. "
+                f"hasAccessToAllBuilds={flags.get('hasAccessToAllBuilds')}."
+            )
+            holder_msg, holder_email = add_account_holder(client, group_id)
+            print(holder_msg)
+            if holder_email:
+                print(f"Account holder in group: {'yes' if tester_present(client, group_id, holder_email) else 'no'}")
             if options.tester_email:
                 print(add_tester(client, group_id, options.tester_email))
                 present = tester_present(client, group_id, options.tester_email)
                 print(f"Named tester in group: {'yes' if present else 'no'}")
+            print(f"Testers currently on group: {group_tester_count(client, group_id)}")
             return 0
         if options.command == "wait-build":
             app_id = require_app(client, options.bundle_id)

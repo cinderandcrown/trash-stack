@@ -107,7 +107,7 @@ class ExportComplianceTests(unittest.TestCase):
     def test_attach_build_conflict_is_ok(self) -> None:
         send = FakeSend(
             {
-                ("POST", "/v1/betaGroups/G1/relationships/builds"): (
+                ("POST", "/v1/builds/B1/relationships/betaGroups"): (
                     409,
                     {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID", "detail": "already"}]},
                 )
@@ -116,6 +116,26 @@ class ExportComplianceTests(unittest.TestCase):
         client = asc.Client(token=lambda: "t", send=send)
         msg = asc.attach_build_to_group(client, "G1", "B1")
         self.assertIn("already", msg.lower())
+
+    def test_attach_internal_all_builds_is_ok(self) -> None:
+        send = FakeSend(
+            {
+                ("POST", "/v1/builds/B1/relationships/betaGroups"): (
+                    422,
+                    {
+                        "errors": [
+                            {
+                                "code": "ENTITY_UNPROCESSABLE",
+                                "detail": "Cannot add internal group to a build.",
+                            }
+                        ]
+                    },
+                )
+            }
+        )
+        client = asc.Client(token=lambda: "t", send=send)
+        msg = asc.attach_build_to_group(client, "G1", "B1")
+        self.assertIn("access to all builds", msg.lower())
 
 
 class WaitBuildTests(unittest.TestCase):
