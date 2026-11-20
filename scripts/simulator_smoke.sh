@@ -1743,8 +1743,8 @@ if wdt < -1.0:
     raise SystemExit(f"Game-path wall {wdt:.3f}s looks clock-skewed")
 print(f"Game-path wall OK {wdt:.3f}s")
 PY
-# Continuous autoplay (~35s): recycle/press/snatch/game-over beats without board teleport spam.
-sleep 35
+# Continuous autoplay (~55s) so the muxed clip lands near 60s with launch overhead.
+sleep 55
 kill -INT "$REC_PID" 2>/dev/null || true
 # Force-kill if simctl recordVideo ignores INT (known hang source).
 # Never bare-wait: a wedged recordVideo previously hung until the 35m step timeout.
@@ -2069,6 +2069,23 @@ for f in 01-play.png 02-crush.png 03-recycle.png 04-junkyard.png 05-pass.png 06-
     exit 1
   fi
   echo "OK $path ($(wc -c < "$path") bytes)"
+done
+
+# Calm+Fit evidence aliases — real sim screenshots only (title / mid-chain / game-over).
+mkdir -p "$OUT_DIR/fit"
+{
+  echo "tag=pro"
+  echo "udid=$DEVICE"
+  xcrun simctl list devices 2>/dev/null | grep "$DEVICE" || true
+} > "$OUT_DIR/fit/pro-device.txt"
+cp -f "$OUT_DIR/01-title.png" "$OUT_DIR/fit/pro-title.png"
+cp -f "$OUT_DIR/04-recycle-combo.png" "$OUT_DIR/fit/pro-play.png"
+cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
+# Duration note for the gameplay demo.
+raw_deadline 15 "$FFPROBE_BIN" -v error -show_entries format=duration -of default=nw=1:nk=1 \
+  "$OUT_DIR/gameplay-demo.mp4" > "$OUT_DIR/fit/gameplay-demo-duration.txt" 2>/dev/null || true
+for f in fit/pro-title.png fit/pro-play.png fit/pro-game-over.png; do
+  echo "OK $OUT_DIR/$f ($(wc -c < "$OUT_DIR/$f") bytes)"
 done
 
 note_timing step suite_complete 1500 "$((SECONDS - SMOKE_START))" 0 "ok"
