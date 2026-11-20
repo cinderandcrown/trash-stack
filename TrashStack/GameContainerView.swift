@@ -491,9 +491,8 @@ struct GameContainerView: View {
                     repeatInterval: 99,
                     fireOnce: true
                 ) {
+                    // Juice lives on `.locked(hard:)` — don't double-fire SFX/haptics here.
                     scene.hard()
-                    AudioService.shared.playSFX("lock")
-                    HapticsService.shared.lock()
                 }
             }
         }
