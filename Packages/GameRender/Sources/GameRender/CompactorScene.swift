@@ -681,12 +681,13 @@ public final class CompactorScene: SKScene {
         let root = SKNode()
         root.name = tag
         root.zPosition = 4
-        root.alpha = 0.38
+        // Brighter landing ghost so the drop target reads on a phone at arm's length.
+        root.alpha = 0.55
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
         let mat = p.def.material
-        let color = fallbackColor(mat).withAlphaComponent(0.55)
+        let color = fallbackColor(mat).withAlphaComponent(0.72)
         if p.def.isSquare {
             let n = SKSpriteNode(color: color, size: CGSize(width: cs.width * 2 - cellPad, height: cs.height * 2 - cellPad))
             n.position = CGPoint(x: cs.width * 0.5, y: -cs.height * 0.5)

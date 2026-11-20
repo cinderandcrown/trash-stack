@@ -198,9 +198,11 @@ final class GameCoreTests: XCTestCase {
         XCTAssertLessThanOrEqual(feel.gravityMinSec, feel.gravityBaseSec)
         XCTAssertEqual(BoardGym.allCases.count, 5)
         XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
-        XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.36, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 14, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.70, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.34, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 16, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.68, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.dasDelaySec, 0.16, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.045, accuracy: 0.001)
     }
 
     func testComboScoreEscalatesHard() {

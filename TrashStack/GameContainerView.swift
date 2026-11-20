@@ -441,16 +441,56 @@ struct GameContainerView: View {
     }
 
     private var classicPad: some View {
-        VStack(spacing: 10) {
+        let das = scene.feel.dasDelaySec
+        let arr = scene.feel.arrIntervalSec
+        let softR = scene.feel.softRepeatSec
+        return VStack(spacing: 10) {
             HStack(spacing: 10) {
-                pad("◀", accessibility: "Move left") { scene.moveLeft() }
-                pad("↻", accessibility: "Rotate") { scene.rotate(); AudioService.shared.playSFX("ui") }
-                pad("▶", accessibility: "Move right") { scene.moveRight() }
-                pad("HOLD", accessibility: "Hold piece") { scene.stash() }
+                RepeatPadButton(
+                    title: "◀",
+                    accessibility: "Move left",
+                    dasDelay: das,
+                    repeatInterval: arr
+                ) {
+                    scene.moveLeft()
+                }
+                // Rotate is a single tap — light haptic + click, no hold-repeat.
+                RepeatPadButton(title: "↻", accessibility: "Rotate", dasDelay: 99, repeatInterval: 99, fireOnce: true) {
+                    scene.rotate()
+                    AudioService.shared.playSFX("ui")
+                    HapticsService.shared.tap()
+                }
+                RepeatPadButton(
+                    title: "▶",
+                    accessibility: "Move right",
+                    dasDelay: das,
+                    repeatInterval: arr
+                ) {
+                    scene.moveRight()
+                }
+                RepeatPadButton(title: "HOLD", accessibility: "Hold piece", dasDelay: 99, repeatInterval: 99, fireOnce: true) {
+                    scene.stash()
+                    AudioService.shared.playSFX("ui")
+                    HapticsService.shared.tap()
+                }
             }
             HStack(spacing: 10) {
-                pad("SOFT", accessibility: "Soft drop") { scene.soft() }
-                pad("DROP", accessibility: "Hard drop", emphasis: true) {
+                RepeatPadButton(
+                    title: "SOFT",
+                    accessibility: "Soft drop",
+                    dasDelay: 0.04,
+                    repeatInterval: softR
+                ) {
+                    scene.soft()
+                }
+                RepeatPadButton(
+                    title: "DROP",
+                    accessibility: "Hard drop",
+                    emphasis: true,
+                    dasDelay: 99,
+                    repeatInterval: 99,
+                    fireOnce: true
+                ) {
                     scene.hard()
                     AudioService.shared.playSFX("lock")
                     HapticsService.shared.lock()
@@ -461,30 +501,6 @@ struct GameContainerView: View {
         .padding(.vertical, 8)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Touch controls")
-    }
-
-    private func pad(_ title: String, accessibility: String, emphasis: Bool = false, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: emphasis ? 20 : 18, weight: .black, design: .rounded))
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 52)
-                .foregroundStyle(emphasis ? .black : .white)
-                .background {
-                    if emphasis {
-                        LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
-                    } else {
-                        NeonTheme.panel
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(emphasis ? Color.clear : NeonTheme.teal.opacity(0.55), lineWidth: 1.5)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(accessibility)
     }
 
     private func dismissHowTo() {
@@ -672,8 +688,8 @@ struct GameContainerView: View {
                             AudioService.shared.playSFX("lock", pitch: 1.2)
                             HapticsService.shared.clear()
                         } else {
-                            // Soft land — lower thud so hard drops still feel bigger.
-                            AudioService.shared.playSFX("lock", pitch: 0.85)
+                            // Soft land thud — crisp enough to feel the bin, softer than DROP.
+                            AudioService.shared.playSFX("lock", pitch: 0.78)
                             HapticsService.shared.lock()
                         }
                     case .recycled:
@@ -873,6 +889,70 @@ struct GameContainerView: View {
         } else {
             screen = .title
         }
+    }
+}
+
+/// Classic pad button with DAS/ARR hold-repeat (or single-fire for rotate/DROP/HOLD).
+struct RepeatPadButton: View {
+    let title: String
+    let accessibility: String
+    var emphasis: Bool = false
+    var dasDelay: Double = 0.16
+    var repeatInterval: Double = 0.045
+    /// When true, only the initial press fires (no hold repeat).
+    var fireOnce: Bool = false
+    let action: () -> Void
+
+    @State private var pressed = false
+    @State private var repeatTask: Task<Void, Never>?
+
+    var body: some View {
+        Text(title)
+            .font(.system(size: emphasis ? 20 : 18, weight: .black, design: .rounded))
+            .frame(maxWidth: .infinity)
+            .frame(minHeight: 52)
+            .foregroundStyle(emphasis ? .black : .white)
+            .background {
+                if emphasis {
+                    LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing)
+                } else {
+                    NeonTheme.panel
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .stroke(emphasis ? Color.clear : NeonTheme.teal.opacity(0.55), lineWidth: 1.5)
+            )
+            .scaleEffect(pressed ? 0.94 : 1)
+            .animation(.easeOut(duration: 0.08), value: pressed)
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        guard !pressed else { return }
+                        pressed = true
+                        action()
+                        guard !fireOnce else { return }
+                        repeatTask?.cancel()
+                        let delay = dasDelay
+                        let interval = repeatInterval
+                        repeatTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: UInt64(max(0.01, delay) * 1_000_000_000))
+                            while !Task.isCancelled {
+                                action()
+                                try? await Task.sleep(nanoseconds: UInt64(max(0.02, interval) * 1_000_000_000))
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        pressed = false
+                        repeatTask?.cancel()
+                        repeatTask = nil
+                    }
+            )
+            .accessibilityLabel(accessibility)
+            .accessibilityAddTraits(.isButton)
     }
 }
 

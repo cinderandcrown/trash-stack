@@ -6,7 +6,7 @@ Every in-game raster, font, and wav must be **CC0**, **CC-BY** (with attribution
 
 | Asset | Path(s) | Provenance |
 |-------|---------|------------|
-| App icon | `TrashStack/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` | Original neon dumpster + raccoon mark; hand-composited / agent-baked RGB, no alpha |
+| App icon | `TrashStack/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` | **Higgsfield commercial-cleared original** (Nicholas Will Ultra plan, 20 Nov 2026). Option A — raccoon peeking from a neon dumpster; opaque 1024×1024 RGB, no alpha, no rounded corners. Job `d73752d6-00c7-4ddc-96c1-5b32574bc36c`. Full terms: `docs/art/APPICON_LICENSE.md` |
 | Launch logo | `LaunchLogo.imageset` (@3x 600×600) | Original neon card mark; shipped at 3x so launch UIImage is ~200 pt (not clipped) |
 | Cinder & Crown mute logo | `CinderCrownMute.imageset` (@1x/@2x/@3x) | **Cinder & Crown logo, © Cinder and Crown LLC, used by permission.** Publisher ident only (phoenix + crown, no wordmark). Source PNG md5 `f4a3ffce2b58ddd4f12c010427782ac8` |
 | Ident SFX | `ember_whoosh.wav` | Original procedural ember/whoosh; respects mute |
