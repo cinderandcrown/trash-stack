@@ -31,7 +31,7 @@ final class SmokeTests: XCTestCase {
         )
         XCTAssertTrue(card.contains("Daily Dumpster"))
         XCTAssertTrue(card.contains("★★☆") || card.contains("★"))
-        XCTAssertEqual(PlayMode.allCases, [.shift, .endless, .daily])
+        XCTAssertEqual(PlayMode.allCases, [.shift, .endless, .daily, .trashTalk])
         XCTAssertFalse(ShiftCatalog.levels.isEmpty)
         XCTAssertEqual(StreakRewards.scrap(forDay: 3), 34)
     }
