@@ -69,33 +69,37 @@ struct BanditLoopView: View {
         frameIndex = 0
     }
 
-    /// Loads `BanditLoops/<name>/frame_XX.png` from the app bundle (bottom-center 256 sprites).
+    /// Loads uniquely named `BanditLoops/<name>_XX.png` (XcodeGen flattens folders;
+    /// duplicate `frame_00.png` names collide in the app bundle).
     static func loadLoop(named name: String) -> [UIImage] {
         var images: [UIImage] = []
         let bundles = JunkTextureLoader.candidateBundles()
         for i in 0..<24 {
-            let frame = String(format: "frame_%02d", i)
+            let base = String(format: "%@_%02d", name, i)
             var found: UIImage?
             for bundle in bundles {
-                let subs = [
-                    "BanditLoops/\(name)",
-                    "Resources/BanditLoops/\(name)",
-                    name,
+                let candidates: [(String?, String)] = [
+                    ("BanditLoops", base),
+                    ("Resources/BanditLoops", base),
+                    (nil, base),
                 ]
-                for sub in subs {
-                    if let url = bundle.url(forResource: frame, withExtension: "png", subdirectory: sub),
-                       let img = UIImage(contentsOfFile: url.path) {
+                for (sub, resource) in candidates {
+                    let url: URL?
+                    if let sub {
+                        url = bundle.url(forResource: resource, withExtension: "png", subdirectory: sub)
+                    } else {
+                        url = bundle.url(forResource: resource, withExtension: "png")
+                    }
+                    if let url, let img = UIImage(contentsOfFile: url.path) {
+                        found = img
+                        break
+                    }
+                    if let img = UIImage(named: resource, in: bundle, compatibleWith: nil) {
                         found = img
                         break
                     }
                 }
                 if found != nil { break }
-                // Flat resource copy (XcodeGen may flatten)
-                if let url = bundle.url(forResource: "\(name)_\(frame)", withExtension: "png"),
-                   let img = UIImage(contentsOfFile: url.path) {
-                    found = img
-                    break
-                }
             }
             guard let img = found else { break }
             images.append(img)
