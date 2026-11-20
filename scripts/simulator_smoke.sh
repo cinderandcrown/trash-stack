@@ -1578,6 +1578,8 @@ note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 VIDEO_T0=$SECONDS
 ensure_app_terminated || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
+# Gesture-first Feel P0 — classic pad off so recordVideo shows board gestures + Higgsfield art.
+with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "classicButtons" -bool false || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSec" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSecString" >/dev/null 2>&1 || true
 with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpoch" >/dev/null 2>&1 || true

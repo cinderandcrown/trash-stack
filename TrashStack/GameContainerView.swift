@@ -59,13 +59,10 @@ struct GameContainerView: View {
                 toastBanner
 
                 HStack(alignment: .top, spacing: 6) {
-                    // Bandit lives beside the board during play.
-                    BundleImage(name: raccoonAsset)
-                        .scaledToFit()
-                        .frame(width: 56, height: 56)
+                    // Bandit lives beside the board — animated Higgsfield loops (idle_front/cheer/panic).
+                    BanditLoopView(mood: raccoonMood, size: 72)
                         .scaleEffect(raccoonBounce)
-                        .padding(.top, 8)
-                        .accessibilityLabel("The Bandit")
+                        .padding(.top, 4)
 
                     SpriteView(scene: scene)
                         .background(Color(red: 0.05, green: 0.06, blue: 0.10))
@@ -412,18 +409,6 @@ struct GameContainerView: View {
     private func resumePause() {
         guard pauseGate.resume() else { return }
         scene.isPaused = false
-    }
-
-    private var raccoonAsset: String {
-        switch raccoonMood {
-        case .cheer: return "RaccoonCheer"
-        case .panic: return "RaccoonPanic"
-        case .disco:
-            // Prefer animated disco frameset when present; fall back to cheer still.
-            return BundleArt.uiImage("RaccoonDisco") != nil ? "RaccoonDisco" : "RaccoonCheer"
-        case .gameOver: return "RaccoonGameOver"
-        case .idle: return "RaccoonIdle"
-        }
     }
 
     private var classicPad: some View {
