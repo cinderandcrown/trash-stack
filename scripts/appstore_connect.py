@@ -843,9 +843,21 @@ ACHIEVEMENTS = [
 ]
 
 
+
+def get_relationship_safe(client: Client, path: str, query: dict[str, str] | None = None) -> Any:
+    """GET a relationship, retrying without query if Apple rejects limit/fields."""
+    try:
+        return client.get(path, query)
+    except ApiError as error:
+        if error.status == 400 and query:
+            print(f"Retrying {path} without query ({error.detail[:80]}).")
+            return client.get(path)
+        raise
+
 def list_bundle_capabilities(client: Client, bundle_record_id: str) -> set[str]:
     # Relationship endpoint rejects `limit` (PARAMETER_ERROR.ILLEGAL).
-    page = client.get(
+    page = get_relationship_safe(
+        client,
         f"/v1/bundleIds/{bundle_record_id}/bundleIdCapabilities",
         {"fields[bundleIdCapabilities]": "capabilityType"},
     )
@@ -900,10 +912,8 @@ def ensure_bundle_game_center_capability(client: Client, bundle_identifier: str)
 def ensure_game_center_detail(client: Client, app_id: str) -> str:
     """Enable Game Center for the app; return gameCenterDetail id. Idempotent."""
     try:
-        existing = client.get(
-            f"/v1/apps/{app_id}/gameCenterDetail",
-            {"fields[gameCenterDetails]": "challengeEnabled"},
-        )
+        # No fields[] filter — Apple rejects unknown field names across API versions.
+        existing = client.get(f"/v1/apps/{app_id}/gameCenterDetail")
         data = existing.get("data")
         if isinstance(data, dict) and data.get("id"):
             print(f"Game Center detail already present ({data['id']}).")
@@ -930,10 +940,7 @@ def ensure_game_center_detail(client: Client, app_id: str) -> str:
     except ApiError as error:
         if error.status in (409, 422):
             # Already enabled — re-fetch.
-            existing = client.get(
-                f"/v1/apps/{app_id}/gameCenterDetail",
-                {"fields[gameCenterDetails]": "challengeEnabled"},
-            )
+            existing = client.get(f"/v1/apps/{app_id}/gameCenterDetail")
             data = existing.get("data")
             if isinstance(data, dict) and data.get("id"):
                 print(f"Game Center detail already present ({data['id']}).")
@@ -942,9 +949,10 @@ def ensure_game_center_detail(client: Client, app_id: str) -> str:
 
 
 def list_leaderboard_vendor_ids(client: Client, detail_id: str) -> set[str]:
-    page = client.get(
+    page = get_relationship_safe(
+        client,
         f"/v1/gameCenterDetails/{detail_id}/gameCenterLeaderboards",
-        {"limit": "200", "fields[gameCenterLeaderboards]": "referenceName,vendorIdentifier"},
+        {"fields[gameCenterLeaderboards]": "referenceName,vendorIdentifier"},
     )
     out: set[str] = set()
     for row in page.get("data", []):
@@ -1035,9 +1043,10 @@ def ensure_leaderboards(client: Client, detail_id: str) -> None:
 
 
 def list_achievement_refs(client: Client, detail_id: str) -> set[str]:
-    page = client.get(
+    page = get_relationship_safe(
+        client,
         f"/v1/gameCenterDetails/{detail_id}/gameCenterAchievements",
-        {"limit": "200", "fields[gameCenterAchievements]": "referenceName,vendorIdentifier"},
+        {"fields[gameCenterAchievements]": "referenceName,vendorIdentifier"},
     )
     out: set[str] = set()
     for row in page.get("data", []):

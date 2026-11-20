@@ -21,6 +21,11 @@ public struct TrashTalkBot: Sendable {
         thinkAcc = 0
     }
 
+    /// Apply incoming junk from the human rival.
+    public mutating func receiveJunk(rows: Int) {
+        engine.queueJunk(rows: rows)
+    }
+
     /// Advance bot; returns junk rows to send to the human (already rule-applied).
     public mutating func tick(dt: Double) -> Int {
         guard !engine.state.over else { return 0 }

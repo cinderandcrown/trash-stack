@@ -327,7 +327,7 @@ struct TrashTalkView: View {
                 let now = Date()
                 let dt = now.timeIntervalSince(last)
                 last = now
-                _ = scene.engine.tickJunkWarning(dt: dt)
+                _ = scene.tickJunkWarning(dt: dt)
                 // Re-publish warn meter from engine state
                 pendingWarnRows = scene.engine.state.pendingJunkRows
                 if pendingWarnRows > 0 {
@@ -337,7 +337,7 @@ struct TrashTalkView: View {
                 if vsBot {
                     let outbound = bot.tick(dt: dt)
                     if outbound > 0 {
-                        scene.engine.queueJunk(rows: outbound)
+                        scene.queueJunk(rows: outbound)
                         junkReceived += outbound
                     }
                     let dig = bot.engine.boardDigest()
@@ -373,7 +373,7 @@ struct TrashTalkView: View {
                 if rows > 0 {
                     junkSent += rows
                     if vsBot {
-                        bot.engine.queueJunk(rows: rows)
+                        bot.receiveJunk(rows: rows)
                     } else {
                         GameKitService.shared.send(.junk(rows: UInt8(min(255, rows))))
                     }
@@ -409,7 +409,7 @@ struct TrashTalkView: View {
         switch msg {
         case .junk(let rows):
             junkReceived += Int(rows)
-            scene.engine.queueJunk(rows: Int(rows))
+            scene.queueJunk(rows: Int(rows))
             setMood(.panic)
         case .boardDigest(let filled, _):
             rivalFill = Double(filled) / 255.0

@@ -112,6 +112,23 @@ public final class CompactorScene: SKScene {
         render(immediate: true)
     }
 
+    /// TRASH TALK: queue incoming junk rows (warning meter, then land).
+    public func queueJunk(rows: Int) {
+        engine.queueJunk(rows: rows)
+        handleEvents()
+        render(immediate: false)
+    }
+
+    @discardableResult
+    public func tickJunkWarning(dt: Double) -> Bool {
+        let landed = engine.tickJunkWarning(dt: dt)
+        if landed || engine.state.pendingJunkRows > 0 {
+            handleEvents()
+            render(immediate: false)
+        }
+        return landed
+    }
+
     public func applyShot(_ shot: String) {
         pendingShot = shot
         engine.applyShotScenario(shot)

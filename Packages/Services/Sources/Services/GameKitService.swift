@@ -52,11 +52,10 @@ public final class GameKitService: NSObject, ObservableObject {
             }
             GKLocalPlayer.local.authenticateHandler = { [weak self] viewController, error in
                 let errText = error?.localizedDescription
-                nonisolated(unsafe) let authVC = viewController
                 Task { @MainActor in
                     guard let self else { finish(); return }
                     // Non-blocking: stash for SwiftUI; game keeps working unsigned.
-                    self.authViewController = authVC
+                    self.authViewController = viewController
                     if let errText {
                         self.matchError = errText
                     }
@@ -289,37 +288,34 @@ public final class GameKitService: NSObject, ObservableObject {
 #if canImport(GameKit)
 extension GameKitService: GKGameCenterControllerDelegate {
     public nonisolated func gameCenterViewControllerDidFinish(_ gameCenterViewController: GKGameCenterViewController) {
-        nonisolated(unsafe) let vc = gameCenterViewController
         Task { @MainActor in
-            vc.dismiss(animated: true)
+            gameCenterViewController.dismiss(animated: true)
         }
     }
 }
 
 extension GameKitService: GKMatchmakerViewControllerDelegate {
     public nonisolated func matchmakerViewControllerWasCancelled(_ viewController: GKMatchmakerViewController) {
-        nonisolated(unsafe) let vc = viewController
         Task { @MainActor in
-            vc.dismiss(animated: true)
+            viewController.dismiss(animated: true)
             self.cancelMatchmaking()
         }
     }
 
     public nonisolated func matchmakerViewController(_ viewController: GKMatchmakerViewController, didFailWithError error: Error) {
         let errText = error.localizedDescription
-        nonisolated(unsafe) let vc = viewController
         Task { @MainActor in
-            vc.dismiss(animated: true)
+            viewController.dismiss(animated: true)
             self.matchError = errText
             self.matchmaking = false
         }
     }
 
     public nonisolated func matchmakerViewController(_ viewController: GKMatchmakerViewController, didFind match: GKMatch) {
-        nonisolated(unsafe) let vc = viewController
+        // GKMatch is not Sendable under Swift 6 — unchecked hop to MainActor.
         nonisolated(unsafe) let found = match
         Task { @MainActor in
-            vc.dismiss(animated: true)
+            viewController.dismiss(animated: true)
             self.attach(match: found)
         }
     }
