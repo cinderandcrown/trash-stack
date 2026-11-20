@@ -76,4 +76,28 @@ final class PauseAndLockTests: XCTestCase {
             XCTAssertFalse(twist.toastTitle.contains("…"))
         }
     }
+
+    /// Demo/autoplay must advance — frozen smoke clips came from a stuck board.
+    func testAutoplayStepAdvancesBoard() {
+        var eng = GameEngine(seed: 42)
+        eng.applyShotScenario("demo")
+        let beforeLocks = eng.lockCount
+        let beforeScore = eng.state.score
+        var activeBefore = eng.state.active.map { ($0.x, $0.y, $0.rot) }
+        var moved = false
+        for _ in 0..<40 {
+            eng.autoplayStep()
+            if eng.lockCount > beforeLocks || eng.state.score > beforeScore {
+                moved = true
+                break
+            }
+            if let a = eng.state.active, let b = activeBefore,
+               a.x != b.0 || a.y != b.1 || a.rot != b.2 {
+                moved = true
+                break
+            }
+            activeBefore = eng.state.active.map { ($0.x, $0.y, $0.rot) }
+        }
+        XCTAssertTrue(moved, "autoplayStep must move, lock, or score within 40 ticks")
+    }
 }

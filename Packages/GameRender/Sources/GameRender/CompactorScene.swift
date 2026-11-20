@@ -11,6 +11,8 @@ public final class CompactorScene: SKScene {
     public var engine = GameEngine(seed: UInt64.random(in: 1...UInt64.max))
     public var onGameOver: ((GameState) -> Void)?
     public var onEvents: (([GameEvent]) -> Void)?
+    /// Fired when bandit mood changes so SwiftUI loops (idle/cheer/panic) stay in sync.
+    public var onMood: ((RaccoonMood) -> Void)?
     public var autoplay = false
     /// Demo-only elapsed time for scripted near-miss → game-over beats.
     private var autoplayElapsed: TimeInterval = 0
@@ -49,6 +51,7 @@ public final class CompactorScene: SKScene {
     private var snatchBusy = false
     /// Brief disco flash after a big combo clear.
     private var discoUntil: TimeInterval = 0
+    private var cheerUntil: TimeInterval = 0
 
     private var touchStart: CGPoint?
     private var touchStartTime: TimeInterval = 0
@@ -121,6 +124,7 @@ public final class CompactorScene: SKScene {
         clearTouchState()
         raccoonMood = .idle
         discoUntil = 0
+        cheerUntil = 0
         render(immediate: true)
     }
 
@@ -165,7 +169,8 @@ public final class CompactorScene: SKScene {
         demoPhase = 0
         removeAction(forKey: "demoChoreography")
         run(SKAction.sequence([
-            SKAction.wait(forDuration: 16),
+            // Early SLAM so a ~45s smoke clip always shows the press beat.
+            SKAction.wait(forDuration: 8),
             SKAction.run { [weak self] in
                 guard let self, !self.engine.state.over else { return }
                 self.engine.fillPressMeter()
@@ -173,7 +178,7 @@ public final class CompactorScene: SKScene {
                 self.handleEvents()
                 self.render(immediate: false)
             },
-            SKAction.wait(forDuration: 8),
+            SKAction.wait(forDuration: 6),
             SKAction.run { [weak self] in
                 guard let self, !self.engine.state.over else { return }
                 if self.engine.state.snatchAvailable {
@@ -461,11 +466,8 @@ public final class CompactorScene: SKScene {
 
     private func cellSize() -> CGSize {
         let cols = CGFloat(engine.state.board.config.cols)
-        let rows = CGFloat(engine.state.board.config.visibleRows)
-        // Fill nearly the full scene width — drop decorative side gutters.
-        let byWidth = size.width * 0.98 / cols
-        let byHeight = size.height * 0.96 / rows
-        let s = min(byWidth, byHeight)
+        // Nearly full SpriteView width — height letterboxing left a ~40% empty bar above.
+        let s = size.width * 0.995 / cols
         return CGSize(width: s, height: s)
     }
 
@@ -475,9 +477,11 @@ public final class CompactorScene: SKScene {
         let rows = CGFloat(engine.state.board.config.visibleRows)
         let totalW = cs.width * cols
         let totalH = cs.height * rows
+        // Top-align the bin — drop the empty horizontal bar above the playfield.
+        let topPad = max(4, cs.height * 0.08)
         return CGPoint(
             x: (size.width - totalW) / 2,
-            y: (size.height - totalH) / 2 - size.height * 0.02
+            y: max(0, size.height - totalH - topPad)
         )
     }
 
@@ -508,7 +512,10 @@ public final class CompactorScene: SKScene {
         lastTime = currentTime
 
         let nextMood = computeRaccoonMood()
-        if nextMood != raccoonMood { raccoonMood = nextMood }
+        if nextMood != raccoonMood {
+            raccoonMood = nextMood
+            onMood?(nextMood)
+        }
 
         // TRASH TALK junk warning → land (no-op when pendingJunkRows == 0).
         if engine.state.pendingJunkRows > 0 {
@@ -520,6 +527,8 @@ public final class CompactorScene: SKScene {
         smoothActivePose(dt: dt)
 
         if autoplay {
+            // Never stay paused during demo — smoke recordVideo must show live motion.
+            if isPaused { isPaused = false }
             autoplayElapsed += TimeInterval(dt)
             // Live-run tension only — never applyShotScenario mid-demo (that rolled level/score backwards).
             if demoPhase == 0, engine.isNearOverflow(threshold: feel.nearMissRows) {
@@ -527,8 +536,9 @@ public final class CompactorScene: SKScene {
                 onToast?("SO CLOSE")
                 raccoonMood = .panic
             }
+            // Faster cadence so a ~45s clip shows locks, clears, and SLAM.
             gravityAcc += Double(dt)
-            if gravityAcc > 0.28 {
+            if gravityAcc > 0.14 {
                 gravityAcc = 0
                 if !engine.state.over {
                     engine.autoplayStep()
@@ -711,9 +721,11 @@ public final class CompactorScene: SKScene {
                     presentComboBanner(combo: combo)
                     presentComboRing(combo: combo)
                     onToast?("CHAIN ×\(combo)")
+                    cheerUntil = CACurrentMediaTime() + 1.2
                     raccoonMood = .cheer
                 } else {
                     onToast?("RECYCLE +\(score)")
+                    cheerUntil = CACurrentMediaTime() + 1.0
                     raccoonMood = .cheer
                 }
                 // Score popups beside the board (not over the falling area).
@@ -726,6 +738,7 @@ public final class CompactorScene: SKScene {
                 _ = cells
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
+                cheerUntil = CACurrentMediaTime() + 1.2
                 raccoonMood = .cheer
                 onToast?("Press slam")
             case .orderCompleted(let order):
@@ -1522,7 +1535,9 @@ public final class CompactorScene: SKScene {
             }
         }
         let fill = Double(filled) / Double(visible)
+        // Panic when the bin is high — overrides a lingering cheer.
         if fill >= 0.70 { return .panic }
+        if CACurrentMediaTime() < cheerUntil { return .cheer }
         if engine.state.combo >= 2 { return .cheer }
         return .idle
     }

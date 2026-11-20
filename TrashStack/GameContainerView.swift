@@ -52,54 +52,69 @@ struct GameContainerView: View {
 
     private var isPaused: Bool { pauseGate.isPaused }
 
+    /// Demo / CI smoke autoplay — must not resign-pause (recordVideo would freeze the clip).
+    private static var isDemoOrSmokeAutoplay: Bool {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("-autoplay") { return true }
+        if let shot = PlayerProfile.shotArgument(), shot == "demo" || shot == "autoplay" { return true }
+        if let active = UserDefaults.standard.string(forKey: "trashStack.shotActive"),
+           active == "demo" || active == "autoplay" {
+            return true
+        }
+        return false
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 0) {
                 leanHudBar
-                toastBanner
-
-                HStack(alignment: .top, spacing: 6) {
-                    // Bandit lives beside the board — animated Higgsfield loops (idle_front/cheer/panic).
-                    BanditLoopView(mood: raccoonMood, size: 72)
-                        .scaleEffect(raccoonBounce)
-                        .padding(.top, 4)
-
-                    SpriteView(scene: scene)
-                        .background(Color(red: 0.05, green: 0.06, blue: 0.10))
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .layoutPriority(1)
-                        .overlay(alignment: .top) {
-                            if nearMiss || (lastState?.over == true) {
-                                Text(lastState?.over == true ? "BIN OVERFLOW" : "BIN ALMOST FULL")
-                                    .font(.caption.weight(.black))
-                                    .foregroundStyle(NeonTheme.magenta)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Color.black.opacity(0.55))
-                                    .clipShape(Capsule())
-                                    .padding(.top, 8)
-                            }
-                        }
-                        .overlay(alignment: .topLeading) {
-                            if showGestureHint {
-                                Text("Drag · tap L/R rotate · swipe ↓ drop · ↑ hold")
-                                    .font(.caption2.weight(.bold))
-                                    .foregroundStyle(.white)
-                                    .padding(8)
-                                    .background(Color.black.opacity(0.7))
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                                    .padding(8)
-                                    .transition(.opacity)
-                            }
-                        }
-
-                    VStack(spacing: 8) {
-                        miniNextHold
-                        Spacer(minLength: 0)
-                    }
-                    .frame(width: 52)
+                // No reserved empty toast bar — only claim height when a toast is live.
+                if toastText != nil {
+                    toastBanner
                 }
-                .padding(.horizontal, 4)
+
+                // Full-bleed board — bandit + next/hold overlay so cells can use ~full width.
+                SpriteView(scene: scene)
+                    .background(Color(red: 0.05, green: 0.06, blue: 0.10))
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .topLeading) {
+                        BanditLoopView(mood: raccoonMood, size: 64)
+                            .scaleEffect(raccoonBounce)
+                            .padding(.leading, 6)
+                            .padding(.top, 6)
+                    }
+                    .overlay(alignment: .topTrailing) {
+                        miniNextHold
+                            .padding(.trailing, 6)
+                            .padding(.top, 6)
+                    }
+                    .overlay(alignment: .top) {
+                        if nearMiss || (lastState?.over == true) {
+                            Text(lastState?.over == true ? "BIN OVERFLOW" : "BIN ALMOST FULL")
+                                .font(.caption.weight(.black))
+                                .foregroundStyle(NeonTheme.magenta)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Color.black.opacity(0.55))
+                                .clipShape(Capsule())
+                                .padding(.top, 8)
+                        }
+                    }
+                    .overlay(alignment: .topLeading) {
+                        if showGestureHint {
+                            Text("Drag · tap L/R rotate · swipe ↓ drop · ↑ hold")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(.white)
+                                .padding(8)
+                                .background(Color.black.opacity(0.7))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .padding(.leading, 72)
+                                .padding(.top, 8)
+                                .transition(.opacity)
+                        }
+                    }
+                    .padding(.horizontal, 2)
 
                 if profile.classicButtons {
                     classicPad
@@ -111,8 +126,8 @@ struct GameContainerView: View {
                     .padding(.bottom, 4)
             }
             .background(NeonTheme.playChrome.ignoresSafeArea())
-            .safeAreaPadding(.top, 4)
-            .safeAreaPadding(.bottom, 6)
+            .safeAreaPadding(.top, 2)
+            .safeAreaPadding(.bottom, 4)
             .allowsHitTesting(!showHowTo && !isPaused)
 
             if showHowTo {
@@ -151,7 +166,10 @@ struct GameContainerView: View {
         .onChange(of: hudScore) { _, newValue in animateScore(to: newValue) }
         .onChange(of: scenePhase) { _, phase in
             // Auto-pause on resign. Becoming active again does NOT unpause.
+            // Exception: demo/autoplay/smoke must keep running — simctl recordVideo
+            // briefly flips inactive and was freezing the 45s clip on one frame.
             if phase == .inactive || phase == .background {
+                if Self.isDemoOrSmokeAutoplay { return }
                 enterPause(as: .resign)
             }
         }
@@ -657,6 +675,11 @@ struct GameContainerView: View {
             Task { @MainActor in
                 AudioService.shared.playSFX("ui", pitch: 1.25)
                 HapticsService.shared.tap()
+            }
+        }
+        scene.onMood = { mood in
+            Task { @MainActor in
+                raccoonMood = mood
             }
         }
         scene.onEvents = { [weak scene] events in
