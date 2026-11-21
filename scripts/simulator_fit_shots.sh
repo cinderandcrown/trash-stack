@@ -239,19 +239,25 @@ orange = sum(1 for fy in (0.35,0.45,0.55) for fx in (0.4,0.5,0.6)
 if splash_dark >= 6 and orange >= 2:
     print(f"FAIL game-over is publisher splash: {path.name}", file=sys.stderr)
     raise SystemExit(1)
-# Dim scrim + magenta title / teal CTA — reject bare BIN-OVERFLOW boards.
-# Magenta title is required; teal alone matches bottle tiles on a bare board.
-dark = mag = teal = 0
-for fy in (0.40, 0.50, 0.58, 0.68, 0.78):
+# Real GO = dark NeonPanel + NEW BEST/SO CLOSE title + wide Play-again CTA.
+panel = title = btn = 0
+for fy in (0.40, 0.48, 0.55, 0.62):
     for fx in (0.25, 0.40, 0.50, 0.60, 0.75):
         r,g,b = sample(fx, fy)
-        if r < 55 and g < 55 and b < 55: dark += 1
-        if r > 160 and b > 100 and g < 140: mag += 1
-        if g > 130 and b > 130 and r < 140: teal += 1
-if dark < 6 or mag < 2 or teal < 1:
-    print(f"FAIL game-over missing overlay (mag={mag} teal={teal} dark={dark}): {path.name}", file=sys.stderr)
+        if r < 30 and g < 40 and b < 50: panel += 1
+for fy in (0.34, 0.36, 0.38, 0.40):
+    for fx in (0.35, 0.45, 0.55, 0.65):
+        r,g,b = sample(fx, fy)
+        if (g > 200 and b > 180 and r < 40) or (r > 180 and b > 100 and g < 120):
+            title += 1
+for fy in (0.64, 0.66, 0.68):
+    for fx in (0.25, 0.35, 0.45, 0.55, 0.65, 0.75):
+        r,g,b = sample(fx, fy)
+        if g > 180 and r > 100 and b > 100: btn += 1
+if panel < 8 or title < 1 or btn < 3:
+    print(f"FAIL game-over missing overlay (panel={panel} title={title} btn={btn}): {path.name}", file=sys.stderr)
     raise SystemExit(1)
-print(f"fit game-over OK {path.name}: mag={mag} teal={teal} dark={dark}")
+print(f"fit game-over OK {path.name}: panel={panel} title={title} btn={btn}")
 PY
 }
 
@@ -304,6 +310,8 @@ cold_launch_shot() {
     settle=$(python3 -c "print(min(7, $settle + 1.0))")
   done
   echo "Fit shots: failed $mode → $out" >&2
+  # Do not leave a rejected still for test -s / the evidence gate to treat as OK.
+  rm -f "$out"
   return 1
 }
 

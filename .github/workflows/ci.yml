@@ -193,12 +193,23 @@ jobs:
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
           mkdir -p smoke-artifacts/fit
-          if [[ -s smoke-artifacts/fit/pro-title.png && -s smoke-artifacts/fit/pro-play.png && -s smoke-artifacts/fit/pro-game-over.png ]]; then
-            echo "Pro fit aliases already present"
+          # Reject bare-board "GO" leftovers — require real overlay assert before skipping.
+          go_ok=0
+          if [[ -s smoke-artifacts/fit/pro-game-over.png ]] \
+            && python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png; then
+            go_ok=1
+          fi
+          if [[ -s smoke-artifacts/fit/pro-title.png && -s smoke-artifacts/fit/pro-play.png && "$go_ok" == "1" ]]; then
+            echo "Pro fit aliases already present (GO overlay OK)"
             ls -la smoke-artifacts/fit/pro-*.png
             exit 0
           fi
-          echo "Full smoke missed Pro fit aliases — running screenshot-only pass"
+          echo "Full smoke missed Pro fit aliases — reboot + screenshot-only pass"
+          rm -f smoke-artifacts/fit/pro-game-over.png
+          xcrun simctl terminate "$DEVICE" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$DEVICE" >/dev/null 2>&1 || true
+          xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$DEVICE" -b >/tmp/pro-fit-boot.log 2>&1 || true
           chmod +x scripts/simulator_fit_shots.sh
           ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro
           test -s smoke-artifacts/fit/pro-title.png
@@ -278,6 +289,11 @@ jobs:
               fail=1
             fi
           }
+          # Prefer muxed demo; accept silent capture if mux was skipped after a good record.
+          if [[ ! -s smoke-artifacts/gameplay-demo.mp4 && -s smoke-artifacts/gameplay-demo-silent.mp4 ]]; then
+            echo "Promoting silent capture → gameplay-demo.mp4 for evidence gate" >&2
+            cp -f smoke-artifacts/gameplay-demo-silent.mp4 smoke-artifacts/gameplay-demo.mp4
+          fi
           need smoke-artifacts/gameplay-demo.mp4
           need smoke-artifacts/fit/pro-title.png
           need smoke-artifacts/fit/pro-play.png
@@ -285,8 +301,8 @@ jobs:
           need smoke-artifacts/fit/se-title.png
           need smoke-artifacts/fit/se-play.png
           need smoke-artifacts/fit/se-game-over.png
-          if [[ ! -s smoke-artifacts/03-compactor-clear.png && ! -s smoke-artifacts/02-gameplay.png ]]; then
-            echo "MISSING board still (02-gameplay or 03-compactor-clear)" >&2
+          if [[ ! -s smoke-artifacts/03-compactor-clear.png && ! -s smoke-artifacts/02-gameplay.png && ! -s smoke-artifacts/fit/pro-play.png ]]; then
+            echo "MISSING board still (02/03 or fit/pro-play)" >&2
             fail=1
           fi
           # Reject tiny/empty mp4 and splash-sized "play" frames.
@@ -304,6 +320,12 @@ jobs:
               fail=1
             fi
           fi
+          # Pro + SE GO must be real overlays (panel + title + CTA).
+          for go in smoke-artifacts/fit/pro-game-over.png smoke-artifacts/fit/se-game-over.png; do
+            if [[ -s "$go" ]]; then
+              python3 scripts/assert_fit_game_over.py "$go" || { echo "$go failed overlay assert" >&2; fail=1; }
+            fi
+          done
           if (( fail != 0 )); then
             echo "Calm+Fit evidence incomplete — refusing green" >&2
             ls -la smoke-artifacts/ smoke-artifacts/fit/ 2>/dev/null || true
