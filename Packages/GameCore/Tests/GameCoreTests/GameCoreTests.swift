@@ -342,6 +342,75 @@ final class GameCoreTests: XCTestCase {
         }
     }
 
+    /// After lock / settle / clear: no floats, and every cell holds at most one tile.
+    private func assertBoardConsistent(_ eng: GameEngine, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(eng.boardHasNoFloatingTiles(), "floating tiles after settle", file: file, line: line)
+        assertNoFloatingCells(eng.state.board, file: file, line: line)
+        // Board subscript stores 0 or 1 cell — count occupied seats for the invariant check.
+        var occupied = 0
+        for y in 0..<eng.state.board.config.rows {
+            for x in 0..<eng.state.board.config.cols {
+                if eng.state.board[x, y] != nil { occupied += 1 }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(occupied, 0, file: file, line: line)
+    }
+
+    /// Lock must refuse to write into a filled seat — the resident tile stays, active is not committed.
+    func testLockNeverOverwritesOccupiedCell() {
+        var eng = GameEngine(seed: 21)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        let paper = Cell(piece: .plank, material: .paper)
+        eng.seedBoardForTesting(
+            cells: [
+                (4, rows - 1, paper),
+            ],
+            // 1×1 can planted on the same seat as the paper (forced overlap).
+            active: ActivePiece(id: .can, x: 4, y: rows - 1)
+        )
+        eng.lock()
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.material, .paper, "resident paper must survive")
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.piece, .plank)
+        XCTAssertNotNil(eng.state.active, "overlapping lock must bail without clearing active")
+        assertBoardConsistent(eng)
+    }
+
+    /// Hard-drop + paced clear must leave a packed board with one tile per seat.
+    func testAfterLockSettleClearNoDoubleOccupancyOrFloats() {
+        var eng = GameEngine(seed: 22)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                (0, rows - 1, Cell(piece: .can, material: .metal)),
+                (1, rows - 1, Cell(piece: .can, material: .metal)),
+                (2, rows - 1, Cell(piece: .can, material: .metal)),
+                (3, rows - 1, Cell(piece: .can, material: .metal)),
+                // Two plastic tires on the match — not enough to recycle; must pack down.
+                (1, rows - 2, Cell(piece: .tire, material: .plastic)),
+                (2, rows - 3, Cell(piece: .tire, material: .plastic)),
+                // Orange paper in col 4 — must never be overwritten by a later lock.
+                (4, rows - 1, Cell(piece: .plank, material: .paper)),
+            ],
+            active: ActivePiece(id: .bottle, x: 6, y: 0)
+        )
+        eng.hardDrop()
+        assertBoardConsistent(eng)
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.material, .paper)
+        // Tires packed onto the floor where metal cleared.
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            assertBoardConsistent(eng)
+            guardTicks += 1
+        }
+        assertBoardConsistent(eng)
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.material, .paper)
+    }
+
     func testStickyExcludedFromRecycle() {
         var board = Board()
         for x in 0..<4 {

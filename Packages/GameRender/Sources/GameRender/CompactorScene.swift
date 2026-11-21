@@ -434,12 +434,8 @@ public final class CompactorScene: SKScene {
         }
 
         // Visible per-material recycle chutes (right of bin).
-        let chuteMats: [(Material, SKColor)] = [
-            (.metal, SKColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 1)),
-            (.plastic, SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)),
-            (.glass, SKColor(red: 0.15, green: 0.9, blue: 0.95, alpha: 1)),
-            (.paper, SKColor(red: 0.9, green: 0.7, blue: 0.35, alpha: 1)),
-        ]
+        // Same plateRGB families as tiles / callouts / ghosts (metal ≠ cyan).
+        let chuteMats: [(Material, SKColor)] = Material.allCases.map { ($0, plateColor(for: $0)) }
         for (i, pair) in chuteMats.enumerated() {
             let mouth = SKShapeNode(rectOf: CGSize(width: cs.width * 0.7, height: cs.height * 1.1), cornerRadius: 6)
             mouth.fillColor = pair.1.withAlphaComponent(0.35)
@@ -509,7 +505,8 @@ public final class CompactorScene: SKScene {
         let sidePad: CGFloat = 8
         let topPad: CGFloat = 28 // room for anchored combo counter
         // Leave clear chrome under the dumpster frame so SLAM never touches it.
-        let bottomPad: CGFloat = 120
+        // Leave room under the neon lip for the SLAM chrome (never overlap the frame).
+        let bottomPad: CGFloat = 148
         let maxByW = max(8, (size.width - sidePad * 2) / cols)
         let maxByH = max(8, (size.height - topPad - bottomPad) / rows)
         let s = min(maxByW, maxByH)
@@ -524,7 +521,7 @@ public final class CompactorScene: SKScene {
         let totalH = cs.height * rows
         // Top band for combo; bottom band keeps the bin frame fully above SLAM chrome.
         let topPad: CGFloat = 28
-        let bottomPad: CGFloat = 120
+        let bottomPad: CGFloat = 148
         let y = max(bottomPad, (size.height - totalH - topPad - bottomPad) * 0.5 + bottomPad)
         return CGPoint(
             x: (size.width - totalW) / 2,
@@ -703,8 +700,12 @@ public final class CompactorScene: SKScene {
         handleEvents()
         render(immediate: false)
         updateComboCounter()
-        if !more, engine.state.over {
-            notifyGameOverIfNeeded()
+        if !more {
+            // Cascade finished — snap every sprite to the packed model seats.
+            render(immediate: true)
+            if engine.state.over {
+                notifyGameOverIfNeeded()
+            }
         }
     }
 
@@ -1242,12 +1243,8 @@ public final class CompactorScene: SKScene {
     }
 
     private func materialGlow(_ material: Material) -> SKColor {
-        switch material {
-        case .metal: return SKColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 0.45)
-        case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 0.45)
-        case .glass: return SKColor(red: 0.2, green: 0.95, blue: 1, alpha: 0.45)
-        case .paper: return SKColor(red: 0.9, green: 0.7, blue: 0.35, alpha: 0.45)
-        }
+        let (r, g, b) = plateRGB(for: material)
+        return SKColor(red: r, green: g, blue: b, alpha: 0.45)
     }
 
     private func representativeTexture(for material: Material) -> SKTexture? {
@@ -1574,7 +1571,8 @@ public final class CompactorScene: SKScene {
             for x in 0..<engine.state.board.config.cols {
                 let boardY = y + hid
                 let key = "\(x),\(boardY)"
-                let cell = fallCell[key] ?? engine.state.board[x, boardY]
+                // Model grid is authoritative — never paint a tile the board does not hold.
+                let cell = engine.state.board[x, boardY]
                 guard let node = cellNodes[y][x] else { continue }
                 if let cell {
                     // Texture + plate both follow cell.material (single source of truth).
@@ -1608,6 +1606,8 @@ public final class CompactorScene: SKScene {
                         node.setScale(1)
                     } else if let from = fallFrom[key] {
                         // Gravity pack — ease the sprite from its pre-clear seat into place.
+                        // Destination art always comes from the model cell above (not fallCell).
+                        _ = fallCell[key]
                         node.removeAction(forKey: "settle")
                         node.position = from
                         let drop = SKAction.move(to: dest, duration: fallDur)
@@ -1634,6 +1634,8 @@ public final class CompactorScene: SKScene {
                         icon.texture = nil
                         icon.alpha = 0
                     }
+                    // Snap empty slots to their grid seat so a stale settle tween cannot float art.
+                    node.position = positionFor(x: x, boardY: boardY)
                 }
             }
         }
@@ -1641,6 +1643,50 @@ public final class CompactorScene: SKScene {
         layoutActiveNodes()
         updateLandingGhost()
         updateNearMissTelegraph()
+    }
+
+    /// Test/QA: every visible sprite's occupancy matches the model grid; no floats; seats aligned.
+    public func assertSpritesMatchModel() -> Bool {
+        guard didBuild else { return false }
+        guard engine.boardHasNoFloatingTiles() else { return false }
+        let hid = engine.state.board.config.hiddenRows
+        let vis = engine.state.board.config.visibleRows
+        let tol: CGFloat = 1.5
+        for y in 0..<vis {
+            for x in 0..<engine.state.board.config.cols {
+                let boardY = y + hid
+                guard let node = cellNodes[y][x] else { return false }
+                let cell = engine.state.board[x, boardY]
+                if cell != nil {
+                    guard node.alpha > 0.05 else { return false }
+                    let dest = positionFor(x: x, boardY: boardY)
+                    // After snap-settle there must be no in-flight tween and seats must match.
+                    if node.action(forKey: "settle") != nil { return false }
+                    guard hypot(node.position.x - dest.x, node.position.y - dest.y) <= tol else {
+                        return false
+                    }
+                } else {
+                    guard node.alpha < 0.05 else { return false }
+                }
+            }
+        }
+        return true
+    }
+
+    /// Drive a paced clear then snap-settle — used by scene unit tests.
+    public func testDriveClearAndSettle() {
+        engine.paceCascades = true
+        handleEvents()
+        // Consume the first cascade wave's gravity into an eased render, then snap.
+        render(immediate: false)
+        var guardTicks = 0
+        while engine.cascadeActive, guardTicks < 12 {
+            _ = engine.advanceCascade()
+            handleEvents()
+            render(immediate: false)
+            guardTicks += 1
+        }
+        render(immediate: true)
     }
 
     /// Pulse cells that are one junk away from a recycle so the board reads as a puzzle, not noise.
@@ -1774,10 +1820,10 @@ public final class CompactorScene: SKScene {
 
     private func plateRGB(for material: Material) -> (CGFloat, CGFloat, CGFloat) {
         switch material {
-        // Metal outline kept brighter than the plate fill so the ghost never washes to white.
-        case .metal: return (0.62, 0.72, 0.92)   // steel blue-gray
+        // Metal is silver-grey (not cyan). Glass alone owns the cyan family.
+        case .metal: return (0.78, 0.80, 0.84)
         case .plastic: return (0.95, 0.22, 0.70) // magenta-pink
-        case .paper: return (0.92, 0.62, 0.28)   // kraft orange
+        case .paper: return (0.96, 0.58, 0.18)   // kraft orange
         case .glass: return (0.15, 0.88, 0.94)   // cyan
         }
     }

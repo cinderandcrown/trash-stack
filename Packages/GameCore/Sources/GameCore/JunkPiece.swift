@@ -60,13 +60,13 @@ public enum JunkCatalog {
     /// Compactor-bin junk items. See docs/DESIGN.md.
     ///
     /// Material look map (one color family + icon family per material):
-    /// - metal   → steel blue-gray plate · `can` icon
-    /// - plastic → magenta-pink plate · `pipe` / `tire` icons (pink bottle + dark tire)
-    /// - glass   → cyan plate · `glass` icon
+    /// - metal   → silver-gray plate · `can` icon
+    /// - plastic → magenta-pink plate · `pipe` / `tire` icons (pink bottle + chevron/tread tire)
+    /// - glass   → cyan plate · `glass` icon (swirl look)
     /// - paper   → kraft orange/tan plate · `plank` / `crate` icons
     ///
-    /// Pink bottle art is plastic (never metal). Banana/cardboard silhouettes are not used
-    /// for metal — metal bars/appliances share the steel `can` icon so they read as metal.
+    /// Swirl = glass. Chevron/tread = plastic tire. Pink bottle art is plastic (never metal).
+    /// Banana leftovers alias to `can` — metal bars/appliances share the steel can icon.
     public static let all: [JunkDef] = [
         JunkDef(id: .can, material: .metal, textureName: "can", rotations: [
             [[0, 0]],

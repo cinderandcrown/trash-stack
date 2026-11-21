@@ -6,10 +6,11 @@ Steam-neon-punk style: magenta + teal neon, rainy alley, wet metal.
 
 - Junk item sprites in GameRender `Resources/Junk` + app asset catalog (baked rim light).
   Material look map — `Cell.material` drives plate, icon, match, and recycle label:
-  - **metal** — steel blue-gray · `can` (can / bentPipe / fridge; banana/swirl aliased away)
-  - **plastic** — magenta-pink · `pipe`/`plastic` (pipe) + `tire`
-  - **glass** — cyan · `glass`/`bottle`
-  - **paper** — kraft orange · `plank`/`cardboard` + `crate`/`pizza`
+  - **metal** — silver-gray · `can` (can / bentPipe / fridge; banana aliased to can)
+  - **plastic** — magenta-pink · `pipe`/`plastic` (pipe) + `tire` (chevron/tread look)
+  - **glass** — cyan · `glass`/`bottle` (swirl look)
+  - **paper** — kraft orange · `plank` + `crate`/`pizza`
+  Swirl art is the intended **glass** icon; chevron/tread art is the intended **tire** (plastic) icon.
   Hazard conversions retarget `piece` to the material’s representative so art never lies.
 - FX: `SparkTeal`, `SparkMagenta`, `SparkGold`, `DebrisMetal`, `DebrisNeon` — baked alpha sparks/debris (no flat color squares).
 - Board / VFX (Higgsfield pack): `BinInterior`, material tiles (`can`/`glass`/`plastic`/`cardboard`/`pizza`/`banana`/`tire`), `Slam01`/`Slam02`, `ClearBurst`, `CellPlate`.

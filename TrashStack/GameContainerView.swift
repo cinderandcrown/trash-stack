@@ -112,11 +112,11 @@ struct GameContainerView: View {
                     classicPad
                 }
 
-                // Gap + chrome strip fully below the dumpster frame (never flush to the lip).
-                Color.clear.frame(height: 36)
+                // Gap + chrome strip fully below the dumpster neon lip (never overlaps the frame).
+                Color.clear.frame(height: 56)
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 10)
                     .frame(maxWidth: .infinity)
                     .layoutPriority(1)
                     .background(NeonTheme.playChrome)
@@ -315,9 +315,9 @@ struct GameContainerView: View {
     private func toastForeground(for text: String) -> Color {
         let upper = text.uppercased()
         if upper.contains("CHAIN") { return NeonTheme.magenta }
-        if upper.contains("METAL") { return Color(red: 0.62, green: 0.72, blue: 0.92) }
+        if upper.contains("METAL") { return Color(red: 0.78, green: 0.80, blue: 0.84) }
         if upper.contains("PLASTIC") { return Color(red: 0.95, green: 0.22, blue: 0.70) }
-        if upper.contains("PAPER") { return Color(red: 0.92, green: 0.62, blue: 0.28) }
+        if upper.contains("PAPER") { return Color(red: 0.96, green: 0.58, blue: 0.18) }
         if upper.contains("GLASS") { return Color(red: 0.15, green: 0.88, blue: 0.94) }
         return NeonTheme.teal
     }

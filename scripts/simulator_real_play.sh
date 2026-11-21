@@ -203,17 +203,19 @@ PY
   echo "real-play trim last-resort SS=${SS}s (dur=${RAW_DUR})" >&2
 fi
 
-# simctl H.264 often tags a bogus 0.25 tbr — force CFR via fps=30 or the mux collapses
-# to ~17 frames (Lavf 63+ on CI). Never put -ss before -i on these files.
+# simctl H.264 often tags a bogus 0.25 tbr and leaves multi-second PTS gaps between
+# unique frames (slideshow / ~1 fps). Re-time after trim: setpts=N/30/TB assigns each
+# decoded frame a sequential 30 fps clock, then fps=30 locks CFR for the 70s window.
+# Never put -ss before -i on these files.
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[0:v]fps=30,trim=start=${SS}:duration=70,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=70,asetpts=PTS-STARTPTS[aout]" \
+    -filter_complex "[0:v]trim=start=${SS},setpts=N/30/TB,fps=30,trim=duration=70,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=70,asetpts=PTS-STARTPTS[aout]" \
     -map "[vout]" -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
     -c:a aac -b:a 128k -ac 1 -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 elif [[ -n "$FFMPEG_BIN" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" \
-    -vf "fps=30,trim=start=${SS}:duration=70,setpts=PTS-STARTPTS" \
+    -vf "trim=start=${SS},setpts=N/30/TB,fps=30,trim=duration=70,setpts=PTS-STARTPTS" \
     -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else

@@ -336,7 +336,22 @@ public struct GameEngine: Sendable {
     }
 
     public mutating func lock(hard: Bool = false) {
-        guard let p = state.active, !cascadeActive else { return }
+        guard var p = state.active, !cascadeActive else { return }
+        // Snap to the true resting row and refuse to write into filled cells.
+        p.y = p.landingY(on: state.board)
+        guard p.fits(state.board) else {
+            // Should be unreachable when lock is only called while grounded — bail without corrupt write.
+            state.active = p
+            return
+        }
+        for (x, y) in p.cells {
+            // Never stack two tiles in one cell.
+            guard !state.board.occupied(x: x, y: y) else {
+                state.active = p
+                return
+            }
+        }
+        state.active = p
         for (x, y) in p.cells {
             // Use the spawn-frozen material — never re-lookup mid-lock.
             var cell = Cell(piece: p.id, material: p.material)
@@ -358,6 +373,23 @@ public struct GameEngine: Sendable {
         state.pressMeter = min(state.pressMeterMax, state.pressMeter + 1)
         applyHazards()
         resolveAfterLock()
+    }
+
+    /// True when every occupied cell rests on the floor or another tile (no gaps under tiles).
+    public func boardHasNoFloatingTiles() -> Bool {
+        let rows = state.board.config.rows
+        let cols = state.board.config.cols
+        for x in 0..<cols {
+            var seenEmpty = false
+            for y in (0..<rows).reversed() {
+                if state.board[x, y] == nil {
+                    seenEmpty = true
+                } else if seenEmpty {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     private mutating func applyHazards() {
