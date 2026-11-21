@@ -19,10 +19,12 @@ final class RealPlayUITests: XCTestCase {
         app.launchEnvironment["UI_TESTING"] = "1"
         app.launch()
 
-        let play = app.buttons["PLAY"].firstMatch
-        XCTAssertTrue(play.waitForExistence(timeout: 25), "PLAY button missing on title")
-        // Hold on title so recordVideo (started once the app is up) captures the brand frame.
-        Thread.sleep(forTimeInterval: 1.0)
+        // Prefer accessibility id; fall back to visible label (NeonButton).
+        let play = app.buttons["playButton"].firstMatch.exists
+            ? app.buttons["playButton"].firstMatch
+            : app.buttons["PLAY"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 30), "PLAY button missing on title")
+        XCTAssertTrue(play.isHittable, "PLAY button not hittable")
         play.tap()
 
         let gotIt = app.buttons["GOT IT — PLAY"].firstMatch
@@ -31,16 +33,15 @@ final class RealPlayUITests: XCTestCase {
         }
 
         let board = app.otherElements["gameBoard"].firstMatch
-        _ = board.waitForExistence(timeout: 8)
+        _ = board.waitForExistence(timeout: 10)
 
-        // SpriteKit never fully "idles" — keep the loop lean so taps/swipes stay dense.
-        let deadline = Date().addingTimeInterval(88)
+        // ~60s of steady inputs after PLAY (natural GO may end early).
+        let deadline = Date().addingTimeInterval(62)
         var gestures = 0
         var sawGameOver = false
 
         while Date() < deadline {
-            // Check GO sparingly — full hierarchy queries are expensive under SpriteKit.
-            if gestures % 5 == 0, isGameOverVisible(in: app) {
+            if gestures % 4 == 0, isGameOverVisible(in: app) {
                 sawGameOver = true
                 break
             }
@@ -69,8 +70,7 @@ final class RealPlayUITests: XCTestCase {
             let bottom = app.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: cx, dy: frame.maxY - frame.height * 0.12))
 
-            // Bias toward stacking so the bin overflows inside ~60–90s while still
-            // rotating / dropping so gravity, landings, and recycles are visible.
+            // Bias toward stacking so gravity / land / clear / overflow show up.
             switch gestures % 9 {
             case 0, 1, 2:
                 mid.press(forDuration: 0.01, thenDragTo: left)
@@ -85,14 +85,14 @@ final class RealPlayUITests: XCTestCase {
                 top.press(forDuration: 0.01, thenDragTo: bottom)
             }
             gestures += 1
-            Thread.sleep(forTimeInterval: 0.08)
+            Thread.sleep(forTimeInterval: 0.07)
         }
 
         if !sawGameOver {
             sawGameOver = isGameOverVisible(in: app)
         }
         if sawGameOver {
-            Thread.sleep(forTimeInterval: 2.2)
+            Thread.sleep(forTimeInterval: 2.0)
             let score = app.staticTexts["gameOverScore"].firstMatch
             if score.exists {
                 let raw = score.label.replacingOccurrences(of: ",", with: "")
@@ -102,11 +102,13 @@ final class RealPlayUITests: XCTestCase {
             }
         }
 
-        // Natural overflow can end the run early; otherwise require a sustained session.
+        // Printed into the xcodebuild log so CI proves PLAY + board input ran.
+        print("RealPlay gestures=\(gestures) gameOver=\(sawGameOver)")
+
         if sawGameOver {
             XCTAssertGreaterThan(gestures, 8, "Expected some real-play before game over, got \(gestures)")
         } else {
-            XCTAssertGreaterThan(gestures, 25, "Expected sustained real-play gestures, got \(gestures)")
+            XCTAssertGreaterThan(gestures, 30, "Expected ~60s of real-play gestures, got \(gestures)")
         }
     }
 

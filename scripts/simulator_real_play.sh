@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Copyright © 2026 Cinder and Crown LLC. All rights reserved.
 # Record a real New Game session (no shot seeds / demo swaps) via XCUITest gestures.
-# Recording starts only after the app is frontmost so the clip begins on title, not Springboard.
+# XCTest owns the launch (same as 1d0ae10). Do NOT pre-launch the app before
+# recordVideo — that left an idle title on camera for the whole XCTest bootstrap,
+# then the runner terminated it (home screen) before PLAY was ever tapped.
 set -euo pipefail
 
 DEVICE="${1:?simulator UDID}"
@@ -13,7 +15,7 @@ mkdir -p "$OUT_DIR"
 
 RAW="$OUT_DIR/real-play-silent.mp4"
 OUT="$OUT_DIR/real-play.mp4"
-rm -f "$RAW" "$OUT" "$OUT_DIR"/real-play-silent.mp4.sb-* /tmp/real-play-app-up 2>/dev/null || true
+rm -f "$RAW" "$OUT" "$OUT_DIR"/real-play-silent.mp4.sb-* 2>/dev/null || true
 
 echo "Real-play record on $DEVICE → $OUT" >&2
 
@@ -51,12 +53,7 @@ finalize() {
 }
 trap finalize EXIT
 
-# Pre-launch to title so recordVideo begins on product UI (not Springboard).
-xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
-  -UITestRealPlay -trashStackSkipAds -trashStackSkipIdent \
-  >/tmp/real-play-prelaunch.log 2>&1 || true
-sleep 2.5
-
+# Start recording, then XCTest launches the app and taps PLAY (1d0ae10 flow).
 xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$RAW" &
 REC_PID=$!
 sleep 2
@@ -71,9 +68,8 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   trap - EXIT
   exit 1
 fi
-echo "Recording started (title pre-launch)" >&2
+echo "Recording started (XCTest will launch + PLAY)" >&2
 
-# XCTest relaunches into the same harness; gestures drive the live loop under recordVideo.
 set +e
 xcodebuild test-without-building \
   -project "$PROJECT_ROOT/TrashStack.xcodeproj" \
@@ -91,19 +87,6 @@ if (( XC_EC != 0 )) && grep -Eqi 'isn.t a member|not found|does not contain|Unab
   if command -v xcodegen >/dev/null 2>&1; then
     (cd "$PROJECT_ROOT" && xcodegen generate) >/tmp/real-play-xcodegen.log 2>&1 || true
   fi
-  if [[ -n "${REC_PID:-}" ]] && kill -0 "$REC_PID" 2>/dev/null; then
-    kill -INT "$REC_PID" 2>/dev/null || true
-    sleep 2
-    kill -KILL "$REC_PID" 2>/dev/null || true
-  fi
-  REC_PID=""
-  rm -f "$RAW"
-  xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
-    -UITestRealPlay -trashStackSkipAds -trashStackSkipIdent >/dev/null 2>&1 || true
-  sleep 2
-  xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$RAW" &
-  REC_PID=$!
-  sleep 2
   set +e
   xcodebuild test \
     -project "$PROJECT_ROOT/TrashStack.xcodeproj" \
@@ -125,6 +108,9 @@ if (( XC_EC != 0 )); then
   exit "$XC_EC"
 fi
 
+# Surface gesture count so CI logs prove PLAY + board input happened.
+grep -E 'RealPlay gestures=|testRealPlaySession' /tmp/real-play-xctest.log | tail -n 20 >&2 || true
+
 finalize
 trap - EXIT
 REC_PID=""
@@ -141,11 +127,12 @@ for cand in /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
 done
 MUSIC="$PROJECT_ROOT/TrashStack/Resources/Audio/game_loop.wav"
 
+# Allow ~XCTest bootstrap + ~60s play (do not cut gameplay at 90s).
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[1:a]volume=0.34,atrim=0:90[aout]" \
+    -filter_complex "[1:a]volume=0.34,atrim=0:130[aout]" \
     -map 0:v -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -ac 1 -t 90 -movflags +faststart "$OUT" \
+    -c:a aac -b:a 128k -ac 1 -t 130 -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else
   cp -f "$RAW" "$OUT"
@@ -176,7 +163,7 @@ if probe and probe.get("streams"):
     pkts = int(s.get("nb_read_packets") or 0)
     dur = float(s.get("duration") or 0)
     print(f"real-play OK {path.name}: {sz} bytes packets={pkts} duration={dur:.1f}s")
-    if dur < 45:
+    if dur < 50:
         print(f"FAIL real-play too short ({dur:.1f}s)", file=sys.stderr)
         raise SystemExit(1)
     if pkts > 0 and pkts / max(dur, 1) < 12:
