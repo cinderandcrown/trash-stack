@@ -90,6 +90,59 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(eng.state.board[6, rows - 2]?.piece, .bentPipe)
     }
 
+    /// Seeded: paper 2×2 sitting on pink plastic — paper clears, plastic remains and packs.
+    func testPaperClearLeavesPlasticBelowAndPacks() {
+        var eng = GameEngine(seed: 42)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                // Pink plastic on the floor (only 2 — must NOT recycle).
+                (1, rows - 1, Cell(piece: .tire, material: .plastic)),
+                (2, rows - 1, Cell(piece: .tire, material: .plastic)),
+                // Paper 2×2 sitting on that plastic.
+                (1, rows - 2, Cell(piece: .crate, material: .paper)),
+                (2, rows - 2, Cell(piece: .crate, material: .paper)),
+                (1, rows - 3, Cell(piece: .crate, material: .paper)),
+                (2, rows - 3, Cell(piece: .crate, material: .paper)),
+                // Glass resting on the paper — must fall onto plastic after the clear.
+                (1, rows - 4, Cell(piece: .bottle, material: .glass)),
+            ],
+            active: ActivePiece(id: .can, x: 5, y: 0)
+        )
+        eng.hardDrop()
+
+        let recycled = eng.drainEvents().compactMap { e -> Material? in
+            if case .recycled(_, _, _, _, let mat, _) = e { return mat }
+            return nil
+        }
+        XCTAssertEqual(recycled, [.paper], "only the paper group should clear")
+        assertNoFloatingCells(eng.state.board)
+
+        // Plastic stayed on the floor.
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+        // Paper gone; glass packed onto the plastic.
+        XCTAssertNil(eng.state.board[1, rows - 3])
+        XCTAssertNil(eng.state.board[2, rows - 3])
+        XCTAssertEqual(eng.state.board[1, rows - 2]?.material, .glass)
+        XCTAssertTrue(
+            eng.lastGravityMoves.contains { $0.cell.material == .glass && $0.to.x == 1 },
+            "glass should record a gravity fall onto the pink plastic"
+        )
+
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            _ = eng.drainEvents()
+            assertNoFloatingCells(eng.state.board)
+            guardTicks += 1
+        }
+        // Still only 2 plastic — never a follow-up clear of the pink.
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+    }
+
     private func assertNoFloatingCells(_ board: Board, file: StaticString = #filePath, line: UInt = #line) {
         let rows = board.config.rows
         let cols = board.config.cols
@@ -278,11 +331,11 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(FeelConfig.fallback.cascadeStepSec, 0.30, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.dasDelaySec, 0.16, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.045, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.cellTweenSec, 0.075, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.rotateTweenSec, 0.08, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.cellTweenSec, 0.11, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.rotateTweenSec, 0.10, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.settleBounceSec, 0.14, accuracy: 0.001)
-        XCTAssertGreaterThanOrEqual(feel.cellTweenSec, 0.06)
-        XCTAssertLessThanOrEqual(feel.cellTweenSec, 0.09)
+        XCTAssertGreaterThanOrEqual(feel.cellTweenSec, 0.10)
+        XCTAssertLessThanOrEqual(feel.cellTweenSec, 0.12)
     }
 
     func testComboScoreEscalatesWithCap() {

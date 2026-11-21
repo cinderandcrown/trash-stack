@@ -466,24 +466,44 @@ public struct GameEngine: Sendable {
         guard !groups.isEmpty else { return false }
         cascadeHadAny = true
         cascadeChain += 1
-        var cells = 0
-        var primary = groups[0].material
-        var coords: [BoardCoord] = []
-        for g in groups {
-            cells += g.cells.count
-            primary = g.material
-            coords.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
-            for (x, y) in g.cells { state.board[x, y] = nil }
-            state.recycledByMaterial[g.material, default: 0] += g.cells.count
-            bumpOrderMaterial(g.material, amount: g.cells.count)
-        }
-        let score = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: cascadeChain)
-        let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
+        var totalCells = 0
+        for g in groups { totalCells += g.cells.count }
+        let score = Scoring.recycleScore(
+            cells: totalCells, groups: groups.count, level: state.level, chain: cascadeChain
+        )
+        let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: totalCells)
         state.score += score
         state.runScrap += scrap
         state.combo = cascadeChain
         state.lines += groups.count
-        events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary, coords: coords))
+        // One event per material group so each clear gets its own pop + honest label.
+        var scoreLeft = score
+        var scrapLeft = scrap
+        for (idx, g) in groups.enumerated() {
+            let coords = g.cells.map { BoardCoord($0.0, $0.1) }
+            for (x, y) in g.cells { state.board[x, y] = nil }
+            state.recycledByMaterial[g.material, default: 0] += g.cells.count
+            bumpOrderMaterial(g.material, amount: g.cells.count)
+            let partScore: Int
+            let partScrap: Int
+            if idx == groups.count - 1 {
+                partScore = scoreLeft
+                partScrap = scrapLeft
+            } else {
+                partScore = max(1, score / groups.count)
+                partScrap = max(0, scrap / groups.count)
+                scoreLeft -= partScore
+                scrapLeft -= partScrap
+            }
+            events.append(.recycled(
+                groups: 1,
+                cells: g.cells.count,
+                score: partScore,
+                scrap: partScrap,
+                material: g.material,
+                coords: coords
+            ))
+        }
         if cascadeChain >= 3 {
             bumpOrder(kind: .recycleChain, amount: cascadeChain)
         }
@@ -494,35 +514,15 @@ public struct GameEngine: Sendable {
     /// follow-ups can use 3+ so chains show up. Slam settle may start at 3.
     @discardableResult
     private mutating func runRecycleCascades(firstWaveMinSize: Int, followUpMinSize: Int) -> Bool {
-        var chain = 0
+        cascadeChain = 0
+        cascadeHadAny = false
         var any = false
+        var wave = 0
         while true {
-            let minSize = chain == 0 ? firstWaveMinSize : followUpMinSize
-            let groups = RecycleMatcher.findGroups(on: state.board, minSize: minSize)
-            guard !groups.isEmpty else { break }
+            let minSize = wave == 0 ? firstWaveMinSize : followUpMinSize
+            guard emitCascadeWave(minSize: minSize) else { break }
             any = true
-            chain += 1
-            var cells = 0
-            var primary = groups[0].material
-            var coords: [BoardCoord] = []
-            for g in groups {
-                cells += g.cells.count
-                primary = g.material
-                coords.append(contentsOf: g.cells.map { BoardCoord($0.0, $0.1) })
-                for (x, y) in g.cells { state.board[x, y] = nil }
-                state.recycledByMaterial[g.material, default: 0] += g.cells.count
-                bumpOrderMaterial(g.material, amount: g.cells.count)
-            }
-            let score = Scoring.recycleScore(cells: cells, groups: groups.count, level: state.level, chain: chain)
-            let scrap = Scoring.scrapForRecycle(groups: groups.count, cells: cells)
-            state.score += score
-            state.runScrap += scrap
-            state.combo = chain
-            state.lines += groups.count
-            events.append(.recycled(groups: groups.count, cells: cells, score: score, scrap: scrap, material: primary, coords: coords))
-            if chain >= 3 {
-                bumpOrder(kind: .recycleChain, amount: chain)
-            }
+            wave += 1
             applyGravity()
         }
         if any {

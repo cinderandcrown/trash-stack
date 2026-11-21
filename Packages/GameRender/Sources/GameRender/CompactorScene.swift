@@ -508,7 +508,8 @@ public final class CompactorScene: SKScene {
         // Side margins; leave chrome below the bin so SLAM / press meter never cover cells.
         let sidePad: CGFloat = 8
         let topPad: CGFloat = 28 // room for anchored combo counter
-        let bottomPad: CGFloat = 56
+        // Leave clear chrome under the dumpster frame so SLAM never touches it.
+        let bottomPad: CGFloat = 88
         let maxByW = max(8, (size.width - sidePad * 2) / cols)
         let maxByH = max(8, (size.height - topPad - bottomPad) / rows)
         let s = min(maxByW, maxByH)
@@ -521,9 +522,9 @@ public final class CompactorScene: SKScene {
         let rows = CGFloat(engine.state.board.config.visibleRows)
         let totalW = cs.width * cols
         let totalH = cs.height * rows
-        // Top band for combo; bottom band reserved so playfield sits above SLAM chrome.
+        // Top band for combo; bottom band keeps the bin frame fully above SLAM chrome.
         let topPad: CGFloat = 28
-        let bottomPad: CGFloat = 56
+        let bottomPad: CGFloat = 88
         let y = max(bottomPad, (size.height - totalH - topPad - bottomPad) * 0.5 + bottomPad)
         return CGPoint(
             x: (size.width - totalW) / 2,
@@ -638,10 +639,10 @@ public final class CompactorScene: SKScene {
             }
             render(immediate: false)
         }
-        // Soft-drag — rate-limited so each cell eases ~60–90ms (never spam softDrop every frame).
+        // Soft-drag — rate-limited so each cell eases ~100–120ms (never spam softDrop every frame).
         if softDragging {
             softDragAcc += Double(dt)
-            let step = max(0.06, min(0.09, feel.cellTweenSec))
+            let step = max(0.10, min(0.12, feel.cellTweenSec))
             if softDragAcc >= step {
                 softDragAcc = 0
                 _ = engine.softDrop()
@@ -815,7 +816,8 @@ public final class CompactorScene: SKScene {
             poseTweening = true
         }
         if poseTweening {
-            let dur = max(0.06, min(0.09, feel.cellTweenSec))
+            // ~100–120ms ease-out so falls/slides read at ~25fps capture.
+            let dur = max(0.10, min(0.12, feel.cellTweenSec))
             let t = min(1, (CACurrentMediaTime() - poseTweenStart) / dur)
             let eased = 1 - pow(1 - t, 3)
             visualX = poseFromX + (poseToX - poseFromX) * CGFloat(eased)
@@ -903,7 +905,7 @@ public final class CompactorScene: SKScene {
                     count: min(28, 8 + cells + combo * 2)
                 )
                 spawnParticle(named: "DebrisNeon", at: clearPt, count: min(16, 4 + cells))
-                onToast?("\(cells) \(material.rawValue.uppercased()) = RECYCLED")
+                onToast?("\(cells) \(material.rawValue.uppercased()) recycled")
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
                 cheerUntil = CACurrentMediaTime() + 1.2
@@ -1009,7 +1011,7 @@ public final class CompactorScene: SKScene {
         ghostRoot = root
         let cs = cellSize()
         let mat = p.def.material
-        let stroke = plateColor(for: p.id, material: mat)
+        let fill = plateColor(for: p.id, material: mat)
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         let pad: CGFloat = 1.5
         for off in shape {
@@ -1022,11 +1024,11 @@ public final class CompactorScene: SKScene {
                 transform: nil
             )
             let outline = SKShapeNode(path: path)
-            // Translucent outline of the real piece — not a solid opaque plate.
-            outline.strokeColor = stroke.withAlphaComponent(0.9)
-            outline.fillColor = stroke.withAlphaComponent(0.08)
-            outline.lineWidth = 2.0
-            outline.glowWidth = 0.5
+            // Piece-colored ghost at ~30% opacity (not a white wireframe).
+            outline.strokeColor = fill.withAlphaComponent(0.55)
+            outline.fillColor = fill.withAlphaComponent(0.30)
+            outline.lineWidth = 1.5
+            outline.glowWidth = 0
             outline.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
             root.addChild(outline)
         }
@@ -1043,40 +1045,52 @@ public final class CompactorScene: SKScene {
         guard !recycleCalloutBusy, !recycleCalloutQueue.isEmpty else { return }
         recycleCalloutBusy = true
         let item = recycleCalloutQueue.removeFirst()
-        let label = "\(item.cells) \(item.material.rawValue.uppercased()) = RECYCLED"
+        // Matched material only — short enough to fit on a Pro/SE board.
+        let matName = item.material.rawValue.uppercased()
+        let label = "\(item.cells) \(matName) = RECYCLED"
         let node = SKLabelNode(fontNamed: "AvenirNext-Heavy")
         node.name = "recycleCallout"
         node.text = label
-        node.fontSize = 15
+        node.fontSize = 14
         node.fontColor = SKColor(red: 0.05, green: 0.95, blue: 0.92, alpha: 1)
         node.horizontalAlignmentMode = .center
         node.verticalAlignmentMode = .center
         node.zPosition = 72
+        // Anchor near the clear, clamped inside the bin so text never clips ("PER = …").
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = CGFloat(engine.state.board.config.cols)
+        let rows = CGFloat(engine.state.board.config.visibleRows)
+        let midX = origin.x + cs.width * cols * 0.5
+        let midY = origin.y + cs.height * rows * 0.55
+        var pos = CGPoint(x: midX, y: midY)
         if !item.coords.isEmpty {
             var sx = 0
             var sy = 0
             for c in item.coords { sx += c.x; sy += c.y }
             let cx = sx / max(1, item.coords.count)
             let cy = sy / max(1, item.coords.count)
-            node.position = positionFor(x: cx, boardY: cy)
-        } else {
-            node.position = CGPoint(x: size.width * 0.5, y: size.height * 0.55)
+            pos = positionFor(x: cx, boardY: cy)
         }
+        let margin = cs.width * 1.6
+        pos.x = min(max(pos.x, origin.x + margin), origin.x + cs.width * cols - margin)
+        pos.y = min(max(pos.y, origin.y + cs.height), origin.y + cs.height * (rows - 1))
+        node.position = pos
         node.setScale(0.7)
         node.alpha = 0
         // Drop any leftover callout so labels never stack.
-        enumerateChildNodes(withName: "recycleCallout") { n, _ in n.removeFromParent() }
+        enumerateChildNodes(withName: "recycleCallout") { n, _ in
+            n.removeAllActions()
+            n.removeFromParent()
+        }
         addChild(node)
         node.run(SKAction.sequence([
             SKAction.group([
                 SKAction.fadeAlpha(to: 1, duration: 0.08),
-                SKAction.scale(to: 1.06, duration: 0.12),
+                SKAction.scale(to: 1.0, duration: 0.12),
             ]),
             SKAction.wait(forDuration: 1.0),
-            SKAction.group([
-                SKAction.fadeOut(withDuration: 0.2),
-                SKAction.moveBy(x: 0, y: 14, duration: 0.2),
-            ]),
+            SKAction.fadeOut(withDuration: 0.22),
             SKAction.removeFromParent(),
             SKAction.run { [weak self] in
                 self?.recycleCalloutBusy = false
@@ -1149,7 +1163,7 @@ public final class CompactorScene: SKScene {
         guard let root = activeRoot else { return }
         root.removeAction(forKey: "rotateTween")
         root.zRotation = -delta
-        let dur = max(0.05, min(0.1, feel.rotateTweenSec))
+        let dur = max(0.08, min(0.12, feel.rotateTweenSec))
         let spin = SKAction.rotate(toAngle: 0, duration: dur, shortestUnitArc: true)
         spin.timingMode = .easeOut
         root.run(spin, withKey: "rotateTween")
@@ -1538,7 +1552,7 @@ public final class CompactorScene: SKScene {
             }
             return map
         }()
-        let fallDur = max(0.06, min(0.09, feel.cellTweenSec))
+        let fallDur = max(0.10, min(0.12, feel.cellTweenSec))
 
         // Every occupied cell is a full rounded-square plate + material art on top
         // (no 2×2 merged sprites — stacking must stay cell-clear).

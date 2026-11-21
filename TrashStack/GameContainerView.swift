@@ -112,11 +112,11 @@ struct GameContainerView: View {
                     classicPad
                 }
 
-                // Chrome strip below the board — never overlays playfield cells.
+                // Gap + chrome strip fully below the dumpster frame (never flush to the lip).
+                Color.clear.frame(height: 14)
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.top, 8)
-                    .padding(.bottom, 4)
+                    .padding(.vertical, 6)
                     .frame(maxWidth: .infinity)
                     .layoutPriority(1)
                     .background(NeonTheme.playChrome)
