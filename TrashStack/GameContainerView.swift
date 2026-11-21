@@ -630,6 +630,14 @@ struct GameContainerView: View {
                 // Show the score/best/retry overlay immediately. A 0.2s defer left CI
                 // screenshots on the bare topped-out board ("BIN OVERFLOW" only).
                 showContinue = true
+                // Re-assert after the first SpriteKit present — Pro CI sometimes painted
+                // the topped-out board for one frame before the sheet stuck off-screen.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    captureGameOverScore(scene.engine.state.score)
+                    showContinue = true
+                    syncHUD()
+                }
             }
         } else if playMode == .daily {
             scene.applyShot("daily")

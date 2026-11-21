@@ -8,10 +8,13 @@ DEVICE="${1:?simulator UDID}"
 APP_PATH="${2:?path to TrashStack.app}"
 OUT_DIR="${3:-smoke-artifacts}"
 TAG="${4:-se}"  # filename prefix: pro / se
+# Optional 5th arg: comma-separated modes (title,game,revive). Default = all three.
+MODES="${5:-title,game,revive}"
 BUNDLE_ID="${BUNDLE_ID:-com.cinderandcrown.trashstack}"
 DISPLAY="${SIMCTL_DISPLAY:-internal}"
 SHOT_DEADLINE_S="${SHOT_DEADLINE_S:-10}"
 SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 FIT_DIR="$OUT_DIR/fit"
 mkdir -p "$FIT_DIR"
@@ -262,12 +265,32 @@ print(f"fit game-over OK {path.name}: panel={panel} title={title} btn={btn}")
 PY
 }
 
+# Poll past OS LaunchLogo (tiny neon card ~80–120 KB) before asserting content.
+wait_past_launch_logo() {
+  local out="$1"
+  local max_s="${2:-12}"
+  local ticks=0
+  local max_ticks
+  max_ticks=$(python3 -c "print(max(1, int(float('$max_s') / 0.75)))")
+  while (( ticks < max_ticks )); do
+    shot "$out" || true
+    if [[ -s "$out" ]] && [[ "$(wc -c < "$out")" -gt 200000 ]]; then
+      return 0
+    fi
+    sleep 0.75
+    ticks=$((ticks + 1))
+  done
+  return 1
+}
+
 cold_launch_shot() {
   local mode="$1"
   local out="$2"
   local settle="${3:-4}"
+  local max_attempts="${4:-3}"
   local attempt
-  for attempt in 1 2 3; do
+  local tmp="${out}.attempt.png"
+  for attempt in $(seq 1 "$max_attempts"); do
     kill_app
     # Launch args carry shot mode — avoid a stack of spawn defaults that wedge simctl.
     if (( attempt == 1 )); then
@@ -278,41 +301,52 @@ cold_launch_shot() {
       -trashStackShot "$mode" -trashStackSkipAds -trashStackSkipIdent >/tmp/fit-launch-"$mode".out 2>&1 || true
     cat /tmp/fit-launch-"$mode".out >&2 || true
     sleep "$settle"
-    shot "$out" || true
-    if [[ ! -s "$out" ]]; then
-      echo "Fit: empty $out attempt=$attempt" >&2
+    # Do not overwrite a prior good $out until this attempt passes.
+    rm -f "$tmp"
+    if ! wait_past_launch_logo "$tmp" 14; then
+      echo "Fit: $mode still LaunchLogo/empty attempt=$attempt ($(wc -c < "$tmp" 2>/dev/null || echo 0) bytes)" >&2
+      settle=$(python3 -c "print(min(10, $settle + 1.5))")
       continue
     fi
     case "$mode" in
       game|gameplay|compactor)
-        if assert_board_painted "$out"; then
+        if assert_board_painted "$tmp"; then
+          mv -f "$tmp" "$out"
           echo "Wrote $out ($(wc -c < "$out") bytes) attempt=$attempt" >&2
           return 0
         fi
         ;;
       revive)
-        if assert_game_over_overlay "$out"; then
+        if assert_game_over_overlay "$tmp"; then
+          mv -f "$tmp" "$out"
           echo "Wrote $out ($(wc -c < "$out") bytes) attempt=$attempt" >&2
           return 0
         fi
         ;;
       title)
-        if [[ "$(wc -c < "$out")" -gt 200000 ]]; then
+        if python3 "$ROOT/scripts/assert_fit_title.py" "$tmp" >/tmp/fit-title-assert.out 2>&1; then
+          cat /tmp/fit-title-assert.out >&2 || true
+          mv -f "$tmp" "$out"
           echo "Wrote $out ($(wc -c < "$out") bytes) attempt=$attempt" >&2
           return 0
         fi
+        cat /tmp/fit-title-assert.out >&2 || true
         ;;
       *)
+        mv -f "$tmp" "$out"
         echo "Wrote $out ($(wc -c < "$out") bytes) attempt=$attempt" >&2
         return 0
         ;;
     esac
     echo "Fit: $mode shot rejected attempt=$attempt — relaunching" >&2
-    settle=$(python3 -c "print(min(7, $settle + 1.0))")
+    settle=$(python3 -c "print(min(10, $settle + 1.5))")
   done
   echo "Fit shots: failed $mode → $out" >&2
-  # Do not leave a rejected still for test -s / the evidence gate to treat as OK.
-  rm -f "$out"
+  rm -f "$tmp"
+  # Leave any prior good $out in place (CI may have preserved smoke aliases).
+  if [[ ! -s "$out" ]]; then
+    return 1
+  fi
   return 1
 }
 
@@ -345,16 +379,44 @@ fi
   xcrun simctl list devices | grep "$DEVICE" || true
 } > "$FIT_DIR/${TAG}-device.txt"
 
-cold_launch_shot title "$FIT_DIR/${TAG}-title.png" 3.0
-cold_launch_shot game "$FIT_DIR/${TAG}-play.png" 3.5
-# Pro needs a longer settle for the revive overlay after heavy smoke/real-play.
-cold_launch_shot revive "$FIT_DIR/${TAG}-game-over.png" 6.5
+# Run requested modes independently — a title miss must not skip revive/GO.
+fail=0
+IFS=',' read -r -a MODE_LIST <<< "$MODES"
+for mode in "${MODE_LIST[@]}"; do
+  mode="$(echo "$mode" | tr -d '[:space:]')"
+  [[ -z "$mode" ]] && continue
+  case "$mode" in
+    title)
+      cold_launch_shot title "$FIT_DIR/${TAG}-title.png" 4.0 4 || fail=1
+      ;;
+    game|play|gameplay)
+      cold_launch_shot game "$FIT_DIR/${TAG}-play.png" 4.0 4 || fail=1
+      ;;
+    revive|game-over|go)
+      # Pro needs a longer settle for the revive overlay after heavy smoke/real-play.
+      cold_launch_shot revive "$FIT_DIR/${TAG}-game-over.png" 7.0 6 || fail=1
+      ;;
+    *)
+      echo "Fit shots: unknown mode '$mode' (use title,game,revive)" >&2
+      fail=1
+      ;;
+  esac
+done
 
-python3 - "$FIT_DIR" "$TAG" <<'PY'
+fit_check=0
+python3 - "$FIT_DIR" "$TAG" "$MODES" <<'PY' || fit_check=$?
 import pathlib, sys
 root = pathlib.Path(sys.argv[1]); tag = sys.argv[2]
+modes = {m.strip() for m in sys.argv[3].split(",") if m.strip()}
+wanted = []
+if "title" in modes:
+    wanted.append(f"{tag}-title.png")
+if modes & {"game", "play", "gameplay"}:
+    wanted.append(f"{tag}-play.png")
+if modes & {"revive", "game-over", "go"}:
+    wanted.append(f"{tag}-game-over.png")
 ok = True
-for name in (f"{tag}-title.png", f"{tag}-play.png", f"{tag}-game-over.png"):
+for name in wanted:
     p = root / name
     sz = p.stat().st_size if p.is_file() else 0
     print(f"fit {name}: {sz} bytes")
@@ -363,5 +425,8 @@ for name in (f"{tag}-title.png", f"{tag}-play.png", f"{tag}-game-over.png"):
         ok = False
 sys.exit(0 if ok else 1)
 PY
-
+if (( fail != 0 || fit_check != 0 )); then
+  echo "Fit shots incomplete for tag=$TAG (fail=$fail check=$fit_check)" >&2
+  exit 1
+fi
 echo "Fit shots done for tag=$TAG" >&2

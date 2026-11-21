@@ -251,7 +251,18 @@ jobs:
             exit 0
           fi
           echo "Full smoke missed Pro fit aliases — reboot + screenshot-only pass"
-          # Keep smoke board stills; only replace missing/bad fit aliases.
+          # Preserve good smoke aliases. Prior tip wiped a 5MB pro-title when a
+          # re-capture stuck on LaunchLogo, then exited before revive/GO ran.
+          keep_title=0
+          if [[ -s smoke-artifacts/fit/pro-title.png ]] \
+            && python3 scripts/assert_fit_title.py smoke-artifacts/fit/pro-title.png >/dev/null 2>&1; then
+            keep_title=1
+            cp -f smoke-artifacts/fit/pro-title.png /tmp/pro-title-keep.png
+          elif [[ -s smoke-artifacts/01-title.png ]] \
+            && python3 scripts/assert_fit_title.py smoke-artifacts/01-title.png >/dev/null 2>&1; then
+            keep_title=1
+            cp -f smoke-artifacts/01-title.png /tmp/pro-title-keep.png
+          fi
           keep_play=0
           if [[ -s smoke-artifacts/fit/pro-play.png ]] \
             && ! python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-play.png >/dev/null 2>&1; then
@@ -270,15 +281,42 @@ jobs:
           xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
           xcrun simctl bootstatus "$DEVICE" -b >/tmp/pro-fit-boot.log 2>&1 || true
           chmod +x scripts/simulator_fit_shots.sh
-          ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro
+          # If title+play already good, only capture revive/GO — avoid wiping aliases.
+          modes="title,game,revive"
+          if (( keep_title == 1 && keep_play == 1 )); then
+            modes="revive"
+            echo "Pro fit fallback: title+play preserved — revive/GO only" >&2
+          elif (( keep_title == 1 )); then
+            modes="game,revive"
+            echo "Pro fit fallback: title preserved — play+revive" >&2
+          fi
+          ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro "$modes" \
+            || echo "Pro fit_shots partial (modes=$modes) — restoring preserved aliases" >&2
+          if (( keep_title == 1 )) && [[ -s /tmp/pro-title-keep.png ]]; then
+            cp -f /tmp/pro-title-keep.png smoke-artifacts/fit/pro-title.png
+            echo "Restored fit/pro-title.png from smoke title still" >&2
+          fi
           if (( keep_play == 1 )) && [[ -s /tmp/pro-play-keep.png ]]; then
             cp -f /tmp/pro-play-keep.png smoke-artifacts/fit/pro-play.png
             echo "Restored fit/pro-play.png from smoke board still" >&2
+          fi
+          # Dedicated GO retries if the mode pass still missed overlay markers.
+          if [[ ! -s smoke-artifacts/fit/pro-game-over.png ]] \
+            || ! python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png; then
+            echo "Pro GO still missing — dedicated revive retries" >&2
+            ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro revive || true
+            if (( keep_title == 1 )) && [[ -s /tmp/pro-title-keep.png ]]; then
+              cp -f /tmp/pro-title-keep.png smoke-artifacts/fit/pro-title.png
+            fi
+            if (( keep_play == 1 )) && [[ -s /tmp/pro-play-keep.png ]]; then
+              cp -f /tmp/pro-play-keep.png smoke-artifacts/fit/pro-play.png
+            fi
           fi
           test -s smoke-artifacts/fit/pro-title.png
           test -s smoke-artifacts/fit/pro-play.png
           test -s smoke-artifacts/fit/pro-game-over.png
           python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png
+          python3 scripts/assert_fit_title.py smoke-artifacts/fit/pro-title.png
 
       # Upload Pro evidence BEFORE SE. Prior run: smoke+fit succeeded, then SE create
       # OOMed the runner and we lost every artifact (no upload ever ran).

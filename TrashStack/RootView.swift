@@ -25,8 +25,10 @@ enum PublisherIdentGate {
 struct RootView: View {
     @EnvironmentObject var profile: PlayerProfile
     /// Play-first: after the skippable C&C ident, land on the board — not a menu hub.
-    /// Real-play UITest starts on title so PLAY → fresh New Game is visible on camera.
-    @State private var screen: AppScreen = Self.isUITestRealPlay ? .title : .game
+    /// Shot/UITest modes pick the first screen from the launch arg so we never mount
+    /// GameContainerView (SpriteKit) before a title capture — that left Pro CI stuck
+    /// on the OS LaunchLogo and wiped good fit aliases on retry.
+    @State private var screen: AppScreen = Self.initialScreen
     @State private var showNotifPrompt = false
     @State private var marketingCaption = ""
     @State private var playMode: PlayMode = .endless
@@ -47,6 +49,43 @@ struct RootView: View {
     /// XCUITest real-play harness — never seed boards / soft-swap shots.
     private static var isUITestRealPlay: Bool {
         ProcessInfo.processInfo.arguments.contains("-UITestRealPlay")
+    }
+
+    /// First SwiftUI screen for this process — must match `-trashStackShot` when present.
+    private static var initialScreen: AppScreen {
+        if isUITestRealPlay { return .title }
+        let shot = (PlayerProfile.shotArgument()
+            ?? UserDefaults.standard.string(forKey: "trashStack.shot"))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch shot {
+        case "title", "menu", "home", "notif", "notifications":
+            return .title
+        case "modes":
+            return .modes
+        case "base", "junkyard", "mkt-base":
+            return .base
+        case "pass", "season", "mkt-pass":
+            return .pass
+        case "shop", "gems", "mkt-shop":
+            return .shop
+        case "quests":
+            return .quests
+        case "settings":
+            return .settings
+        case "tutorial":
+            return .tutorial
+        case "streak":
+            return .streak
+        case "share", "daily-share":
+            return .dailyShare
+        case "ident", "publisher":
+            // Ident covers the stack; underlying screen is unused until dismiss.
+            return .game
+        default:
+            // game / gameplay / revive / demo / daily / nil → board
+            return .game
+        }
     }
 
     var body: some View {
