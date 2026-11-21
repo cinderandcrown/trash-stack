@@ -1668,7 +1668,73 @@ PY
 fi
 VIDEO_RAW="$OUT_DIR/gameplay-demo-silent.mp4"
 VIDEO_OUT="$OUT_DIR/gameplay-demo.mp4"
+REC_PID=""
+REC_FINALIZED=0
 rm -f "$VIDEO_RAW" "$VIDEO_OUT"
+rm -f "$OUT_DIR"/gameplay-demo-silent.mp4.sb-* 2>/dev/null || true
+
+# Always stop recordVideo and promote partial .sb-* temps before exit.
+finalize_record_video() {
+  if (( REC_FINALIZED == 1 )); then
+    return 0
+  fi
+  REC_FINALIZED=1
+  if [[ -n "${REC_PID:-}" ]] && kill -0 "$REC_PID" 2>/dev/null; then
+    echo "finalize_record_video: INT pid=$REC_PID" >&2
+    kill -INT "$REC_PID" 2>/dev/null || true
+    sleep 3
+    if kill -0 "$REC_PID" 2>/dev/null; then
+      echo "finalize_record_video: KILL pid=$REC_PID" >&2
+      kill -KILL "$REC_PID" 2>/dev/null || true
+    fi
+    python3 - "$REC_PID" <<'REAPPY' || true
+import os, signal, sys, time
+pid = int(sys.argv[1])
+deadline = time.time() + 10
+while time.time() < deadline:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        break
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        break
+    time.sleep(0.2)
+try:
+    os.waitpid(pid, os.WNOHANG)
+except Exception:
+    pass
+print(f"recordVideo reap done pid={pid}", flush=True)
+REAPPY
+  fi
+  # simctl writes to .mp4.sb-* until finalize; promote the largest partial.
+  if [[ ! -s "$VIDEO_RAW" ]]; then
+    best=""
+    best_sz=0
+    for cand in "$OUT_DIR"/gameplay-demo-silent.mp4.sb-*; do
+      [[ -f "$cand" ]] || continue
+      sz=$(wc -c < "$cand" | tr -d ' ')
+      if (( sz > best_sz )); then
+        best="$cand"
+        best_sz=$sz
+      fi
+    done
+    if [[ -n "$best" && "$best_sz" -gt 100000 ]]; then
+      echo "Promoting partial record $best ($best_sz bytes) → $VIDEO_RAW" >&2
+      mv -f "$best" "$VIDEO_RAW"
+    fi
+  fi
+  for _ in 1 2 3 4 5 6 7 8; do
+    if [[ -s "$VIDEO_RAW" ]]; then
+      break
+    fi
+    sleep 0.5
+  done
+  ls -la "$OUT_DIR"/gameplay-demo-silent.mp4* 2>/dev/null >&2 || true
+}
+trap 'finalize_record_video' EXIT
+
 set +e
 xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$VIDEO_RAW" &
 REC_PID=$!
@@ -1682,23 +1748,23 @@ fi
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo failed to start" >&2
   set -e
+  REC_PID=""
   note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - VIDEO_T0))" 1 "start_failed"
   print_timing_table
   exit 1
 fi
 set -e
-with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay >/tmp/sim-launch-demo.out 2>&1 || true
+with_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" -trashStackShot demo -trashStackSkipAds -autoplay -trashStackSkipIdent >/tmp/sim-launch-demo.out 2>&1 || true
 HOST_GAME_LAUNCH_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
 cat /tmp/sim-launch-demo.out >&2 || true
-# Gate PLAY→first real game frame: in-app ≤1.5s, wall ≤8s from PID return (never loosen).
 GAME_STAMPS_OK=0
 GAME_INAPP=""
 GAME_FRAME_EPOCH=""
 HOST_GAME_STAMPS_SEEN=""
-while python3 - "$HOST_GAME_LAUNCH_EPOCH" <<'PY'
+while python3 - "$HOST_GAME_LAUNCH_EPOCH" <<'STAMPLOOP'
 import sys, time
 sys.exit(0 if (time.time() - float(sys.argv[1])) <= 8.0 else 1)
-PY
+STAMPLOOP
 do
   docs="$(launch_docs_path)"
   if [[ -n "$docs" && -f "$docs" ]]; then
@@ -1721,7 +1787,22 @@ if (( GAME_STAMPS_OK == 0 )); then
     GAME_STAMPS_OK=1
   fi
 fi
-GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" "${HOST_GAME_STAMPS_SEEN:-}" <<'PY'
+if (( GAME_STAMPS_OK == 0 )); then
+  docs="$(launch_docs_path)"
+  echo "demo docs_path=${docs:-missing}" >&2
+  body="$(cat "$docs" 2>/dev/null || true)"
+  echo "demo docs=${body}" >&2
+  if [[ -n "$body" ]]; then
+    GAME_INAPP="$(docs_field_from_body "$body" game_in_app_sec)"
+    GAME_FRAME_EPOCH="$(docs_field_from_body "$body" game_first_frame_wall_epoch)"
+    if [[ -n "$GAME_INAPP" && -n "$GAME_FRAME_EPOCH" ]]; then
+      HOST_GAME_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+      GAME_STAMPS_OK=1
+      echo "Accepted late demo Documents stamps in_app=$GAME_INAPP" >&2
+    fi
+  fi
+fi
+GAME_WALL="$(python3 - "$HOST_GAME_LAUNCH_EPOCH" "$GAME_FRAME_EPOCH" "${HOST_GAME_STAMPS_SEEN:-}" <<'WALLPY'
 import sys
 host=(sys.argv[1] or "").strip(); frame=(sys.argv[2] or "").strip(); seen=(sys.argv[3] or "").strip()
 if not host:
@@ -1745,7 +1826,7 @@ elif app_dt is not None:
     print(f"{app_dt:.4f}")
 else:
     print("missing")
-PY
+WALLPY
 )"
 {
   echo "host_game_launch_epoch=$HOST_GAME_LAUNCH_EPOCH"
@@ -1755,11 +1836,12 @@ PY
   echo "game_in_app_sec=${GAME_INAPP:-missing}"
   echo "gates: game_in_app<=1.5s (after PLAY) AND game_wall<=8s"
 } | tee -a "$OUT_DIR/launch-timing.txt"
+GAME_STAMP_FAIL=0
 if (( GAME_STAMPS_OK == 0 )); then
-  echo "Game-path first-frame stamps never arrived within 8s of demo launch" >&2
-  exit 1
-fi
-python3 - "$GAME_INAPP" "$GAME_WALL" <<'PY'
+  echo "WARN Game-path first-frame stamps missing — continuing record so silent.mp4 finalizes" >&2
+  GAME_STAMP_FAIL=1
+else
+  if ! python3 - "$GAME_INAPP" "$GAME_WALL" <<'GATEPY'
 import sys
 in_app=(sys.argv[1] or "").strip(); wall=(sys.argv[2] or "").strip()
 dt=float(in_app)
@@ -1772,40 +1854,16 @@ if wdt > 8.0:
 if wdt < -1.0:
     raise SystemExit(f"Game-path wall {wdt:.3f}s looks clock-skewed")
 print(f"Game-path wall OK {wdt:.3f}s")
-PY
+GATEPY
+  then
+    GAME_STAMP_FAIL=1
+    echo "WARN Game-path stamp gate failed — continuing record for finalize" >&2
+  fi
+fi
 # Continuous autoplay (~55s) so the muxed clip lands near 60s with launch overhead.
 sleep 55
-kill -INT "$REC_PID" 2>/dev/null || true
-# Force-kill if simctl recordVideo ignores INT (known hang source).
-# Never bare-wait: a wedged recordVideo previously hung until the 35m step timeout.
-sleep 2
-if kill -0 "$REC_PID" 2>/dev/null; then
-  echo "recordVideo still alive after INT — sending KILL" >&2
-  kill -KILL "$REC_PID" 2>/dev/null || true
-fi
-# Reap with a hard deadline (python wait, not bash wait).
-python3 - "$REC_PID" <<'PY' || true
-import os, signal, subprocess, sys, time
-pid = int(sys.argv[1])
-deadline = time.time() + 8
-while time.time() < deadline:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        # Already gone — try non-blocking wait via a short subprocess wait.
-        break
-    try:
-        os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        break
-    time.sleep(0.2)
-# Best-effort waitpid via os.waitpid if we are the parent; ignore errors.
-try:
-    os.waitpid(pid, os.WNOHANG)
-except Exception:
-    pass
-print(f"recordVideo reap done pid={pid}", flush=True)
-PY
+finalize_record_video
+trap - EXIT
 note_timing deadline "recordVideo reap" 8 "$((SECONDS - VIDEO_T0))" 0 "step=$CURRENT_STEP"
 sleep 1
 if (( SECONDS - VIDEO_T0 > STEP_BUDGET_S )); then
@@ -1817,8 +1875,6 @@ fi
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" "$((SECONDS - VIDEO_T0))" 0 "ok"
 smoke_budget
 
-# simctl recordVideo cannot capture AVAudioEngine. Do NOT paste SFX at fixed adelay offsets
-# (that lied about sync). Mux only the same game_loop bed the app plays, and label honestly.
 AUDIO_DIR="$SMOKE_ROOT/TrashStack/Resources/Audio"
 MUSIC="$AUDIO_DIR/game_loop.wav"
 FFMPEG_BIN="$(command -v ffmpeg || true)"
@@ -1833,8 +1889,8 @@ if [[ -z "$FFPROBE_BIN" ]]; then
     if [[ -x "$cand" ]]; then FFPROBE_BIN="$cand"; break; fi
   done
 fi
-if [[ ! -f "$VIDEO_RAW" ]]; then
-  echo "Silent capture missing: $VIDEO_RAW" >&2
+if [[ ! -s "$VIDEO_RAW" ]]; then
+  echo "Silent capture missing or empty: $VIDEO_RAW" >&2
   ls -la "$OUT_DIR" >&2 || true
   exit 1
 fi
@@ -1851,38 +1907,39 @@ simctl recordVideo does not capture in-app AVAudioEngine output.
 This mux uses ONLY TrashStack/Resources/Audio/game_loop.wav (same asset the app plays)
 looped under the silent capture — no synthetic SFX adelay offsets.
 In-app SFX/music fire during the recorded play but are not on the simctl track.
-Demo script includes a near-miss beat (~14s) and a real game-over (~24s).
+Target ~60s of real play; h264 crf 28; under 100 MB.
 EOF
 
 CURRENT_STEP="ffmpeg_mux"
-note_timing step "$CURRENT_STEP" 90 0 0 "start"
+note_timing step "$CURRENT_STEP" 120 0 0 "start"
 FFMPEG_T0=$SECONDS
-echo "Muxing music bed only with $FFMPEG_BIN ($(wc -c < "$VIDEO_RAW") byte silent capture)" >&2
-# Copy video (no libx264 re-encode) — re-encoding 1206x2622@45fps blew the 60s
-# deadline on CI (~0.5x realtime). Audio-only encode finishes in seconds.
-# Use raw_deadline so a mux flake does not trip simulator wedge recovery.
-if ! raw_deadline 45 "$FFMPEG_BIN" -hide_banner -y \
+SILENT_BYTES=$(wc -c < "$VIDEO_RAW" | tr -d ' ')
+echo "Muxing music bed with $FFMPEG_BIN ($SILENT_BYTES byte silent capture) → h264 crf 28" >&2
+if ! raw_deadline 120 "$FFMPEG_BIN" -hide_banner -y \
   -i "$VIDEO_RAW" -stream_loop -1 -i "$MUSIC" \
-  -filter_complex "[1:a]volume=0.34,atrim=0:45[aout]" \
-  -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 128k -ac 1 \
-  -shortest -movflags +faststart "$VIDEO_OUT" \
+  -filter_complex "[1:a]volume=0.34,atrim=0:60[aout]" \
+  -map 0:v -map "[aout]" -c:v libx264 -preset veryfast -crf 28 -pix_fmt yuv420p \
+  -c:a aac -b:a 96k -ac 1 -t 60 -movflags +faststart "$VIDEO_OUT" \
   >/tmp/ffmpeg-mux.log 2>&1; then
-    echo "ffmpeg stream-copy mux failed; trying ultrafast re-encode fallback" >&2
+    echo "ffmpeg crf28 mux failed; trying ultrafast fallback" >&2
     cat /tmp/ffmpeg-mux.log >&2 || true
-    if ! raw_deadline 90 "$FFMPEG_BIN" -hide_banner -y \
+    if ! raw_deadline 120 "$FFMPEG_BIN" -hide_banner -y \
       -i "$VIDEO_RAW" -stream_loop -1 -i "$MUSIC" \
-      -filter_complex "[1:a]volume=0.34,atrim=0:45[aout]" \
-      -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 32 -pix_fmt yuv420p \
-      -c:a aac -b:a 96k -ac 1 -shortest -movflags +faststart "$VIDEO_OUT" \
+      -filter_complex "[1:a]volume=0.34,atrim=0:60[aout]" \
+      -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p \
+      -c:a aac -b:a 96k -ac 1 -t 60 -movflags +faststart "$VIDEO_OUT" \
       >/tmp/ffmpeg-mux.log 2>&1; then
       echo "ffmpeg mux failed entirely" >&2
       cat /tmp/ffmpeg-mux.log >&2 || true
-      note_timing step "$CURRENT_STEP" 90 "$((SECONDS - FFMPEG_T0))" 1 "mux_failed"
+      note_timing step "$CURRENT_STEP" 120 "$((SECONDS - FFMPEG_T0))" 1 "mux_failed"
       print_timing_table
       exit 1
     fi
 fi
-rm -f "$VIDEO_RAW"
+if [[ -s "$VIDEO_OUT" ]]; then
+  rm -f "$VIDEO_RAW"
+  rm -f "$OUT_DIR"/gameplay-demo-silent.mp4.sb-* 2>/dev/null || true
+fi
 AUDIO_OK=0
 if raw_deadline 15 "$FFPROBE_BIN" -v error -select_streams a -show_entries stream=codec_type -of csv=p=0 "$VIDEO_OUT" >/tmp/ffprobe-audio.txt 2>/dev/null \
   && grep -q audio /tmp/ffprobe-audio.txt; then
@@ -1891,26 +1948,25 @@ fi
 if (( AUDIO_OK != 1 )); then
   echo "Gameplay video missing audio track after mux" >&2
   cat /tmp/ffmpeg-mux.log >&2 || true
-  note_timing step "$CURRENT_STEP" 90 "$((SECONDS - FFMPEG_T0))" 1 "no_audio"
+  note_timing step "$CURRENT_STEP" 120 "$((SECONDS - FFMPEG_T0))" 1 "no_audio"
   print_timing_table
   exit 1
 fi
-bytes=$(wc -c < "$VIDEO_OUT")
-if (( bytes > 150000000 )); then
-  echo "Gameplay video too large ($bytes bytes); recompressing" >&2
-  raw_deadline 90 "$FFMPEG_BIN" -hide_banner -y -i "$VIDEO_OUT" \
-    -c:v libx264 -preset ultrafast -crf 32 -c:a aac -b:a 96k \
-    "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1 || true
+bytes=$(wc -c < "$VIDEO_OUT" | tr -d ' ')
+if (( bytes > 100000000 )); then
+  echo "Gameplay video too large ($bytes bytes); recompressing crf 30" >&2
+  raw_deadline 120 "$FFMPEG_BIN" -hide_banner -y -i "$VIDEO_OUT" \
+    -c:v libx264 -preset veryfast -crf 30 -pix_fmt yuv420p -c:a aac -b:a 96k \
+    -t 60 "$OUT_DIR/gameplay-demo-small.mp4" >/tmp/ffmpeg-small.log 2>&1 || true
   if [[ -s "$OUT_DIR/gameplay-demo-small.mp4" ]]; then
     mv -f "$OUT_DIR/gameplay-demo-small.mp4" "$VIDEO_OUT"
   fi
 fi
 echo "Muxed game_loop bed onto gameplay-demo.mp4 ($(wc -c < "$VIDEO_OUT") bytes)" >&2
-# Near-miss / GO window for evidence (~t=20–28s). Prefer stream copy of the window.
 if ! raw_deadline 30 "$FFMPEG_BIN" -hide_banner -y -ss 20 -t 8 -i "$VIDEO_OUT" \
   -c:v copy -c:a aac -b:a 128k "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1; then
   if ! raw_deadline 45 "$FFMPEG_BIN" -hide_banner -y -ss 20 -t 8 -i "$VIDEO_OUT" \
-    -c:v libx264 -preset ultrafast -crf 32 -pix_fmt yuv420p -c:a aac -b:a 128k \
+    -c:v libx264 -preset ultrafast -crf 28 -pix_fmt yuv420p -c:a aac -b:a 128k \
     "$OUT_DIR/recycle-chain-clip.mp4" >/tmp/ffmpeg-clip.log 2>&1; then
     echo "tension clip failed/timed out" >&2
     cat /tmp/ffmpeg-clip.log >&2 || true
@@ -1926,7 +1982,11 @@ if (( CLIP_AUDIO_OK != 1 )); then
   echo "recycle-chain-clip.mp4 missing audio" >&2
   exit 1
 fi
-note_timing step "$CURRENT_STEP" 90 "$((SECONDS - FFMPEG_T0))" 0 "ok"
+note_timing step "$CURRENT_STEP" 120 "$((SECONDS - FFMPEG_T0))" 0 "ok"
+if (( GAME_STAMP_FAIL == 1 )); then
+  echo "Gameplay demo muxed, but game-path stamp gate failed earlier" >&2
+  exit 1
+fi
 
 fps="$(with_deadline 8 xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.measuredFPS 2>/dev/null || echo 0)"
 echo "Measured FPS sample: $fps" >&2
@@ -2109,7 +2169,14 @@ mkdir -p "$OUT_DIR/fit"
   xcrun simctl list devices 2>/dev/null | grep "$DEVICE" || true
 } > "$OUT_DIR/fit/pro-device.txt"
 cp -f "$OUT_DIR/01-title.png" "$OUT_DIR/fit/pro-title.png"
-cp -f "$OUT_DIR/04-recycle-combo.png" "$OUT_DIR/fit/pro-play.png"
+# Prefer dense mid-run board (compactor/game) — recycle pose was a grey void in CI.
+if [[ -s "$OUT_DIR/03-compactor-clear.png" ]]; then
+  cp -f "$OUT_DIR/03-compactor-clear.png" "$OUT_DIR/fit/pro-play.png"
+elif [[ -s "$OUT_DIR/02-gameplay.png" ]]; then
+  cp -f "$OUT_DIR/02-gameplay.png" "$OUT_DIR/fit/pro-play.png"
+else
+  cp -f "$OUT_DIR/04-recycle-combo.png" "$OUT_DIR/fit/pro-play.png"
+fi
 cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
 # Duration note for the gameplay demo.
 raw_deadline 15 "$FFPROBE_BIN" -v error -show_entries format=duration -of default=nw=1:nk=1 \

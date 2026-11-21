@@ -85,17 +85,28 @@ def pick_existing(preferred: tuple[str, ...], allow_max: bool) -> tuple[int, str
     return cands[0]
 
 
-def resolve_create_pair(prefer_name: str) -> tuple[str, str] | None:
-    """Return (deviceTypeIdentifier, runtimeIdentifier) for creating prefer_name."""
+def is_generic_ios_runtime(runtime_id: str, name: str = "") -> bool:
+    """Accept shared iOS runtimes only — reject device-bundled ids like iOS-27-2-iPhone19-4."""
+    rid = runtime_id or ""
+    # Generic: com.apple.CoreSimulator.SimRuntime.iOS-18-0 (no device suffix).
+    if re.search(r"SimRuntime\.iOS-\d+-\d+$", rid):
+        return True
+    # Also accept plain "iOS 18.0" style names without an iPhone model token.
+    if "iOS" in (name or "") and "iPhone" not in rid and "iPhone" not in (name or ""):
+        if re.search(r"iOS-\d+-\d+$", rid) or re.search(r"iOS \d+", name or ""):
+            return "iPhone" not in rid
+    return False
+
+
+def resolve_create_pairs(prefer_name: str) -> list[tuple[str, str]]:
+    """Return candidate (deviceTypeIdentifier, runtimeIdentifier) pairs, newest first."""
     types = list_devicetypes()
     # Exact / startswith match on device type name.
     type_id = None
-    type_name = None
     for t in types:
         n = t.get("name", "")
         if n == prefer_name or n.startswith(prefer_name):
             type_id = t.get("identifier")
-            type_name = n
             break
     if not type_id:
         # Fuzzy: SE → any SE type; Pro (non-Max) → first Pro without Max.
@@ -103,43 +114,57 @@ def resolve_create_pair(prefer_name: str) -> tuple[str, str] | None:
             n = t.get("name", "")
             if "SE" in prefer_name and "SE" in n:
                 type_id = t.get("identifier")
-                type_name = n
                 break
             if "Pro" in prefer_name and "Pro" in n and "Max" not in n and "iPhone" in n:
                 type_id = t.get("identifier")
-                type_name = n
                 break
     if not type_id:
-        return None
+        return []
     runtimes = [
         r
         for r in list_runtimes()
-        if r.get("isAvailable") and "iOS" in (r.get("name") or "")
+        if r.get("isAvailable")
+        and "iOS" in (r.get("name") or "")
+        and is_generic_ios_runtime(r.get("identifier") or "", r.get("name") or "")
     ]
     if not runtimes:
-        return None
-    # Newest runtime first.
+        # Last resort: any available iOS runtime that does not embed an iPhone model token.
+        runtimes = [
+            r
+            for r in list_runtimes()
+            if r.get("isAvailable")
+            and "iOS" in (r.get("name") or "")
+            and "iPhone" not in (r.get("identifier") or "")
+        ]
     runtimes.sort(key=lambda r: r.get("version", ""), reverse=True)
-    return type_id, runtimes[0]["identifier"]
+    return [(type_id, r["identifier"]) for r in runtimes]
 
 
 def create_device(prefer_name: str) -> tuple[int, str, str, str] | None:
-    pair = resolve_create_pair(prefer_name)
-    if not pair:
+    pairs = resolve_create_pairs(prefer_name)
+    if not pairs:
         print(f"Cannot resolve device type/runtime for create '{prefer_name}'", file=sys.stderr)
         return None
-    type_id, runtime = pair
     name = f"TrashStack-{re.sub(r'[^A-Za-z0-9]+', '-', prefer_name)}-{int(time.time()) % 100000}"
-    try:
-        udid = subprocess.check_output(
-            ["xcrun", "simctl", "create", name, type_id, runtime],
-            text=True,
-        ).strip()
-    except subprocess.CalledProcessError as e:
-        print(f"simctl create failed for {prefer_name}: {e}", file=sys.stderr)
-        return None
-    print(f"Created {name} ({type_id} / {runtime})", file=sys.stderr)
-    return 0, name, udid, runtime
+    last_err: Exception | None = None
+    for type_id, runtime in pairs:
+        try:
+            udid = subprocess.check_output(
+                ["xcrun", "simctl", "create", name, type_id, runtime],
+                text=True,
+                stderr=subprocess.STDOUT,
+            ).strip()
+        except subprocess.CalledProcessError as e:
+            last_err = e
+            print(
+                f"simctl create failed for {prefer_name} with {runtime}: {e}",
+                file=sys.stderr,
+            )
+            continue
+        print(f"Created {name} ({type_id} / {runtime})", file=sys.stderr)
+        return 0, name, udid, runtime
+    print(f"simctl create failed for {prefer_name}: {last_err}", file=sys.stderr)
+    return None
 
 
 def main() -> int:

@@ -44,6 +44,8 @@ public final class CompactorScene: SKScene {
     /// Near-zero pad so solid tiles cover ≥85% of occupied cell area (QA coverage metric).
     private let cellPad: CGFloat = 0.0
     private var pendingShot: String?
+    /// Screenshot / smoke seeded poses — freeze gravity so the bin stays readable.
+    private var holdForEvidence = false
     /// Continuous display coords (board space) — independent of discrete logic ticks.
     private var visualX: CGFloat = 0
     private var visualY: CGFloat = 0
@@ -70,7 +72,6 @@ public final class CompactorScene: SKScene {
         didSet { noteFirstGameFrame() }
     }
     private var didFireFirstGameFrame = false
-    private var lastFlashAt: TimeInterval = 0
     private var nearMissSignature: String = ""
     /// Paced cascade settle timer — next wave after cascadeStepSec.
     private var cascadeSettleAcc: TimeInterval = 0
@@ -165,6 +166,9 @@ public final class CompactorScene: SKScene {
         lockResets = 0
         cascadeSettleAcc = 0
         clearTouchState()
+        holdForEvidence = [
+            "game", "gameplay", "compactor", "press", "recycle", "revive", "game-over",
+        ].contains(shot)
         if shot == "recycle" { raccoonMood = .cheer }
         else if shot == "compactor" || shot == "press" { raccoonMood = .cheer }
         else if shot == "revive" || shot == "game-over" { raccoonMood = .gameOver }
@@ -216,10 +220,14 @@ public final class CompactorScene: SKScene {
 
     private func presentPendingShotJuice() {
         guard let shot = pendingShot else { return }
+        // One-shot — rebuild/didChangeSize must not re-fire suck/slam and leave an empty bin.
+        pendingShot = nil
         if shot == "compactor" || shot == "press" {
             presentPressMoment()
         } else if shot == "recycle" {
-            presentRecycleMoment()
+            // Hold the seeded board for evidence shots. Live clears stay per-cell only;
+            // never auto-suck the whole metal cluster into a grey void.
+            presentRecycleMoment(holdBoard: true)
         }
     }
 
@@ -357,21 +365,17 @@ public final class CompactorScene: SKScene {
         }
         crop.addChild(gridOverlay)
 
-        let plateTex = tex("CellPlate")
         for y in 0..<vis {
             for x in 0..<cols {
-                // Parent = rounded material plate; child icon overlays (~58% of cell).
-                let n: SKSpriteNode
-                if let plateTex {
-                    n = SKSpriteNode(texture: plateTex, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
-                    n.color = SKColor(white: 1, alpha: 0.04)
-                    n.colorBlendFactor = 1
-                } else {
-                    n = SKSpriteNode(
-                        color: SKColor(white: 1, alpha: 0.04),
-                        size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
-                    )
-                }
+                // Empty cells stay fully transparent — CellPlate is a light-grey PNG;
+                // with cellPad=0 a grid of faintly-blended plates reads as one flat
+                // grey rectangle (the fit/pro-play failure mode). Only occupied cells
+                // get a plate texture in render().
+                let n = SKSpriteNode(
+                    color: .clear,
+                    size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
+                )
+                n.alpha = 0
                 n.position = positionFor(x: x, boardY: y + engine.state.board.config.hiddenRows)
                 n.zPosition = 1
                 n.name = "cell"
@@ -548,7 +552,13 @@ public final class CompactorScene: SKScene {
         tickDangerRim(dt: Double(dt))
         tickPacedCascade(dt: Double(dt))
 
+        // Seeded screenshot poses stay frozen (no gravity clearing the bin into grey).
+        if holdForEvidence, !autoplay {
+            return
+        }
+
         if autoplay {
+            holdForEvidence = false
             // Never stay paused during demo — smoke recordVideo must show live motion.
             if isPaused { isPaused = false }
             autoplayElapsed += TimeInterval(dt)
@@ -822,9 +832,8 @@ public final class CompactorScene: SKScene {
                 let combo = max(1, engine.state.combo)
                 presentClearBurst(across: coords)
                 recycleSuck(coords: coords, material: material, points: score, combo: combo, snaps: snaps)
-                // Local cell glow + tiny bg pulse (≤10%) — no full-board white flash.
+                // Per-cell glow only — never a full-board flash or bin tint.
                 subtleGlow(color: materialGlow(material))
-                softBackgroundPulse()
                 glowClearedCells(coords: coords, material: material)
                 let shakeMul = 1.0 + min(0.6, Double(combo - 1) * 0.15)
                 screenShake(strength: CGFloat(feel.shakeRecycle) * shakeMul * (1 + Double(min(4, cells)) * 0.05))
@@ -976,29 +985,6 @@ public final class CompactorScene: SKScene {
         ]))
     }
 
-    /// Full-board white flashes removed — keep a ≤10% brightness pulse on the bin backdrop.
-    private func softBackgroundPulse() {
-        let now = CACurrentMediaTime()
-        guard now - lastFlashAt >= feel.flashCooldownSec else { return }
-        lastFlashAt = now
-        guard let bin = childNode(withName: "//binInterior") as? SKSpriteNode else { return }
-        bin.removeAction(forKey: "softPulse")
-        let pulse = SKAction.sequence([
-            SKAction.fadeAlpha(to: 1.0, duration: 0.01),
-            SKAction.customAction(withDuration: 0.08) { node, t in
-                let k = min(1, t / 0.08)
-                (node as? SKSpriteNode)?.colorBlendFactor = 0.10 * k
-                (node as? SKSpriteNode)?.color = .white
-            },
-            SKAction.customAction(withDuration: 0.18) { node, t in
-                let k = 1 - min(1, t / 0.18)
-                (node as? SKSpriteNode)?.colorBlendFactor = 0.10 * k
-            },
-            SKAction.run { bin.colorBlendFactor = 0 },
-        ])
-        bin.run(pulse, withKey: "softPulse")
-    }
-
     private func glowClearedCells(coords: [BoardCoord], material: Material) {
         let glowColor = materialGlow(material)
         for c in coords {
@@ -1021,10 +1007,9 @@ public final class CompactorScene: SKScene {
         }
     }
 
-    /// Legacy no-op — callers migrated to softBackgroundPulse / local glow.
+    /// Legacy no-op — never flash the full board.
     private func boardFlash(color: SKColor) {
         _ = color
-        softBackgroundPulse()
     }
 
     private func presentComboBanner(combo: Int) {
@@ -1047,7 +1032,7 @@ public final class CompactorScene: SKScene {
         onToast?("Press slam")
     }
 
-    public func presentRecycleMoment() {
+    public func presentRecycleMoment(holdBoard: Bool = false) {
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
         var coords: [BoardCoord] = []
@@ -1064,13 +1049,19 @@ public final class CompactorScene: SKScene {
                     glow.position = node.position
                     glow.zPosition = 7
                     addChild(glow)
-                    // Hold the glow long enough for smoke capture (do not vanish at suck end).
+                    // Per-cell hold glow for smoke capture — never a full-board flash.
                     glow.run(SKAction.repeatForever(SKAction.sequence([
                         SKAction.fadeAlpha(to: 0.25, duration: 0.25),
                         SKAction.fadeAlpha(to: 0.7, duration: 0.25),
                     ])))
                 }
             }
+        }
+        updateComboCounter()
+        onToast?("CHAIN ×3")
+        if holdBoard {
+            // Evidence path: keep junk + bin art on screen; suck only happens on live clears.
+            return
         }
         var snaps = snapshotCellLooks(coords: coords)
         let cs = cellSize()
@@ -1085,42 +1076,11 @@ public final class CompactorScene: SKScene {
             )
         }
         recycleSuck(coords: coords, material: .metal, points: 800, combo: 3, snaps: snaps)
-        subtleGlow(color: SKColor(red: 0.2, green: 1, blue: 0.7, alpha: 0.55))
+        // Local glow only — no board-wide tint.
+        for c in coords {
+            glowClearedCells(coords: [c], material: .metal)
+        }
         screenShake(strength: CGFloat(feel.shakeRecycle) * 1.4)
-        onToast?("CHAIN ×3")
-        // Keep a mid-bin banner flash for smoke (~1.2s).
-        let banner = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        banner.text = "RECYCLE"
-        banner.fontSize = 36
-        banner.fontColor = SKColor(red: 0.1, green: 1, blue: 0.9, alpha: 1)
-        banner.position = CGPoint(x: size.width * 0.5, y: size.height * 0.58)
-        banner.zPosition = 80
-        banner.setScale(0.6)
-        addChild(banner)
-        banner.run(SKAction.sequence([
-            SKAction.group([
-                SKAction.scale(to: 1.15, duration: 0.18),
-                SKAction.fadeAlpha(to: 1, duration: 0.1),
-            ]),
-            SKAction.wait(forDuration: 0.9),
-            SKAction.fadeOut(withDuration: 0.25),
-            SKAction.removeFromParent(),
-        ]))
-        let chain = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        chain.text = "CHAIN ×3"
-        chain.fontSize = 28
-        chain.fontColor = SKColor(red: 1, green: 0.3, blue: 0.85, alpha: 1)
-        chain.position = CGPoint(x: size.width * 0.5, y: size.height * 0.52)
-        chain.zPosition = 81
-        chain.alpha = 0
-        addChild(chain)
-        chain.run(SKAction.sequence([
-            SKAction.wait(forDuration: 0.15),
-            SKAction.fadeIn(withDuration: 0.12),
-            SKAction.wait(forDuration: 1.0),
-            SKAction.fadeOut(withDuration: 0.25),
-            SKAction.removeFromParent(),
-        ]))
     }
 
     private func materialGlow(_ material: Material) -> SKColor {
@@ -1488,14 +1448,11 @@ public final class CompactorScene: SKScene {
                         node.run(SKAction.sequence([drop, bounce]), withKey: "settle")
                     }
                 } else {
-                    if let plateTex {
-                        node.texture = plateTex
-                    } else {
-                        node.texture = nil
-                    }
-                    node.color = SKColor(white: 1, alpha: 0.04)
-                    node.colorBlendFactor = 1
-                    node.alpha = 1
+                    // Fully clear — never leave a grey CellPlate carpet over BinInterior.
+                    node.texture = nil
+                    node.color = .clear
+                    node.colorBlendFactor = 0
+                    node.alpha = 0
                     node.setScale(1)
                     node.size = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
                     if let icon = node.childNode(withName: "icon") as? SKSpriteNode {
@@ -1885,7 +1842,7 @@ public final class CompactorScene: SKScene {
         _ = engine.slamPress()
         handleEvents()
         if engine.cascadeActive { cascadeSettleAcc = 0 }
-        softBackgroundPulse()
+        // Per-cell effects only — no full-board pulse.
         render(immediate: false)
     }
     public func revive() {

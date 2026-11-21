@@ -158,6 +158,14 @@ struct GameContainerView: View {
                     .transition(.opacity)
                     .zIndex(50)
             }
+
+            // Game-over is an overlay (not a sheet) so sim screenshots always catch
+            // score / best / retry — sheets often failed to present under smoke.
+            if showContinue {
+                gameOverOverlay
+                    .transition(.opacity)
+                    .zIndex(55)
+            }
         }
         .onAppear(perform: bootstrap)
         .onDisappear {
@@ -181,65 +189,68 @@ struct GameContainerView: View {
                 raccoonBounce = 1.0
             }
         }
-        .sheet(isPresented: $showContinue) {
-            ZStack {
-                NeonTheme.bgBottom.ignoresSafeArea()
-                NeonPanel {
-                    VStack(spacing: 14) {
-                        BundleImage(name: "RaccoonPanic")
-                            .scaledToFit()
-                            .frame(width: 100, height: 100)
-                        Text(isNewBest ? "NEW BEST" : (nearMiss ? "SO CLOSE" : "BIN FULL"))
-                            .font(.title2.bold())
-                            .foregroundStyle(isNewBest ? NeonTheme.teal : NeonTheme.magenta)
-                        Text("\(sheetScore)")
-                            .font(.system(size: 44, weight: .black, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(
-                                LinearGradient(colors: [.white, NeonTheme.teal], startPoint: .leading, endPoint: .trailing)
-                            )
-                            .contentTransition(.numericText())
-                            .animation(.easeOut(duration: 0.12), value: sheetScore)
-                        Text(isNewBest
-                             ? "Best \(overScore) · you beat \(overBestBefore)"
-                             : "Best \(max(overBestBefore, overScore))"
-                               + (profile.dailyStreak > 0 ? " · streak \(profile.dailyStreak)d" : ""))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(NeonTheme.muted)
-                        Text(nearMiss
-                             ? "One revive (opt-in ad) or jump straight back in."
-                             : "Revive once with an opt-in ad, or play again now.")
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(NeonTheme.muted)
-                        NeonButton(title: "Play again") {
+    }
+
+    /// Full-screen game-over panel — score, best, retry. Overlay (not sheet) so
+    /// fit/smoke screenshots and the later Game Center rank hook stay reliable.
+    private var gameOverOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.72).ignoresSafeArea()
+            NeonPanel {
+                VStack(spacing: 14) {
+                    BundleImage(name: "RaccoonPanic")
+                        .scaledToFit()
+                        .frame(width: 100, height: 100)
+                    Text(isNewBest ? "NEW BEST" : (nearMiss ? "SO CLOSE" : "BIN FULL"))
+                        .font(.title2.bold())
+                        .foregroundStyle(isNewBest ? NeonTheme.teal : NeonTheme.magenta)
+                    Text("\(sheetScore)")
+                        .font(.system(size: 44, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(
+                            LinearGradient(colors: [.white, NeonTheme.teal], startPoint: .leading, endPoint: .trailing)
+                        )
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.12), value: sheetScore)
+                    Text(isNewBest
+                         ? "Best \(overScore) · you beat \(overBestBefore)"
+                         : "Best \(max(overBestBefore, overScore))"
+                           + (profile.dailyStreak > 0 ? " · streak \(profile.dailyStreak)d" : ""))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.muted)
+                    Text(nearMiss
+                         ? "One revive (opt-in ad) or jump straight back in."
+                         : "Revive once with an opt-in ad, or play again now.")
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(NeonTheme.muted)
+                    NeonButton(title: "Play again") {
+                        showContinue = false
+                        Task { await playAgainNow() }
+                    }
+                    NeonButton(title: "Revive (ad)", style: .secondary) {
+                        Task {
+                            // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
+                            await AdsBootstrap.startAfterFirstWinIfNeeded()
+                            let ok = await AdsService.shared.showRewarded(placement: "revive")
                             showContinue = false
-                            Task { await playAgainNow() }
-                        }
-                        NeonButton(title: "Revive (ad)", style: .secondary) {
-                            Task {
-                                // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
-                                await AdsBootstrap.startAfterFirstWinIfNeeded()
-                                let ok = await AdsService.shared.showRewarded(placement: "revive")
-                                showContinue = false
-                                if ok {
-                                    continued = true
-                                    scene.revive()
-                                    AudioService.shared.playMusic("game_loop")
-                                } else {
-                                    await finalizeOver()
-                                }
+                            if ok {
+                                continued = true
+                                scene.revive()
+                                AudioService.shared.playMusic("game_loop")
+                            } else {
+                                await finalizeOver()
                             }
                         }
-                        NeonButton(title: "Clock out", style: .ghost) {
-                            showContinue = false
-                            Task { await finalizeOver() }
-                        }
+                    }
+                    NeonButton(title: "Clock out", style: .ghost) {
+                        showContinue = false
+                        Task { await finalizeOver() }
                     }
                 }
-                .padding()
             }
-            .presentationDetents([.medium, .large])
+            .padding(22)
         }
+        .accessibilityLabel("Game over")
     }
 
     /// Lean top bar: pause · bandit · score · level · ONE current goal.
@@ -592,13 +603,12 @@ struct GameContainerView: View {
                 scene.autoplay = false
                 raccoonMood = .panic
                 nearMiss = true
-                // Smoke-only staged board — lock sheet score to that board, not a stale HUD.
+                // Smoke-only staged board — lock overlay score to that board, not a stale HUD.
                 captureGameOverScore(scene.engine.state.score)
                 lastState = scene.engine.state
                 syncHUD()
-                // Defer past first layout — same-turn sheet flags no-op on soft
-                // switches; a short beat keeps magenta/teal markers in the frame.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                // Overlay presents same-turn; brief defer keeps first layout stable.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                     showContinue = true
                 }
             }
