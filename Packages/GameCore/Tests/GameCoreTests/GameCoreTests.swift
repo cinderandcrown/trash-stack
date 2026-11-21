@@ -204,6 +204,11 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(FeelConfig.fallback.cascadeStepSec, 0.30, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.dasDelaySec, 0.16, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.045, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.cellTweenSec, 0.075, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.rotateTweenSec, 0.08, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.settleBounceSec, 0.14, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(feel.cellTweenSec, 0.06)
+        XCTAssertLessThanOrEqual(feel.cellTweenSec, 0.09)
     }
 
     func testComboScoreEscalatesWithCap() {

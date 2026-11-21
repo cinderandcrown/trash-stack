@@ -68,7 +68,7 @@ def load_rows(path: pathlib.Path):
         i = x * bpp
         return rows[y][i], rows[y][i + 1], rows[y][i + 2]
 
-    return sample
+    return sample, width, height
 
 
 def main() -> int:
@@ -76,7 +76,7 @@ def main() -> int:
         print(f"usage: {sys.argv[0]} path.png", file=sys.stderr)
         return 2
     path = pathlib.Path(sys.argv[1])
-    sample = load_rows(path)
+    sample, width, height = load_rows(path)
     # Reject phoenix splash.
     splash_dark = sum(
         1
@@ -94,21 +94,25 @@ def main() -> int:
         print(f"FAIL game-over is publisher splash: {path.name}", file=sys.stderr)
         return 1
 
+    # Sample bands cover both SE (shorter) and Pro (Dynamic Island) layouts —
+    # same thresholds as before; wider scan so a real overlay is not missed.
     panel = title = btn = 0
-    for fy in (0.40, 0.48, 0.55, 0.62):
-        for fx in (0.25, 0.40, 0.50, 0.60, 0.75):
+    for fy in (0.32, 0.38, 0.44, 0.50, 0.56, 0.62, 0.68):
+        for fx in (0.22, 0.35, 0.50, 0.65, 0.78):
             r, g, b = sample(fx, fy)
             if r < 30 and g < 40 and b < 50:
                 panel += 1
-    for fy in (0.34, 0.36, 0.38, 0.40):
-        for fx in (0.35, 0.45, 0.55, 0.65):
+    for fy in (0.24, 0.28, 0.32, 0.36, 0.40, 0.44, 0.48):
+        for fx in (0.30, 0.40, 0.50, 0.60, 0.70):
             r, g, b = sample(fx, fy)
-            if (g > 200 and b > 180 and r < 40) or (r > 180 and b > 100 and g < 120):
+            # NEW BEST teal or SO CLOSE / BIN FULL magenta.
+            if (g > 190 and b > 170 and r < 60) or (r > 170 and b > 90 and g < 130):
                 title += 1
-    for fy in (0.64, 0.66, 0.68):
-        for fx in (0.25, 0.35, 0.45, 0.55, 0.65, 0.75):
+    for fy in (0.52, 0.56, 0.60, 0.64, 0.68, 0.72, 0.76):
+        for fx in (0.22, 0.32, 0.42, 0.52, 0.62, 0.72):
             r, g, b = sample(fx, fy)
-            if g > 180 and r > 100 and b > 100:
+            # Play-again CTA (teal/gold gradient).
+            if g > 160 and r > 80 and b > 80:
                 btn += 1
     if panel < 8 or title < 1 or btn < 3:
         print(
@@ -116,7 +120,10 @@ def main() -> int:
             file=sys.stderr,
         )
         return 1
-    print(f"fit game-over OK {path.name}: panel={panel} title={title} btn={btn}")
+    print(
+        f"fit game-over OK {path.name}: panel={panel} title={title} btn={btn} "
+        f"({width}x{height})"
+    )
     return 0
 
 

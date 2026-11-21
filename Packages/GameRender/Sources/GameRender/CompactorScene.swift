@@ -52,6 +52,13 @@ public final class CompactorScene: SKScene {
     private var visualX: CGFloat = 0
     private var visualY: CGFloat = 0
     private var hasVisualPose = false
+    /// Eased cell-to-cell tween (logic jumps instantly; display catches up in ~75ms).
+    private var poseFromX: CGFloat = 0
+    private var poseFromY: CGFloat = 0
+    private var poseToX: CGFloat = 0
+    private var poseToY: CGFloat = 0
+    private var poseTweenStart: TimeInterval = 0
+    private var poseTweening = false
     private var snatchBusy = false
     /// Brief disco flash after a big combo clear.
     private var discoUntil: TimeInterval = 0
@@ -773,8 +780,10 @@ public final class CompactorScene: SKScene {
     }
 
     private func smoothActivePose(dt: CGFloat) {
+        _ = dt
         guard let p = engine.state.active else {
             hasVisualPose = false
+            poseTweening = false
             return
         }
         let targetX = CGFloat(p.x)
@@ -782,13 +791,30 @@ public final class CompactorScene: SKScene {
         if !hasVisualPose {
             visualX = targetX
             visualY = targetY
+            poseToX = targetX
+            poseToY = targetY
             hasVisualPose = true
-        } else {
-            // Lateral ease; vertical chase with a bit of lag for continuous fall.
-            let lx = min(1, dt * CGFloat(feel.fallLerpLateral))
-            let ly = min(1, dt * CGFloat(feel.fallLerpVertical))
-            visualX += (targetX - visualX) * lx
-            visualY += (targetY - visualY) * ly
+            poseTweening = false
+        } else if abs(targetX - poseToX) > 0.001 || abs(targetY - poseToY) > 0.001 {
+            // New discrete cell — short ease-out tween (input already applied in engine).
+            poseFromX = visualX
+            poseFromY = visualY
+            poseToX = targetX
+            poseToY = targetY
+            poseTweenStart = CACurrentMediaTime()
+            poseTweening = true
+        }
+        if poseTweening {
+            let dur = max(0.06, min(0.09, feel.cellTweenSec))
+            let t = min(1, (CACurrentMediaTime() - poseTweenStart) / dur)
+            let eased = 1 - pow(1 - t, 3)
+            visualX = poseFromX + (poseToX - poseFromX) * CGFloat(eased)
+            visualY = poseFromY + (poseToY - poseFromY) * CGFloat(eased)
+            if t >= 1 {
+                visualX = poseToX
+                visualY = poseToY
+                poseTweening = false
+            }
         }
         layoutActiveNodes()
     }
@@ -841,6 +867,7 @@ public final class CompactorScene: SKScene {
                 }
                 let combo = max(1, engine.state.combo)
                 presentClearBurst(across: coords)
+                presentRecycleCallout(cells: cells, material: material, coords: coords)
                 recycleSuck(coords: coords, material: material, points: score, combo: combo, snaps: snaps)
                 // Per-cell glow only — never a full-board flash or bin tint.
                 subtleGlow(color: materialGlow(material))
@@ -858,12 +885,15 @@ public final class CompactorScene: SKScene {
                 }
                 // Small score pop — fades in 0.6s; combo lives on the anchored counter.
                 spawnScorePipsBesideBoard(points: score)
+                let clearPt = coords.first.map { positionFor(x: $0.x, boardY: $0.y) }
+                    ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45)
                 spawnParticle(
                     named: combo >= 3 ? "SparkMagenta" : "SparkTeal",
-                    at: coords.first.map { positionFor(x: $0.x, boardY: $0.y) } ?? CGPoint(x: size.width * 0.5, y: size.height * 0.45),
+                    at: clearPt,
                     count: min(28, 8 + cells + combo * 2)
                 )
-                _ = cells
+                spawnParticle(named: "DebrisNeon", at: clearPt, count: min(16, 4 + cells))
+                onToast?("\(cells) \(material.rawValue.uppercased()) = RECYCLED")
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
                 cheerUntil = CACurrentMediaTime() + 1.2
@@ -964,22 +994,71 @@ public final class CompactorScene: SKScene {
         let root = SKNode()
         root.name = tag
         root.zPosition = 4
-        // Brighter landing ghost so the drop target reads on a phone at arm's length.
-        root.alpha = 0.55
+        root.alpha = 1
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
         let mat = p.def.material
-        let color = plateColor(for: p.id, material: mat).withAlphaComponent(0.72)
-        do {
-            let shape = p.def.rotations[p.rot % p.def.rotations.count]
-            for off in shape {
-                let n = SKSpriteNode(color: color, size: CGSize(width: cs.width - cellPad, height: cs.height - cellPad))
-                n.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
-                root.addChild(n)
-            }
+        let stroke = plateColor(for: p.id, material: mat)
+        let shape = p.def.rotations[p.rot % p.def.rotations.count]
+        let pad: CGFloat = 1.5
+        for off in shape {
+            let w = max(4, cs.width - cellPad - pad)
+            let h = max(4, cs.height - cellPad - pad)
+            let path = CGPath(
+                roundedRect: CGRect(x: -w / 2, y: -h / 2, width: w, height: h),
+                cornerWidth: min(6, w * 0.22),
+                cornerHeight: min(6, h * 0.22),
+                transform: nil
+            )
+            let outline = SKShapeNode(path: path)
+            // Translucent outline of the real piece — not a solid opaque plate.
+            outline.strokeColor = stroke.withAlphaComponent(0.9)
+            outline.fillColor = stroke.withAlphaComponent(0.08)
+            outline.lineWidth = 2.0
+            outline.glowWidth = 0.5
+            outline.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
+            root.addChild(outline)
         }
         root.position = positionForBoard(x: CGFloat(p.x), y: CGFloat(landY))
+    }
+
+    /// Short reason label over a match clear so recycles read as intentional, not vanishing.
+    private func presentRecycleCallout(cells: Int, material: Material, coords: [BoardCoord]) {
+        let label = "\(cells) \(material.rawValue.uppercased()) = RECYCLED"
+        let node = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        node.text = label
+        node.fontSize = 15
+        node.fontColor = SKColor(red: 0.05, green: 0.95, blue: 0.92, alpha: 1)
+        node.horizontalAlignmentMode = .center
+        node.verticalAlignmentMode = .center
+        node.zPosition = 72
+        if let first = coords.first {
+            var sx = 0
+            var sy = 0
+            for c in coords { sx += c.x; sy += c.y }
+            let cx = sx / max(1, coords.count)
+            let cy = sy / max(1, coords.count)
+            node.position = positionFor(x: cx, boardY: cy)
+            _ = first
+        } else {
+            node.position = CGPoint(x: size.width * 0.5, y: size.height * 0.55)
+        }
+        node.setScale(0.7)
+        node.alpha = 0
+        addChild(node)
+        node.run(SKAction.sequence([
+            SKAction.group([
+                SKAction.fadeAlpha(to: 1, duration: 0.06),
+                SKAction.scale(to: 1.08, duration: 0.1),
+            ]),
+            SKAction.wait(forDuration: 0.45),
+            SKAction.group([
+                SKAction.fadeOut(withDuration: 0.22),
+                SKAction.moveBy(x: 0, y: 18, duration: 0.22),
+            ]),
+            SKAction.removeFromParent(),
+        ]))
     }
 
     private func subtleGlow(color: SKColor) {
@@ -1032,8 +1111,24 @@ public final class CompactorScene: SKScene {
         guard let p = engine.state.active else { return }
         visualX = CGFloat(p.x)
         visualY = CGFloat(p.y)
+        poseToX = visualX
+        poseToY = visualY
+        poseTweening = false
         hasVisualPose = true
         layoutActiveNodes()
+    }
+
+    /// Quick ease-out rotation; engine already holds the new rot — display catches up.
+    private func animateActiveRotation(clockwise: Bool) {
+        let delta: CGFloat = clockwise ? -(.pi / 2) : (.pi / 2)
+        rebuildActiveNodesIfNeeded()
+        guard let root = activeRoot else { return }
+        root.removeAction(forKey: "rotateTween")
+        root.zRotation = -delta
+        let dur = max(0.05, min(0.1, feel.rotateTweenSec))
+        let spin = SKAction.rotate(toAngle: 0, duration: dur, shortestUnitArc: true)
+        spin.timingMode = .easeOut
+        root.run(spin, withKey: "rotateTween")
     }
 
     public func presentPressMoment() {
@@ -1731,7 +1826,7 @@ public final class CompactorScene: SKScene {
             }
             movedCols = target
             if nudged {
-                // Ease toward discrete cell — smoothActivePose does the rest.
+                // Logic moved instantly; smoothActivePose eases the sprite ~75ms.
                 onPieceSnap?()
             }
             render(immediate: false)
@@ -1759,8 +1854,7 @@ public final class CompactorScene: SKScene {
         if dist < 32, elapsed < 0.35 {
             let clockwise = start.x >= midX
             if noteLockResetMove({ engine.tryRotate(clockwise: clockwise) }) {
-                rebuildActiveNodesIfNeeded()
-                snapActivePose()
+                animateActiveRotation(clockwise: clockwise)
                 onPieceSnap?()
             }
             render(immediate: false)
@@ -1795,22 +1889,20 @@ public final class CompactorScene: SKScene {
 
     public func moveLeft() {
         if noteLockResetMove({ engine.tryMove(dx: -1, dy: 0) }) {
-            snapActivePose()
+            // Keep input instant in the engine; display eases via smoothActivePose.
             onPieceSnap?()
         }
         render(immediate: false)
     }
     public func moveRight() {
         if noteLockResetMove({ engine.tryMove(dx: 1, dy: 0) }) {
-            snapActivePose()
             onPieceSnap?()
         }
         render(immediate: false)
     }
     public func rotate() {
         if noteLockResetMove({ engine.tryRotate(clockwise: true) }) {
-            rebuildActiveNodesIfNeeded()
-            snapActivePose()
+            animateActiveRotation(clockwise: true)
             onPieceSnap?()
         }
         render(immediate: false)

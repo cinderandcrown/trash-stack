@@ -10,6 +10,10 @@ public struct FeelConfig: Codable, Sendable, Equatable {
     public var lockDelaySec: Double
     public var fallLerpLateral: Double
     public var fallLerpVertical: Double
+    /// Short eased tween between discrete cells (fall / slide). Keep 60–90ms.
+    public var cellTweenSec: Double
+    /// Quick ease when the active piece rotates.
+    public var rotateTweenSec: Double
     public var recycleSuckSec: Double
     public var settleBounceSec: Double
     public var pressSlamDownSec: Double
@@ -37,8 +41,10 @@ public struct FeelConfig: Codable, Sendable, Equatable {
         lockDelaySec: 0.50,
         fallLerpLateral: 42,
         fallLerpVertical: 30,
+        cellTweenSec: 0.075,
+        rotateTweenSec: 0.08,
         recycleSuckSec: 0.34,
-        settleBounceSec: 0.10,
+        settleBounceSec: 0.14,
         pressSlamDownSec: 0.12,
         pressSlamUpSec: 0.16,
         hitStopShortSec: 0.05,

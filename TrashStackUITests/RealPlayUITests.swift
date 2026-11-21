@@ -22,6 +22,8 @@ final class RealPlayUITests: XCTestCase {
         // Title → PLAY (harness forces title so this is a visible New Game).
         let play = app.buttons["PLAY"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 25), "PLAY button missing on title")
+        // Hold on title so recordVideo (started once the app is up) captures the brand frame.
+        Thread.sleep(forTimeInterval: 1.2)
         play.tap()
 
         let gotIt = app.buttons["GOT IT — PLAY"].firstMatch
