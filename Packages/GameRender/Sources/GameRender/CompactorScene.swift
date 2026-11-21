@@ -70,6 +70,10 @@ public final class CompactorScene: SKScene {
     /// Accumulated finger delta in points for 1:1 column tracking.
     private var dragAccumX: CGFloat = 0
     private var softDragging = false
+    private var softDragAcc: TimeInterval = 0
+    /// One recycle callout at a time (queue the rest).
+    private var recycleCalloutBusy = false
+    private var recycleCalloutQueue: [(cells: Int, material: Material, coords: [BoardCoord])] = []
 
     /// Small toast text for SwiftUI banner (not big mid-board labels).
     public var onToast: ((String) -> Void)?
@@ -501,10 +505,10 @@ public final class CompactorScene: SKScene {
     private func cellSize() -> CGSize {
         let cols = CGFloat(engine.state.board.config.cols)
         let rows = CGFloat(engine.state.board.config.visibleRows)
-        // ~8px side margins; fit height so the bin uses the SpriteView, not letterbox bars.
+        // Side margins; leave chrome below the bin so SLAM / press meter never cover cells.
         let sidePad: CGFloat = 8
         let topPad: CGFloat = 28 // room for anchored combo counter
-        let bottomPad: CGFloat = 4
+        let bottomPad: CGFloat = 56
         let maxByW = max(8, (size.width - sidePad * 2) / cols)
         let maxByH = max(8, (size.height - topPad - bottomPad) / rows)
         let s = min(maxByW, maxByH)
@@ -517,9 +521,10 @@ public final class CompactorScene: SKScene {
         let rows = CGFloat(engine.state.board.config.visibleRows)
         let totalW = cs.width * cols
         let totalH = cs.height * rows
-        // Center in the SpriteView with a small top band for the combo counter.
+        // Top band for combo; bottom band reserved so playfield sits above SLAM chrome.
         let topPad: CGFloat = 28
-        let y = max(0, (size.height - totalH - topPad) * 0.5)
+        let bottomPad: CGFloat = 56
+        let y = max(bottomPad, (size.height - totalH - topPad - bottomPad) * 0.5 + bottomPad)
         return CGPoint(
             x: (size.width - totalW) / 2,
             y: y
@@ -633,13 +638,17 @@ public final class CompactorScene: SKScene {
             }
             render(immediate: false)
         }
-        // Soft-drag (slow finger down) — one cell at a time, never latches after touch loss.
+        // Soft-drag — rate-limited so each cell eases ~60–90ms (never spam softDrop every frame).
         if softDragging {
-            _ = engine.softDrop()
-            if engine.isGrounded() {
-                softDragging = false
+            softDragAcc += Double(dt)
+            let step = max(0.06, min(0.09, feel.cellTweenSec))
+            if softDragAcc >= step {
+                softDragAcc = 0
+                _ = engine.softDrop()
+                if engine.isGrounded() {
+                    softDragging = false
+                }
             }
-            render(immediate: false)
         }
     }
 
@@ -777,6 +786,7 @@ public final class CompactorScene: SKScene {
         dragAccumX = 0
         movedCols = 0
         softDragging = false
+        softDragAcc = 0
     }
 
     private func smoothActivePose(dt: CGFloat) {
@@ -1023,41 +1033,55 @@ public final class CompactorScene: SKScene {
         root.position = positionForBoard(x: CGFloat(p.x), y: CGFloat(landY))
     }
 
-    /// Short reason label over a match clear so recycles read as intentional, not vanishing.
+    /// Short reason label over a match clear — one at a time, ~1s on screen.
     private func presentRecycleCallout(cells: Int, material: Material, coords: [BoardCoord]) {
-        let label = "\(cells) \(material.rawValue.uppercased()) = RECYCLED"
+        recycleCalloutQueue.append((cells, material, coords))
+        drainRecycleCalloutQueue()
+    }
+
+    private func drainRecycleCalloutQueue() {
+        guard !recycleCalloutBusy, !recycleCalloutQueue.isEmpty else { return }
+        recycleCalloutBusy = true
+        let item = recycleCalloutQueue.removeFirst()
+        let label = "\(item.cells) \(item.material.rawValue.uppercased()) = RECYCLED"
         let node = SKLabelNode(fontNamed: "AvenirNext-Heavy")
+        node.name = "recycleCallout"
         node.text = label
         node.fontSize = 15
         node.fontColor = SKColor(red: 0.05, green: 0.95, blue: 0.92, alpha: 1)
         node.horizontalAlignmentMode = .center
         node.verticalAlignmentMode = .center
         node.zPosition = 72
-        if let first = coords.first {
+        if !item.coords.isEmpty {
             var sx = 0
             var sy = 0
-            for c in coords { sx += c.x; sy += c.y }
-            let cx = sx / max(1, coords.count)
-            let cy = sy / max(1, coords.count)
+            for c in item.coords { sx += c.x; sy += c.y }
+            let cx = sx / max(1, item.coords.count)
+            let cy = sy / max(1, item.coords.count)
             node.position = positionFor(x: cx, boardY: cy)
-            _ = first
         } else {
             node.position = CGPoint(x: size.width * 0.5, y: size.height * 0.55)
         }
         node.setScale(0.7)
         node.alpha = 0
+        // Drop any leftover callout so labels never stack.
+        enumerateChildNodes(withName: "recycleCallout") { n, _ in n.removeFromParent() }
         addChild(node)
         node.run(SKAction.sequence([
             SKAction.group([
-                SKAction.fadeAlpha(to: 1, duration: 0.06),
-                SKAction.scale(to: 1.08, duration: 0.1),
+                SKAction.fadeAlpha(to: 1, duration: 0.08),
+                SKAction.scale(to: 1.06, duration: 0.12),
             ]),
-            SKAction.wait(forDuration: 0.45),
+            SKAction.wait(forDuration: 1.0),
             SKAction.group([
-                SKAction.fadeOut(withDuration: 0.22),
-                SKAction.moveBy(x: 0, y: 18, duration: 0.22),
+                SKAction.fadeOut(withDuration: 0.2),
+                SKAction.moveBy(x: 0, y: 14, duration: 0.2),
             ]),
             SKAction.removeFromParent(),
+            SKAction.run { [weak self] in
+                self?.recycleCalloutBusy = false
+                self?.drainRecycleCalloutQueue()
+            },
         ]))
     }
 
@@ -1505,6 +1529,16 @@ public final class CompactorScene: SKScene {
         let vis = engine.state.board.config.visibleRows
         let cs = cellSize()
         let plateTex = tex("CellPlate")
+        let gravityMoves = immediate ? [] : engine.consumeGravityMoves()
+        let fallFrom: [String: CGPoint] = {
+            var map: [String: CGPoint] = [:]
+            for m in gravityMoves {
+                let key = "\(m.to.x),\(m.to.y)"
+                map[key] = positionFor(x: m.from.x, boardY: m.from.y)
+            }
+            return map
+        }()
+        let fallDur = max(0.06, min(0.09, feel.cellTweenSec))
 
         // Every occupied cell is a full rounded-square plate + material art on top
         // (no 2×2 merged sprites — stacking must stay cell-clear).
@@ -1538,22 +1572,29 @@ public final class CompactorScene: SKScene {
                         }
                     }
                     let dest = positionFor(x: x, boardY: boardY)
+                    let key = "\(x),\(boardY)"
                     if immediate {
                         node.removeAction(forKey: "settle")
                         node.position = dest
                         node.setScale(1)
+                    } else if let from = fallFrom[key] {
+                        // Gravity pack — ease the sprite from its pre-clear seat into place.
+                        node.removeAction(forKey: "settle")
+                        node.position = from
+                        let drop = SKAction.move(to: dest, duration: fallDur)
+                        drop.timingMode = .easeIn
+                        node.run(drop, withKey: "settle")
                     } else if hypot(node.position.x - dest.x, node.position.y - dest.y) > 1 {
                         node.removeAction(forKey: "settle")
-                        let drop = SKAction.move(to: dest, duration: feel.settleBounceSec)
-                        drop.timingMode = .easeIn
-                        let bounce = SKAction.sequence([
-                            SKAction.moveBy(x: 0, y: 4, duration: 0.05),
-                            SKAction.moveBy(x: 0, y: -4, duration: 0.06),
-                        ])
-                        node.run(SKAction.sequence([drop, bounce]), withKey: "settle")
+                        let drop = SKAction.move(to: dest, duration: fallDur)
+                        drop.timingMode = .easeOut
+                        node.run(drop, withKey: "settle")
+                    } else {
+                        node.position = dest
                     }
                 } else {
                     // Fully clear — never leave a grey CellPlate carpet over BinInterior.
+                    node.removeAction(forKey: "settle")
                     node.texture = nil
                     node.color = .clear
                     node.colorBlendFactor = 0

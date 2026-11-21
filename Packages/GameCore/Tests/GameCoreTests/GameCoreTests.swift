@@ -31,6 +31,80 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(groups[0].cells.count, 4)
     }
 
+    /// Match clear must only remove the matched cluster; unsupported cells pack; nothing floats.
+    func testPacedMatchClearOnlyRemovesMatchedAndPacksGravity() {
+        var eng = GameEngine(seed: 77)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                // 4 metal along the floor — the match.
+                (0, rows - 1, Cell(piece: .can, material: .metal)),
+                (1, rows - 1, Cell(piece: .can, material: .metal)),
+                (2, rows - 1, Cell(piece: .can, material: .metal)),
+                (3, rows - 1, Cell(piece: .can, material: .metal)),
+                // Paper resting on the metal — must fall after the clear, not vanish.
+                (0, rows - 2, Cell(piece: .crate, material: .paper)),
+                // Isolated 3-cell metal L — must survive (follow-ups stay 4+).
+                (5, rows - 1, Cell(piece: .bentPipe, material: .metal)),
+                (6, rows - 1, Cell(piece: .bentPipe, material: .metal)),
+                (6, rows - 2, Cell(piece: .bentPipe, material: .metal)),
+                // Lone orange paper — not in the match.
+                (7, rows - 1, Cell(piece: .crate, material: .paper)),
+            ],
+            // Lock a glass piece on col 4 so resolveAfterLock fires the paced clear.
+            active: ActivePiece(id: .bottle, x: 4, y: 0)
+        )
+        eng.hardDrop()
+
+        // After paced clear, gravity has already packed — no unsupported cells.
+        assertNoFloatingCells(eng.state.board)
+
+        // Matched metal gone; paper from above packed onto the floor.
+        XCTAssertNil(eng.state.board[1, rows - 1])
+        XCTAssertNil(eng.state.board[2, rows - 1])
+        XCTAssertNil(eng.state.board[3, rows - 1])
+        XCTAssertEqual(eng.state.board[0, rows - 1]?.material, .paper)
+        XCTAssertNil(eng.state.board[0, rows - 2])
+
+        // Non-matched pieces still present (possibly packed).
+        XCTAssertEqual(eng.state.board[5, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 2]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[7, rows - 1]?.material, .paper)
+
+        // Gravity moves were recorded for the falling paper.
+        let fell = eng.lastGravityMoves.contains { $0.to.x == 0 && $0.cell.material == .paper }
+        XCTAssertTrue(fell || eng.state.board[0, rows - 1]?.material == .paper)
+
+        // Drain follow-up waves — the 3-cell L must still not recycle.
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            _ = eng.drainEvents()
+            assertNoFloatingCells(eng.state.board)
+            guardTicks += 1
+        }
+        XCTAssertEqual(eng.state.board[5, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 2]?.piece, .bentPipe)
+    }
+
+    private func assertNoFloatingCells(_ board: Board, file: StaticString = #filePath, line: UInt = #line) {
+        let rows = board.config.rows
+        let cols = board.config.cols
+        for x in 0..<cols {
+            var seenEmpty = false
+            for y in (0..<rows).reversed() {
+                if board[x, y] == nil {
+                    seenEmpty = true
+                } else {
+                    XCTAssertFalse(seenEmpty, "unsupported cell at (\(x),\(y))", file: file, line: line)
+                }
+            }
+        }
+    }
+
     func testStickyExcludedFromRecycle() {
         var board = Board()
         for x in 0..<4 {
@@ -241,8 +315,8 @@ final class GameCoreTests: XCTestCase {
             if peak >= 2 { break }
         }
         XCTAssertGreaterThan(recycleWaves, 0)
-        XCTAssertGreaterThanOrEqual(peak, 2, "follow-up triples should create real chains")
-        var eng = GameEngine(seed: 1)
+        XCTAssertGreaterThanOrEqual(peak, 2, "follow-up 4+ packs should create real chains")
+        let eng = GameEngine(seed: 1)
         XCTAssertEqual(eng.state.pressMeterMax, 10)
     }
 

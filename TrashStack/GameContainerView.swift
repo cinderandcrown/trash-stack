@@ -75,6 +75,7 @@ struct GameContainerView: View {
                 // UIKit SKView host — SwiftUI SpriteView+clipShape painted a flat grey void.
                 BoardSKView(scene: scene)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                     .accessibilityIdentifier("gameBoard")
                     .overlay(alignment: .topTrailing) {
                         miniNextHold
@@ -111,10 +112,14 @@ struct GameContainerView: View {
                     classicPad
                 }
 
-                // One big SLAM only when charged — sits above the home indicator.
+                // Chrome strip below the board — never overlays playfield cells.
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.top, 4)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
+                    .frame(maxWidth: .infinity)
+                    .layoutPriority(1)
+                    .background(NeonTheme.playChrome)
             }
             .safeAreaPadding(.top, 8)
             .safeAreaPadding(.bottom, 10)

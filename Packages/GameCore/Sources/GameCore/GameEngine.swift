@@ -6,6 +6,18 @@ public struct BoardCoord: Sendable, Equatable, Hashable {
     public init(_ x: Int, _ y: Int) { self.x = x; self.y = y }
 }
 
+/// One locked cell that packed downward after a clear / slam / snatch.
+public struct GravityMove: Sendable, Equatable {
+    public var cell: Cell
+    public var from: BoardCoord
+    public var to: BoardCoord
+    public init(cell: Cell, from: BoardCoord, to: BoardCoord) {
+        self.cell = cell
+        self.from = from
+        self.to = to
+    }
+}
+
 public enum GameEvent: Sendable, Equatable {
     case spawned(JunkID)
     /// `hard` is true after a slam drop — bigger impact juice.
@@ -370,6 +382,8 @@ public struct GameEngine: Sendable {
     public var paceCascades = false
     /// True while a paced cascade still has settle / follow-up waves pending.
     public private(set) var cascadeActive = false
+    /// Cells that just packed after the latest clear — scene eases sprites along these paths.
+    public private(set) var lastGravityMoves: [GravityMove] = []
     private var cascadeChain = 0
     private var cascadeHadAny = false
     private var cascadeFollowUpMin = 3
@@ -377,10 +391,11 @@ public struct GameEngine: Sendable {
     private var cascadeNeedsSpawn = false
 
     private mutating func resolveAfterLock() {
+        // Follow-ups stay at 4+ — triples must not vanish after an unrelated clear.
         if paceCascades {
-            beginPacedCascade(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3, needsSpawn: true)
+            beginPacedCascade(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4, needsSpawn: true)
         } else {
-            runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3)
+            runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4)
             finishAfterCascades(needsSpawn: true)
         }
     }
@@ -393,28 +408,35 @@ public struct GameEngine: Sendable {
         }
     }
 
-    /// Start paced cascade: emit first wave (if any); scene calls `advanceCascade()` after a beat.
+    /// Start paced cascade: clear matched cells, then pack gravity immediately so nothing floats.
     private mutating func beginPacedCascade(firstWaveMinSize: Int, followUpMinSize: Int, needsSpawn: Bool) {
         cascadeChain = 0
         cascadeHadAny = false
         cascadeFollowUpMin = followUpMinSize
         cascadeNeedsSpawn = needsSpawn
         cascadeActive = true
+        lastGravityMoves = []
         let cleared = emitCascadeWave(minSize: firstWaveMinSize)
-        if !cleared {
+        if cleared {
+            // Pack in the same step as the clear — the prior float window left mid-air stacks.
+            lastGravityMoves = applyGravity()
+        } else {
             cascadeActive = false
             state.combo = 0
             finishAfterCascades(needsSpawn: needsSpawn)
         }
     }
 
-    /// Apply gravity + next recycle wave. Returns true if another settle beat is needed.
+    /// Next recycle wave after a readable beat. Gravity already ran after the previous clear.
     @discardableResult
     public mutating func advanceCascade() -> Bool {
         guard cascadeActive else { return false }
-        applyGravity()
+        lastGravityMoves = []
         let cleared = emitCascadeWave(minSize: cascadeFollowUpMin)
-        if cleared { return true }
+        if cleared {
+            lastGravityMoves = applyGravity()
+            return true
+        }
         // Cascade done — settle orders/level, then spawn (or top-out) if this was a lock.
         if cascadeHadAny {
             bumpOrder(kind: .recycleAny, amount: 1)
@@ -429,6 +451,13 @@ public struct GameEngine: Sendable {
         cascadeNeedsSpawn = false
         finishAfterCascades(needsSpawn: needsSpawn)
         return false
+    }
+
+    /// Consume gravity moves after the scene has started fall tweens.
+    public mutating func consumeGravityMoves() -> [GravityMove] {
+        let moves = lastGravityMoves
+        lastGravityMoves = []
+        return moves
     }
 
     @discardableResult
@@ -506,21 +535,31 @@ public struct GameEngine: Sendable {
         return any
     }
 
-    private mutating func applyGravity() {
+    @discardableResult
+    private mutating func applyGravity() -> [GravityMove] {
         let cols = state.board.config.cols
         let rows = state.board.config.rows
+        var moves: [GravityMove] = []
         for x in 0..<cols {
-            var stack: [Cell] = []
+            var stack: [(y: Int, cell: Cell)] = []
             for y in (0..<rows).reversed() {
-                if let c = state.board[x, y] { stack.append(c) }
+                if let c = state.board[x, y] { stack.append((y, c)) }
             }
             for y in 0..<rows { state.board[x, y] = nil }
             var y = rows - 1
-            for c in stack {
-                state.board[x, y] = c
+            for entry in stack {
+                state.board[x, y] = entry.cell
+                if entry.y != y {
+                    moves.append(GravityMove(
+                        cell: entry.cell,
+                        from: BoardCoord(x, entry.y),
+                        to: BoardCoord(x, y)
+                    ))
+                }
                 y -= 1
             }
         }
+        return moves
     }
 
     /// Player-timed hydraulic press — crushes bottom 2 rows into scrap.
@@ -608,7 +647,7 @@ public struct GameEngine: Sendable {
     }
 
     private mutating func resolveRecyclesOnly() {
-        _ = runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 3)
+        _ = runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4)
     }
 
     /// Clusters that are one junk away from a recycle — for telegraph glow.
@@ -747,6 +786,26 @@ public struct GameEngine: Sendable {
         let e = events
         events.removeAll()
         return e
+    }
+
+    /// Test helper — install locked cells + optional active piece without a full shot scenario.
+    public mutating func seedBoardForTesting(
+        cells: [(x: Int, y: Int, cell: Cell)],
+        active: ActivePiece?
+    ) {
+        let rows = state.board.config.rows
+        let cols = state.board.config.cols
+        for y in 0..<rows {
+            for x in 0..<cols { state.board[x, y] = nil }
+        }
+        for entry in cells {
+            state.board[entry.x, entry.y] = entry.cell
+        }
+        state.active = active
+        state.over = false
+        cascadeActive = false
+        lastGravityMoves = []
+        events = []
     }
 
     /// Seed boards for App Store evidence shots.
