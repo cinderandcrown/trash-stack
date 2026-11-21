@@ -39,8 +39,8 @@ final class RealPlayUITests: XCTestCase {
             "gameBoard must appear within ~10s of launch for real-play video"
         )
 
-        // ~60s of steady inputs after board (natural GO may end early).
-        let deadline = Date().addingTimeInterval(62)
+        // ~85s of steady inputs after board so clears + SLAM settle land on camera.
+        let deadline = Date().addingTimeInterval(85)
         var gestures = 0
         var sawGameOver = false
 
@@ -79,8 +79,15 @@ final class RealPlayUITests: XCTestCase {
             if slam.exists, slam.isHittable {
                 slam.tap()
                 gestures += 1
-                Thread.sleep(forTimeInterval: 0.55)
+                Thread.sleep(forTimeInterval: 0.7)
                 continue
+            }
+            // Fallback: tap lower chrome where SLAM sits (SwiftUI hit-testing can miss the label).
+            if gestures % 6 == 5 {
+                let slamSpot = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: app.frame.midX, dy: app.frame.maxY - 36))
+                slamSpot.tap()
+                Thread.sleep(forTimeInterval: 0.15)
             }
 
             // Bias toward stacking so gravity / land / clear / overflow show up.

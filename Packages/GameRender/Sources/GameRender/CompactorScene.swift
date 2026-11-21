@@ -1763,7 +1763,8 @@ public final class CompactorScene: SKScene {
 
     private func plateRGB(for material: Material) -> (CGFloat, CGFloat, CGFloat) {
         switch material {
-        case .metal: return (0.55, 0.62, 0.78)   // steel blue-gray
+        // Metal outline kept brighter than the plate fill so the ghost never washes to white.
+        case .metal: return (0.62, 0.72, 0.92)   // steel blue-gray
         case .plastic: return (0.95, 0.22, 0.70) // magenta-pink
         case .paper: return (0.92, 0.62, 0.28)   // kraft orange
         case .glass: return (0.15, 0.88, 0.94)   // cyan

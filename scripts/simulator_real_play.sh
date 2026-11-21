@@ -161,7 +161,8 @@ if python3 -c "import sys; sys.exit(0 if float('${SS:-0}') < 1.0 else 1)" 2>/dev
 import subprocess, sys
 path = sys.argv[1]
 # Springboard = bright. Publisher splash = near-black, no neon. Play = dark + cyan/magenta neon.
-for t in range(0, 110):
+# XCTest bootstrap can exceed 2 minutes — scan well past that.
+for t in range(0, 200, 1):
     raw = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path,
          "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "96x192", "pipe:1"],
@@ -191,6 +192,16 @@ PY
   fi
 fi
 echo "real-play trim start=${SS}s (record=$RECORD_START_EPOCH game=${GAME_EPOCH:-none})" >&2
+# Guard: exported window must include play — if SS is still 0 on a long capture, force last 70s.
+if python3 -c "import sys; sys.exit(0 if float('${SS:-0}') < 1.0 else 1)" 2>/dev/null; then
+  RAW_DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$RAW" 2>/dev/null || echo 0)"
+  SS="$(python3 - <<PY
+dur=float("${RAW_DUR}" or 0)
+print(f"{max(0.0, dur - 72.0):.3f}")
+PY
+)"
+  echo "real-play trim last-resort SS=${SS}s (dur=${RAW_DUR})" >&2
+fi
 
 # simctl H.264 often tags a bogus 0.25 tbr — force CFR via fps=30 or the mux collapses
 # to ~17 frames (Lavf 63+ on CI). Never put -ss before -i on these files.

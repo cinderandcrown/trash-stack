@@ -550,7 +550,7 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThan(recycleWaves, 0)
         XCTAssertGreaterThanOrEqual(peak, 2, "follow-up 4+ packs should create real chains")
         let eng = GameEngine(seed: 1)
-        XCTAssertEqual(eng.state.pressMeterMax, 10)
+        XCTAssertEqual(eng.state.pressMeterMax, 6)
     }
 
     /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).

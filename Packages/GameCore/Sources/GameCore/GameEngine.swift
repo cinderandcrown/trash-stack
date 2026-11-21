@@ -99,8 +99,8 @@ public struct GameState: Sendable, Equatable {
         backToBack = false
         magnetCharge = 0
         pressMeter = 0
-        // SLAM is earned — ~10 locks between charges for a calmer cadence.
-        pressMeterMax = 10
+        // SLAM is earned — enough locks that a short real-play session still shows a crush.
+        pressMeterMax = 6
         snatchAvailable = true
         orders = []
         over = false

@@ -27,7 +27,7 @@ struct GameContainerView: View {
     @State private var scoreAnimTask: Task<Void, Never>?
     @State private var sheetScoreAnimTask: Task<Void, Never>?
     @State private var pressMeter = 0
-    @State private var pressMax = 8
+    @State private var pressMax = 6
     @State private var snatchReady = true
     @State private var orders: [OrderTicket] = []
     @State private var preview: [JunkID] = []
