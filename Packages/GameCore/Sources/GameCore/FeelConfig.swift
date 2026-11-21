@@ -10,6 +10,10 @@ public struct FeelConfig: Codable, Sendable, Equatable {
     public var lockDelaySec: Double
     public var fallLerpLateral: Double
     public var fallLerpVertical: Double
+    /// Eased tween between discrete cells (fall / slide). ~100–120ms so it reads at ~25fps.
+    public var cellTweenSec: Double
+    /// Ease when the active piece rotates.
+    public var rotateTweenSec: Double
     public var recycleSuckSec: Double
     public var settleBounceSec: Double
     public var pressSlamDownSec: Double
@@ -26,28 +30,33 @@ public struct FeelConfig: Codable, Sendable, Equatable {
     public var arrIntervalSec: Double
     /// Soft-drop repeat while SOFT is held.
     public var softRepeatSec: Double
+    /// Pause between paced cascade waves so the eye can follow (250–350ms).
+    public var cascadeStepSec: Double
 
     /// Keep in sync with Resources/feel.json — a load miss must not quiet the juice.
     public static let fallback = FeelConfig(
-        gravityBaseSec: 0.68,
-        gravityMinSec: 0.11,
-        gravityLevelStep: 0.048,
+        gravityBaseSec: 0.72,
+        gravityMinSec: 0.14,
+        gravityLevelStep: 0.035,
         lockDelaySec: 0.50,
         fallLerpLateral: 42,
         fallLerpVertical: 30,
+        cellTweenSec: 0.11,
+        rotateTweenSec: 0.10,
         recycleSuckSec: 0.34,
-        settleBounceSec: 0.10,
+        settleBounceSec: 0.14,
         pressSlamDownSec: 0.12,
         pressSlamUpSec: 0.16,
-        hitStopShortSec: 0.07,
-        hitStopComboSec: 0.14,
-        shakeRecycle: 16,
-        shakePress: 24,
-        flashCooldownSec: 0.07,
-        nearMissRows: 3,
+        hitStopShortSec: 0.05,
+        hitStopComboSec: 0.10,
+        shakeRecycle: 10,
+        shakePress: 16,
+        flashCooldownSec: 0.20,
+        nearMissRows: 4,
         dasDelaySec: 0.16,
         arrIntervalSec: 0.045,
-        softRepeatSec: 0.045
+        softRepeatSec: 0.045,
+        cascadeStepSec: 0.30
     )
 }
 

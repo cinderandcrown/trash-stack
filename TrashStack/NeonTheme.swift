@@ -123,6 +123,8 @@ struct NeonButton: View {
                 )
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityIdentifier(title)
     }
 
     private var foreground: Color {

@@ -66,24 +66,17 @@ struct GameContainerView: View {
 
     var body: some View {
         ZStack {
+            NeonTheme.playChrome.ignoresSafeArea()
             VStack(spacing: 0) {
                 leanHudBar
-                // No reserved empty toast bar — only claim height when a toast is live.
-                if toastText != nil {
-                    toastBanner
-                }
+                    .padding(.horizontal, 8)
 
-                // Full-bleed board — bandit + next/hold overlay so cells can use ~full width.
-                SpriteView(scene: scene)
-                    .background(Color(red: 0.05, green: 0.06, blue: 0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // Board fills remaining height; ~8px side margins via scene cellSize.
+                // UIKit SKView host — SwiftUI SpriteView+clipShape painted a flat grey void.
+                BoardSKView(scene: scene)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .topLeading) {
-                        BanditLoopView(mood: raccoonMood, size: 64)
-                            .scaleEffect(raccoonBounce)
-                            .padding(.leading, 6)
-                            .padding(.top, 6)
-                    }
+                    .clipped()
+                    .accessibilityIdentifier("gameBoard")
                     .overlay(alignment: .topTrailing) {
                         miniNextHold
                             .padding(.trailing, 6)
@@ -101,34 +94,47 @@ struct GameContainerView: View {
                                 .padding(.top, 8)
                         }
                     }
-                    .overlay(alignment: .topLeading) {
+                    .overlay(alignment: .top) {
                         if showGestureHint {
-                            Text("Drag · tap L/R rotate · swipe ↓ drop · ↑ hold")
+                            Text("Tap rotate · drag move · swipe ↓ drop · ↑ hold")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
                                 .padding(8)
                                 .background(Color.black.opacity(0.7))
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
-                                .padding(.leading, 72)
-                                .padding(.top, 8)
+                                .padding(.top, 36)
                                 .transition(.opacity)
                         }
                     }
-                    .padding(.horizontal, 2)
+                    .padding(.horizontal, 8)
 
                 if profile.classicButtons {
                     classicPad
                 }
 
-                // At most ONE power button — SLAM when charged, else SNATCH when available.
+                // Gap + chrome strip fully below the dumpster frame (never flush to the lip).
+                Color.clear.frame(height: 14)
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.bottom, 4)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity)
+                    .layoutPriority(1)
+                    .background(NeonTheme.playChrome)
             }
-            .background(NeonTheme.playChrome.ignoresSafeArea())
-            .safeAreaPadding(.top, 2)
-            .safeAreaPadding(.bottom, 4)
+            .safeAreaPadding(.top, 8)
+            .safeAreaPadding(.bottom, 10)
             .allowsHitTesting(!showHowTo && !isPaused)
+
+            // Toasts above HUD / buttons — never behind the control layer.
+            if toastText != nil {
+                VStack {
+                    toastBanner
+                        .padding(.top, 56)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
+                .zIndex(60)
+            }
 
             if showHowTo {
                 HowToPlayOverlay {
@@ -157,11 +163,20 @@ struct GameContainerView: View {
                     .transition(.opacity)
                     .zIndex(50)
             }
+
+            // Game-over is an overlay (not a sheet) so sim screenshots always catch
+            // score / best / retry — sheets often failed to present under smoke.
+            if showContinue {
+                gameOverOverlay
+                    .transition(.opacity)
+                    .zIndex(55)
+            }
         }
         .onAppear(perform: bootstrap)
         .onDisappear {
             scoreAnimTask?.cancel(); scoreAnimTask = nil
             gestureHintTask?.cancel()
+            GameKitService.shared.setPlayDeferral(false)
         }
         .onChange(of: hudScore) { _, newValue in animateScore(to: newValue) }
         .onChange(of: scenePhase) { _, phase in
@@ -179,70 +194,60 @@ struct GameContainerView: View {
                 raccoonBounce = 1.0
             }
         }
-        .sheet(isPresented: $showContinue) {
-            ZStack {
-                NeonTheme.bgBottom.ignoresSafeArea()
-                NeonPanel {
-                    VStack(spacing: 14) {
-                        BundleImage(name: "RaccoonPanic")
-                            .scaledToFit()
-                            .frame(width: 100, height: 100)
-                        Text(isNewBest ? "NEW BEST" : (nearMiss ? "SO CLOSE" : "BIN FULL"))
-                            .font(.title2.bold())
-                            .foregroundStyle(isNewBest ? NeonTheme.teal : NeonTheme.magenta)
-                        Text("\(sheetScore)")
-                            .font(.system(size: 44, weight: .black, design: .rounded))
-                            .monospacedDigit()
-                            .foregroundStyle(
-                                LinearGradient(colors: [.white, NeonTheme.teal], startPoint: .leading, endPoint: .trailing)
-                            )
-                            .contentTransition(.numericText())
-                            .animation(.easeOut(duration: 0.12), value: sheetScore)
-                        Text(isNewBest
-                             ? "Best \(overScore) · you beat \(overBestBefore)"
-                             : "Best \(max(overBestBefore, overScore))"
-                               + (profile.dailyStreak > 0 ? " · streak \(profile.dailyStreak)d" : ""))
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(NeonTheme.muted)
-                        Text(nearMiss
-                             ? "One revive (opt-in ad) or jump straight back in."
-                             : "Revive once with an opt-in ad, or play again now.")
-                            .multilineTextAlignment(.center)
-                            .foregroundStyle(NeonTheme.muted)
-                        NeonButton(title: "Play again") {
-                            showContinue = false
-                            Task { await playAgainNow() }
-                        }
-                        NeonButton(title: "Revive (ad)", style: .secondary) {
-                            Task {
-                                // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
-                                await AdsBootstrap.startAfterFirstWinIfNeeded()
-                                let ok = await AdsService.shared.showRewarded(placement: "revive")
-                                showContinue = false
-                                if ok {
-                                    continued = true
-                                    scene.revive()
-                                    AudioService.shared.playMusic("game_loop")
-                                } else {
-                                    await finalizeOver()
-                                }
-                            }
-                        }
-                        NeonButton(title: "Clock out", style: .ghost) {
-                            showContinue = false
-                            Task { await finalizeOver() }
-                        }
-                    }
-                }
-                .padding()
-            }
-            .presentationDetents([.medium, .large])
-        }
     }
 
-    /// Lean top bar: pause · score · level · ONE current goal.
+    /// Full-screen game-over panel — score, best, retry. Overlay (not sheet) so
+    /// fit/smoke screenshots and the later Game Center rank hook stay reliable.
+    private var gameOverOverlay: some View {
+        ZStack {
+            Color.black.opacity(0.72).ignoresSafeArea()
+            NeonPanel {
+                VStack(spacing: 14) {
+                    BundleImage(name: "RaccoonPanic")
+                        .scaledToFit()
+                        .frame(width: 100, height: 100)
+                    Text(isNewBest ? "NEW BEST" : (nearMiss ? "SO CLOSE" : "BIN FULL"))
+                        .font(.title2.bold())
+                        .foregroundStyle(isNewBest ? NeonTheme.teal : NeonTheme.magenta)
+                    Text(ScoreFormat.commas(sheetScore))
+                        .font(.system(size: 44, weight: .black, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(
+                            LinearGradient(colors: [.white, NeonTheme.teal], startPoint: .leading, endPoint: .trailing)
+                        )
+                        .contentTransition(.numericText())
+                        .animation(.easeOut(duration: 0.12), value: sheetScore)
+                        .accessibilityIdentifier("gameOverScore")
+                    Text(gameOverBestSubtitle)
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.muted)
+                    Text(reviveHelpText)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(NeonTheme.muted)
+                    NeonButton(title: "Play again") {
+                        showContinue = false
+                        Task { await playAgainNow() }
+                    }
+                    if !continued {
+                        NeonButton(title: reviveButtonTitle, style: .secondary) {
+                            Task { await performRevive() }
+                        }
+                    }
+                    NeonButton(title: "Clock out", style: .ghost) {
+                        showContinue = false
+                        Task { await finalizeOver() }
+                    }
+                }
+            }
+            .padding(22)
+        }
+        .accessibilityLabel("Game over")
+    }
+
+    /// Lean top bar: pause · bandit · score · level · ONE current goal.
+    /// Bandit sits beside the HUD (not on the board) so the bin keeps full width.
     private var leanHudBar: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 8) {
             Button {
                 AudioService.shared.playSFX("ui")
                 enterPause(as: .user)
@@ -256,27 +261,34 @@ struct GameContainerView: View {
             }
             .buttonStyle(.plain)
 
-            Text("\(displayScore)")
-                .font(.system(size: 26, weight: .black, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-                .contentTransition(.numericText())
+            BanditLoopView(mood: raccoonMood, size: 52)
+                .scaleEffect(raccoonBounce)
+                .accessibilityLabel("The Bandit")
 
-            Text("LVL \(hudLevel)")
-                .font(.caption.weight(.black).monospacedDigit())
-                .foregroundStyle(NeonTheme.magenta)
-
-            if let goal = orders.first(where: { !$0.done }) ?? orders.first {
-                Text(goal.label)
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(goal.done ? NeonTheme.teal : NeonTheme.muted)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.75)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(ScoreFormat.commas(displayScore))
+                    .font(.system(size: 24, weight: .black, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(.white)
+                    .contentTransition(.numericText())
+                    .accessibilityIdentifier("hudScore")
+                HStack(spacing: 8) {
+                    Text("LVL \(hudLevel)")
+                        .font(.caption.weight(.black).monospacedDigit())
+                        .foregroundStyle(NeonTheme.magenta)
+                    if let goal = orders.first(where: { !$0.done }) ?? orders.first {
+                        Text(goal.label)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(goal.done ? NeonTheme.teal : NeonTheme.muted)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.7)
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 4)
+        .padding(.vertical, 4)
     }
 
     private var toastBanner: some View {
@@ -324,57 +336,29 @@ struct GameContainerView: View {
         let pressReady = pressMeter >= pressMax
         return Group {
             if pressReady {
+                // Only big control: SLAM when charged (above home indicator).
                 Button {
                     scene.slamPress()
                     AudioService.shared.playSFX("crush")
                     HapticsService.shared.clear()
                     syncHUD()
                 } label: {
-                    Text("SLAM! TAP TO CRUSH")
-                        .font(.headline.weight(.black))
+                    Text("SLAM")
+                        .font(.title3.weight(.black))
                         .foregroundStyle(.black)
                         .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
+                        .padding(.vertical, 16)
                         .background(LinearGradient(colors: [NeonTheme.gold, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
                 .buttonStyle(.plain)
-            } else if snatchReady {
-                Button {
-                    snatchPressed = true
-                    scene.magnet()
-                    AudioService.shared.playSFX("magnet")
-                    HapticsService.shared.tap()
-                    if !profile.snatchTipShown {
-                        profile.snatchTipShown = true
-                        profile.persist()
-                        showSnatchTip = true
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 2_200_000_000)
-                            showSnatchTip = false
-                        }
-                    }
-                    syncHUD()
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 180_000_000)
-                        snatchPressed = false
-                    }
-                } label: {
-                    Text("SNATCH")
-                        .font(.headline.weight(.black))
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(LinearGradient(colors: [NeonTheme.teal, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                        .scaleEffect(snatchPressed ? 0.95 : 1)
-                }
-                .buttonStyle(.plain)
+                .accessibilityLabel("Slam press")
             } else {
-                // Meter only — no second competing button.
+                // Slim meter — no wall of buttons; snatch stays gesture/classic-pad only.
                 ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
                     .tint(NeonTheme.teal)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
+                    .accessibilityLabel("Press meter \(pressMeter) of \(pressMax)")
             }
         }
     }
@@ -540,22 +524,18 @@ struct GameContainerView: View {
     }
 
     private func showToast(_ text: String) {
-        // One banner at a time — queue extras instead of stacking.
-        toastQueue.append(text)
-        pumpToast()
-    }
-
-    private func pumpToast() {
-        guard toastTask == nil, let next = toastQueue.first else { return }
-        toastText = next
+        // Latest-only: drop stale queued toasts; never more than one pending.
+        toastQueue = [text]
+        // If something is already showing, replace it immediately with the newest.
+        toastTask?.cancel()
+        toastTask = nil
+        toastText = text
         toastTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 1_100_000_000)
-            if !Task.isCancelled {
-                toastText = nil
-                if !toastQueue.isEmpty { toastQueue.removeFirst() }
-                toastTask = nil
-                pumpToast()
-            }
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            toastText = nil
+            toastQueue.removeAll()
+            toastTask = nil
         }
     }
 
@@ -579,15 +559,22 @@ struct GameContainerView: View {
 
     private func bootstrap() {
         scene.scaleMode = .resizeFill
+        scene.isPaused = false
         scene.configureForProMotion(false)
         LaunchTiming.markPlayTap()
         AudioService.shared.applyPersistedMute()
+        // Quiet GC banners / access point while the run is live.
+        GameKitService.shared.setPlayDeferral(true)
+        GameKitService.shared.configureAccessPoint(show: false)
         // Demo/shot paths skip the ident — still warm textures before first board paint.
         AssetPreloader.preloadDuringIdent()
-        // First launch: big pad + short how-to. Smoke/shot paths skip the overlay.
+        // First launch: how-to overlay. Smoke/shot paths skip. Buttons off by default.
         let shotPeek = UserDefaults.standard.string(forKey: "trashStack.shotActive")
             ?? PlayerProfile.shotArgument()
         let isShot = shotPeek != nil && !(shotPeek?.isEmpty ?? true)
+        if !isShot {
+            profile.classicButtons = false
+        }
         if !profile.tutorialDone, !isShot {
             showHowTo = true
             scene.isPaused = true
@@ -602,30 +589,7 @@ struct GameContainerView: View {
             if playMode == .daily { return "daily" }
             return nil
         }()
-        // Apply board content immediately so the first SpriteKit paint is a filled bin, not gray empty.
-        if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
-            scene.applyShot(modeShot)
-            if modeShot == "revive" {
-                scene.autoplay = false
-                raccoonMood = .panic
-                nearMiss = true
-                // Smoke-only staged board — lock sheet score to that board, not a stale HUD.
-                captureGameOverScore(scene.engine.state.score)
-                lastState = scene.engine.state
-                syncHUD()
-                // Defer past first layout — same-turn sheet flags no-op on soft
-                // switches; a short beat keeps magenta/teal markers in the frame.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                    showContinue = true
-                }
-            }
-        } else if playMode == .daily {
-            scene.applyShot("daily")
-        } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
-            // Weekly tournament — same seed for everyone this UTC week.
-            scene.reset(seed: WeeklyTournament.seed())
-            UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
-        }
+        // Wire stamp callback before applyShot / SKView present so cold launches cannot miss it.
         scene.onFirstGameFrame = {
             Task { @MainActor in
                 LaunchTiming.markFirstGameFrame()
@@ -657,6 +621,40 @@ struct GameContainerView: View {
                 displayScore = scene.engine.state.score
             }
         }
+        // Apply board content immediately so the first SpriteKit paint is a filled bin, not gray empty.
+        if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
+            scene.applyShot(modeShot)
+            if modeShot == "revive" {
+                scene.autoplay = false
+                raccoonMood = .panic
+                nearMiss = true
+                // Smoke-only staged board — lock overlay score to that board, not a stale HUD.
+                captureGameOverScore(scene.engine.state.score)
+                lastState = scene.engine.state
+                syncHUD()
+                // Show the score/best/retry overlay immediately. A 0.2s defer left CI
+                // screenshots on the bare topped-out board ("BIN OVERFLOW" only).
+                showContinue = true
+                // Re-assert after the first SpriteKit present — Pro CI sometimes painted
+                // the topped-out board for one frame before the sheet stuck off-screen.
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                    captureGameOverScore(scene.engine.state.score)
+                    showContinue = true
+                    syncHUD()
+                }
+            }
+        } else if playMode == .daily {
+            scene.applyShot("daily")
+        } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
+            // Weekly tournament — same seed for everyone this UTC week.
+            scene.reset(seed: WeeklyTournament.seed())
+            UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
+        } else {
+            // Fresh New Game — clear any leftover evidence/autoplay latch from a prior pose.
+            scene.reset()
+        }
+        syncHUD()
         scene.onGameOver = { state in
             Task { @MainActor in
                 // Lock the live top-out score before any sheet / HUD race.
@@ -752,40 +750,76 @@ struct GameContainerView: View {
         AudioService.shared.playMusic("game_loop")
     }
 
+    private var gameOverBestSubtitle: String {
+        let best = max(overBestBefore, overScore)
+        if isNewBest {
+            if overBestBefore > 0 {
+                return "Best \(ScoreFormat.commas(overScore)) · beat \(ScoreFormat.commas(overBestBefore))"
+            }
+            return "Best \(ScoreFormat.commas(overScore))"
+        }
+        var line = "Best \(ScoreFormat.commas(best))"
+        if profile.dailyStreak > 0 {
+            line += " · streak \(profile.dailyStreak)d"
+        }
+        return line
+    }
+
+    private var reviveAdsAvailable: Bool { AdsService.shared.rewardedAdsConfigured }
+
+    private var reviveButtonTitle: String {
+        reviveAdsAvailable ? "Revive (ad)" : "Revive"
+    }
+
+    private var reviveHelpText: String {
+        if continued { return "You've already revived this run." }
+        if reviveAdsAvailable {
+            return nearMiss
+                ? "One revive (opt-in ad) or jump straight back in."
+                : "Revive once with an opt-in ad, or play again now."
+        }
+        return "One free revive this run, or play again now."
+    }
+
+    @MainActor
+    private func performRevive() async {
+        if reviveAdsAvailable {
+            // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
+            await AdsBootstrap.startAfterFirstWinIfNeeded()
+            let ok = await AdsService.shared.showRewarded(placement: "revive")
+            showContinue = false
+            if ok {
+                continued = true
+                scene.revive()
+                AudioService.shared.playMusic("game_loop")
+            } else {
+                await finalizeOver()
+            }
+            return
+        }
+        // No ad network configured — free once-per-run revive (never a dead button).
+        showContinue = false
+        continued = true
+        scene.revive()
+        AudioService.shared.playMusic("game_loop")
+    }
+
     @MainActor
     private func captureGameOverScore(_ score: Int) {
+        // Idempotent: scene used to re-fire onGameOver every tick and kept resetting
+        // sheetScore to 0 mid-animation (CI screenshots showed "NEW BEST / 0").
+        if overScore > 0, score == overScore, sheetScore == score { return }
         overScore = score
         hudScore = score
         displayScore = score
         overBestBefore = max(profile.highScore, profile.endlessHighScore)
         isNewBest = score > overBestBefore
-        sheetScore = 0
-        animateSheetScore(to: score)
-    }
-
-    @MainActor
-    private func animateSheetScore(to target: Int) {
+        // Show the true final score immediately — screenshots and testers must never see 0.
         sheetScoreAnimTask?.cancel()
-        guard target > 0 else {
-            sheetScore = target
-            return
-        }
-        sheetScoreAnimTask = Task { @MainActor in
-            let steps = min(36, max(12, target / 180))
-            let start = 0
-            for step in 1...steps {
-                if Task.isCancelled { return }
-                try? await Task.sleep(nanoseconds: 28_000_000)
-                if Task.isCancelled { return }
-                let t = Double(step) / Double(steps)
-                let eased = 1 - pow(1 - t, 3)
-                sheetScore = start + Int(Double(target) * eased)
-            }
-            sheetScore = target
-            if isNewBest {
-                AudioService.shared.playSFX("levelup", pitch: 1.2)
-                HapticsService.shared.clear()
-            }
+        sheetScore = score
+        if isNewBest {
+            AudioService.shared.playSFX("levelup", pitch: 1.2)
+            HapticsService.shared.clear()
         }
     }
 
@@ -794,6 +828,8 @@ struct GameContainerView: View {
         lastState = state
         // Prefer the locked top-out score if something mutated state afterward.
         if overScore == 0 { captureGameOverScore(state.score) }
+        // Calm moment — flush queued achievements / allow banners again.
+        GameKitService.shared.setPlayDeferral(false)
         if !continued {
             showContinue = true
             return
@@ -812,6 +848,8 @@ struct GameContainerView: View {
         isNewBest = false
         raccoonMood = .idle
         nearMiss = false
+        GameKitService.shared.setPlayDeferral(true)
+        GameKitService.shared.configureAccessPoint(show: false)
         if playMode == .daily {
             scene.applyShot("daily")
         } else {

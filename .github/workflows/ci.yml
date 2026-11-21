@@ -117,7 +117,10 @@ jobs:
         timeout-minutes: 20
         run: |
           set -o pipefail
-          device="$(python3 scripts/pick_iphone_simulator.py)"
+          # Prefer a non-Max Pro for calm/fit evidence (Dynamic Island). Create if missing.
+          device="$(python3 scripts/pick_iphone_simulator.py \
+            --prefer "iPhone 16 Pro" --prefer "iPhone 17 Pro" --prefer "iPhone 15 Pro" \
+            --prefer "iPhone 18 Pro" --create --require-match)"
           echo "device=$device" >> "$GITHUB_OUTPUT"
           echo "Simulator: $device"
           # Pre-boot + readiness: avoids XCTest host "RPC timeout / never finished bootstrapping" flakes.
@@ -126,6 +129,7 @@ jobs:
           run_tests() {
             rm -rf TestResults.xcresult
             set +e
+            # Skip UITests here — real-play step drives them under recordVideo.
             xcodebuild test-without-building \
               -project TrashStack.xcodeproj \
               -scheme TrashStack \
@@ -133,6 +137,7 @@ jobs:
               -derivedDataPath DerivedData \
               -resultBundlePath TestResults.xcresult \
               -parallel-testing-enabled NO \
+              -skip-testing:TrashStackUITests \
               | tee xcodebuild-test.log \
               | xcbeautify --renderer github-actions
             local ec=${PIPESTATUS[0]}
@@ -154,14 +159,50 @@ jobs:
             fi
           fi
 
+      # Real New Game capture — hard gate. Demo/autoplay slideshow is not evidence.
+      - name: Real-play recording (fresh New Game ≥60s)
+        id: real_play
+        timeout-minutes: 15
+        env:
+          DEVICE: ${{ steps.tests.outputs.device }}
+        run: |
+          set -euo pipefail
+          app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
+          test -n "$app"
+          mkdir -p smoke-artifacts
+          chmod +x scripts/simulator_real_play.sh
+          # Bounce sim so leftover smoke/shot defaults cannot stick.
+          xcrun simctl terminate "$DEVICE" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
+          ./scripts/simulator_real_play.sh "$DEVICE" "$app" smoke-artifacts
+          test -s smoke-artifacts/real-play.mp4
+          sz=$(wc -c < smoke-artifacts/real-play.mp4 | tr -d ' ')
+          if (( sz < 1000000 )); then
+            echo "real-play.mp4 too small ($sz)" >&2
+            exit 1
+          fi
+          ls -la smoke-artifacts/real-play.mp4
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "run_id=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload real-play early
+        if: always() && steps.real_play.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-play-evidence
+          path: |
+            smoke-artifacts/real-play.mp4
+            smoke-artifacts/real-play-silent.mp4
+          if-no-files-found: warn
+
       # TODO(smoke-flake): simulator_smoke is non-blocking until io/bootstatus flakes
       # are fixed. Keep uploading artifacts for Magpie/eyes. Unit tests still gate.
       # Known skips when red: late-mode shots (revive/base/shop/notif), bootstatus,
       # wall-clock launch flakes — do NOT empty-commit re-run CI to paper over these.
-      - name: Simulator smoke (screenshots + 45–60s video)
+      - name: Simulator smoke Pro (screenshots + ~60s video)
         # GitHub step timeout (macOS runners lack GNU `timeout`).
         # scripts/simulator_smoke.sh uses per-command deadlines + an internal watchdog.
-        timeout-minutes: 35
+        id: smoke_pro
+        timeout-minutes: 40
         continue-on-error: true
         env:
           DEVICE: ${{ steps.tests.outputs.device }}
@@ -169,7 +210,162 @@ jobs:
           set -euo pipefail
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
-          ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
+          mkdir -p smoke-artifacts
+          # Preserve real-play if smoke overwrites the folder partially.
+          keep_rp=""
+          if [[ -s smoke-artifacts/real-play.mp4 ]]; then
+            cp -f smoke-artifacts/real-play.mp4 /tmp/real-play-keep.mp4
+            keep_rp=1
+          fi
+          # Calm+Fit path only — skip optional meta/marketing stills so SE create
+          # still has host RAM after ~60s recordVideo.
+          CALM_FIT_ONLY=1 ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
+          if [[ -n "$keep_rp" && -s /tmp/real-play-keep.mp4 ]]; then
+            cp -f /tmp/real-play-keep.mp4 smoke-artifacts/real-play.mp4
+          fi
+          test -s smoke-artifacts/real-play.mp4
+          test -s smoke-artifacts/fit/pro-title.png
+          test -s smoke-artifacts/fit/pro-play.png
+          test -s smoke-artifacts/fit/pro-game-over.png
+
+      - name: Pro fit shots fallback (if full smoke missed aliases)
+        if: always() && steps.smoke_pro.outcome != 'skipped'
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          DEVICE: ${{ steps.tests.outputs.device }}
+        run: |
+          set -euo pipefail
+          app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
+          test -n "$app"
+          mkdir -p smoke-artifacts/fit
+          # Reject bare-board "GO" leftovers — require real overlay assert before skipping.
+          go_ok=0
+          if [[ -s smoke-artifacts/fit/pro-game-over.png ]] \
+            && python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png; then
+            go_ok=1
+          fi
+          if [[ -s smoke-artifacts/fit/pro-title.png && -s smoke-artifacts/fit/pro-play.png && "$go_ok" == "1" ]]; then
+            echo "Pro fit aliases already present (GO overlay OK)"
+            ls -la smoke-artifacts/fit/pro-*.png
+            exit 0
+          fi
+          echo "Full smoke missed Pro fit aliases — reboot + screenshot-only pass"
+          # Preserve good smoke aliases. Prior tip wiped a 5MB pro-title when a
+          # re-capture stuck on LaunchLogo, then exited before revive/GO ran.
+          keep_title=0
+          if [[ -s smoke-artifacts/fit/pro-title.png ]] \
+            && python3 scripts/assert_fit_title.py smoke-artifacts/fit/pro-title.png >/dev/null 2>&1; then
+            keep_title=1
+            cp -f smoke-artifacts/fit/pro-title.png /tmp/pro-title-keep.png
+          elif [[ -s smoke-artifacts/01-title.png ]] \
+            && python3 scripts/assert_fit_title.py smoke-artifacts/01-title.png >/dev/null 2>&1; then
+            keep_title=1
+            cp -f smoke-artifacts/01-title.png /tmp/pro-title-keep.png
+          fi
+          keep_play=0
+          if [[ -s smoke-artifacts/fit/pro-play.png ]] \
+            && ! python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-play.png >/dev/null 2>&1; then
+            keep_play=1
+            cp -f smoke-artifacts/fit/pro-play.png /tmp/pro-play-keep.png
+          elif [[ -s smoke-artifacts/03-compactor-clear.png ]]; then
+            keep_play=1
+            cp -f smoke-artifacts/03-compactor-clear.png /tmp/pro-play-keep.png
+          elif [[ -s smoke-artifacts/02-gameplay.png ]]; then
+            keep_play=1
+            cp -f smoke-artifacts/02-gameplay.png /tmp/pro-play-keep.png
+          fi
+          rm -f smoke-artifacts/fit/pro-game-over.png
+          xcrun simctl terminate "$DEVICE" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$DEVICE" >/dev/null 2>&1 || true
+          xcrun simctl boot "$DEVICE" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$DEVICE" -b >/tmp/pro-fit-boot.log 2>&1 || true
+          chmod +x scripts/simulator_fit_shots.sh
+          # If title+play already good, only capture revive/GO — avoid wiping aliases.
+          modes="title,game,revive"
+          if (( keep_title == 1 && keep_play == 1 )); then
+            modes="revive"
+            echo "Pro fit fallback: title+play preserved — revive/GO only" >&2
+          elif (( keep_title == 1 )); then
+            modes="game,revive"
+            echo "Pro fit fallback: title preserved — play+revive" >&2
+          fi
+          ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro "$modes" \
+            || echo "Pro fit_shots partial (modes=$modes) — restoring preserved aliases" >&2
+          if (( keep_title == 1 )) && [[ -s /tmp/pro-title-keep.png ]]; then
+            cp -f /tmp/pro-title-keep.png smoke-artifacts/fit/pro-title.png
+            echo "Restored fit/pro-title.png from smoke title still" >&2
+          fi
+          if (( keep_play == 1 )) && [[ -s /tmp/pro-play-keep.png ]]; then
+            cp -f /tmp/pro-play-keep.png smoke-artifacts/fit/pro-play.png
+            echo "Restored fit/pro-play.png from smoke board still" >&2
+          fi
+          # Dedicated GO retries if the mode pass still missed overlay markers.
+          if [[ ! -s smoke-artifacts/fit/pro-game-over.png ]] \
+            || ! python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png; then
+            echo "Pro GO still missing — dedicated revive retries" >&2
+            ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro revive || true
+            if (( keep_title == 1 )) && [[ -s /tmp/pro-title-keep.png ]]; then
+              cp -f /tmp/pro-title-keep.png smoke-artifacts/fit/pro-title.png
+            fi
+            if (( keep_play == 1 )) && [[ -s /tmp/pro-play-keep.png ]]; then
+              cp -f /tmp/pro-play-keep.png smoke-artifacts/fit/pro-play.png
+            fi
+          fi
+          test -s smoke-artifacts/fit/pro-title.png
+          test -s smoke-artifacts/fit/pro-play.png
+          test -s smoke-artifacts/fit/pro-game-over.png
+          python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png
+          python3 scripts/assert_fit_title.py smoke-artifacts/fit/pro-title.png
+
+      # Upload Pro evidence BEFORE SE. Prior run: smoke+fit succeeded, then SE create
+      # OOMed the runner and we lost every artifact (no upload ever ran).
+      - name: Upload Pro smoke artifacts
+        if: always() && steps.smoke_pro.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-store-review-evidence-pro
+          path: smoke-artifacts/
+          if-no-files-found: warn
+
+      - name: Simulator fit shots SE (title / play / game-over only)
+        id: smoke_se
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
+          test -n "$app"
+          mkdir -p smoke-artifacts/fit
+          # Free host memory before a second device — Pro + recordVideo leftovers
+          # previously killed the runner during SE create (lost communication).
+          pro="${{ steps.tests.outputs.device }}"
+          xcrun simctl terminate "$pro" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$pro" >/dev/null 2>&1 || true
+          # Prefer an existing SE; only create if none match (generic iOS runtime).
+          se="$(python3 scripts/pick_iphone_simulator.py \
+            --prefer "iPhone SE (3rd generation)" --prefer "iPhone SE (3rd generation)" \
+            --prefer "iPhone SE" --create --require-match)"
+          echo "SE simulator: $se"
+          if [[ "$se" == "$pro" ]]; then
+            echo "SE UDID collided with Pro — refusing labeled SE evidence" >&2
+            exit 1
+          fi
+          # Fresh boot before install — prior SE pass failed install on a stale/shutdown device.
+          xcrun simctl boot "$se" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$se" -b >/tmp/se-boot.log 2>&1 || true
+          chmod +x scripts/simulator_fit_shots.sh
+          # Lean settle — SE is screenshot-only; keep wall clock under step budget.
+          SHOT_DEADLINE_S=8 SIMCTL_DEADLINE_S=15 \
+            ./scripts/simulator_fit_shots.sh "$se" "$app" smoke-artifacts se
+          test -s smoke-artifacts/fit/se-title.png
+          test -s smoke-artifacts/fit/se-play.png
+          test -s smoke-artifacts/fit/se-game-over.png
+          # Reject C&C splash labeled as title (too dark / no neon wordmark).
+          python3 scripts/assert_fit_title.py smoke-artifacts/fit/se-title.png
+          ls -la smoke-artifacts/fit/
+          # Park SE so the final upload step is not fighting a live sim.
+          xcrun simctl shutdown "$se" >/dev/null 2>&1 || true
 
       - name: Upload smoke artifacts
         if: always()
@@ -178,6 +374,83 @@ jobs:
           name: app-store-review-evidence
           path: smoke-artifacts/
           if-no-files-found: warn
+
+      # Hard gate AFTER upload so Magpie still gets partials, but the job stays red
+      # until Pro+SE play / game-over / non-empty demo mp4 are all real.
+      - name: Calm+Fit evidence gate
+        if: always() && steps.smoke_pro.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          fail=0
+          need() {
+            local p="$1"
+            if [[ -s "$p" ]]; then
+              echo "OK $p ($(wc -c < "$p") bytes)"
+            else
+              echo "MISSING $p" >&2
+              fail=1
+            fi
+          }
+          # Real-play is the Calm+Fit gate — demo slideshow is not evidence.
+          need smoke-artifacts/real-play.mp4
+          need smoke-artifacts/fit/pro-title.png
+          need smoke-artifacts/fit/pro-play.png
+          need smoke-artifacts/fit/pro-game-over.png
+          need smoke-artifacts/fit/se-title.png
+          need smoke-artifacts/fit/se-play.png
+          need smoke-artifacts/fit/se-game-over.png
+          if [[ ! -s smoke-artifacts/03-compactor-clear.png && ! -s smoke-artifacts/02-gameplay.png && ! -s smoke-artifacts/fit/pro-play.png ]]; then
+            echo "MISSING board still (02/03 or fit/pro-play)" >&2
+            fail=1
+          fi
+          if [[ -s smoke-artifacts/real-play.mp4 ]]; then
+            sz=$(wc -c < smoke-artifacts/real-play.mp4 | tr -d ' ')
+            if (( sz < 1000000 )); then
+              echo "real-play.mp4 too small ($sz)" >&2
+              fail=1
+            fi
+          fi
+          if [[ -s smoke-artifacts/fit/pro-play.png ]]; then
+            psz=$(wc -c < smoke-artifacts/fit/pro-play.png | tr -d ' ')
+            if (( psz < 200000 )); then
+              echo "fit/pro-play.png suspiciously small ($psz) — likely splash/grey" >&2
+              fail=1
+            fi
+            # Reject GO modal mislabeled as play (prior tip had pro-play == pro-game-over).
+            if python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-play.png >/dev/null 2>&1; then
+              echo "fit/pro-play.png is a game-over overlay — not a play board" >&2
+              # Prefer smoke board stills when available.
+              if [[ -s smoke-artifacts/03-compactor-clear.png ]]; then
+                cp -f smoke-artifacts/03-compactor-clear.png smoke-artifacts/fit/pro-play.png
+                echo "Repaired fit/pro-play.png from 03-compactor-clear.png" >&2
+              elif [[ -s smoke-artifacts/02-gameplay.png ]]; then
+                cp -f smoke-artifacts/02-gameplay.png smoke-artifacts/fit/pro-play.png
+                echo "Repaired fit/pro-play.png from 02-gameplay.png" >&2
+              else
+                fail=1
+              fi
+            fi
+          fi
+          # Pro + SE GO must be real overlays (panel + title + CTA).
+          for go in smoke-artifacts/fit/pro-game-over.png smoke-artifacts/fit/se-game-over.png; do
+            if [[ -s "$go" ]]; then
+              python3 scripts/assert_fit_game_over.py "$go" || { echo "$go failed overlay assert" >&2; fail=1; }
+            fi
+          done
+          # Play boards must NOT be overlays.
+          for play in smoke-artifacts/fit/pro-play.png smoke-artifacts/fit/se-play.png; do
+            if [[ -s "$play" ]] && python3 scripts/assert_fit_game_over.py "$play" >/dev/null 2>&1; then
+              echo "$play looks like game-over, not play" >&2
+              fail=1
+            fi
+          done
+          if (( fail != 0 )); then
+            echo "Calm+Fit evidence incomplete — refusing green" >&2
+            ls -la smoke-artifacts/ smoke-artifacts/fit/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "Calm+Fit evidence gate passed"
+          ls -la smoke-artifacts/fit/
 
       - name: Upload logs on failure
         if: failure()
@@ -188,4 +461,8 @@ jobs:
             xcodebuild.log
             xcodebuild-test.log
             TestResults.xcresult
+            /tmp/real-play-xctest.log
+            /tmp/real-play-mux.log
+            smoke-artifacts/real-play.mp4
+            smoke-artifacts/real-play-silent.mp4
           if-no-files-found: ignore

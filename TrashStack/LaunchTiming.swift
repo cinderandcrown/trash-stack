@@ -52,6 +52,9 @@ enum LaunchTiming {
     @MainActor
     static func markPlayTap() {
         playTapUptime = ProcessInfo.processInfo.systemUptime
+        // Allow a fresh game-frame stamp on each enter — simctl often reuses the
+        // process, and a sticky didMarkGame left demo launches with no stamps.
+        didMarkGame = false
         UserDefaults.standard.set(playTapUptime, forKey: "trashStack.playTapUptime")
         UserDefaults.standard.synchronize()
     }

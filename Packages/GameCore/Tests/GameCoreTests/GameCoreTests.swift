@@ -31,6 +31,133 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(groups[0].cells.count, 4)
     }
 
+    /// Match clear must only remove the matched cluster; unsupported cells pack; nothing floats.
+    func testPacedMatchClearOnlyRemovesMatchedAndPacksGravity() {
+        var eng = GameEngine(seed: 77)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                // 4 metal along the floor — the match.
+                (0, rows - 1, Cell(piece: .can, material: .metal)),
+                (1, rows - 1, Cell(piece: .can, material: .metal)),
+                (2, rows - 1, Cell(piece: .can, material: .metal)),
+                (3, rows - 1, Cell(piece: .can, material: .metal)),
+                // Paper resting on the metal — must fall after the clear, not vanish.
+                (0, rows - 2, Cell(piece: .crate, material: .paper)),
+                // Isolated 3-cell metal L — must survive (follow-ups stay 4+).
+                (5, rows - 1, Cell(piece: .bentPipe, material: .metal)),
+                (6, rows - 1, Cell(piece: .bentPipe, material: .metal)),
+                (6, rows - 2, Cell(piece: .bentPipe, material: .metal)),
+                // Lone orange paper — not in the match.
+                (7, rows - 1, Cell(piece: .crate, material: .paper)),
+            ],
+            // Lock a glass piece on col 4 so resolveAfterLock fires the paced clear.
+            active: ActivePiece(id: .bottle, x: 4, y: 0)
+        )
+        eng.hardDrop()
+
+        // After paced clear, gravity has already packed — no unsupported cells.
+        assertNoFloatingCells(eng.state.board)
+
+        // Matched metal gone; paper from above packed onto the floor.
+        XCTAssertNil(eng.state.board[1, rows - 1])
+        XCTAssertNil(eng.state.board[2, rows - 1])
+        XCTAssertNil(eng.state.board[3, rows - 1])
+        XCTAssertEqual(eng.state.board[0, rows - 1]?.material, .paper)
+        XCTAssertNil(eng.state.board[0, rows - 2])
+
+        // Non-matched pieces still present (possibly packed).
+        XCTAssertEqual(eng.state.board[5, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 2]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[7, rows - 1]?.material, .paper)
+
+        // Gravity moves were recorded for the falling paper.
+        let fell = eng.lastGravityMoves.contains { $0.to.x == 0 && $0.cell.material == .paper }
+        XCTAssertTrue(fell || eng.state.board[0, rows - 1]?.material == .paper)
+
+        // Drain follow-up waves — the 3-cell L must still not recycle.
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            _ = eng.drainEvents()
+            assertNoFloatingCells(eng.state.board)
+            guardTicks += 1
+        }
+        XCTAssertEqual(eng.state.board[5, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 1]?.piece, .bentPipe)
+        XCTAssertEqual(eng.state.board[6, rows - 2]?.piece, .bentPipe)
+    }
+
+    /// Seeded: paper 2×2 sitting on pink plastic — paper clears, plastic remains and packs.
+    func testPaperClearLeavesPlasticBelowAndPacks() {
+        var eng = GameEngine(seed: 42)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                // Pink plastic on the floor (only 2 — must NOT recycle).
+                (1, rows - 1, Cell(piece: .tire, material: .plastic)),
+                (2, rows - 1, Cell(piece: .tire, material: .plastic)),
+                // Paper 2×2 sitting on that plastic.
+                (1, rows - 2, Cell(piece: .crate, material: .paper)),
+                (2, rows - 2, Cell(piece: .crate, material: .paper)),
+                (1, rows - 3, Cell(piece: .crate, material: .paper)),
+                (2, rows - 3, Cell(piece: .crate, material: .paper)),
+                // Glass resting on the paper — must fall onto plastic after the clear.
+                (1, rows - 4, Cell(piece: .bottle, material: .glass)),
+            ],
+            active: ActivePiece(id: .can, x: 5, y: 0)
+        )
+        eng.hardDrop()
+
+        let recycled = eng.drainEvents().compactMap { e -> Material? in
+            if case .recycled(_, _, _, _, let mat, _) = e { return mat }
+            return nil
+        }
+        XCTAssertEqual(recycled, [.paper], "only the paper group should clear")
+        assertNoFloatingCells(eng.state.board)
+
+        // Plastic stayed on the floor.
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+        // Paper gone; glass packed onto the plastic.
+        XCTAssertNil(eng.state.board[1, rows - 3])
+        XCTAssertNil(eng.state.board[2, rows - 3])
+        XCTAssertEqual(eng.state.board[1, rows - 2]?.material, .glass)
+        XCTAssertTrue(
+            eng.lastGravityMoves.contains { $0.cell.material == .glass && $0.to.x == 1 },
+            "glass should record a gravity fall onto the pink plastic"
+        )
+
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            _ = eng.drainEvents()
+            assertNoFloatingCells(eng.state.board)
+            guardTicks += 1
+        }
+        // Still only 2 plastic — never a follow-up clear of the pink.
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+    }
+
+    private func assertNoFloatingCells(_ board: Board, file: StaticString = #filePath, line: UInt = #line) {
+        let rows = board.config.rows
+        let cols = board.config.cols
+        for x in 0..<cols {
+            var seenEmpty = false
+            for y in (0..<rows).reversed() {
+                if board[x, y] == nil {
+                    seenEmpty = true
+                } else {
+                    XCTAssertFalse(seenEmpty, "unsupported cell at (\(x),\(y))", file: file, line: line)
+                }
+            }
+        }
+    }
+
     func testStickyExcludedFromRecycle() {
         var board = Board()
         for x in 0..<4 {
@@ -199,18 +326,27 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(BoardGym.allCases.count, 5)
         XCTAssertEqual(BoardGym.clusters.shotName, "recycle")
         XCTAssertEqual(FeelConfig.fallback.recycleSuckSec, 0.34, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 16, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.68, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.shakeRecycle, 10, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.72, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.cascadeStepSec, 0.30, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.dasDelaySec, 0.16, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.045, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.cellTweenSec, 0.11, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.rotateTweenSec, 0.10, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.settleBounceSec, 0.14, accuracy: 0.001)
+        XCTAssertGreaterThanOrEqual(feel.cellTweenSec, 0.10)
+        XCTAssertLessThanOrEqual(feel.cellTweenSec, 0.12)
     }
 
-    func testComboScoreEscalatesHard() {
+    func testComboScoreEscalatesWithCap() {
         let single = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 1)
         let double = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 2)
         let mega = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 4)
+        let capped = Scoring.recycleScore(cells: 4, groups: 1, level: 1, chain: 9)
         XCTAssertEqual(double, single * 2)
-        XCTAssertGreaterThan(mega, double * 2)
+        XCTAssertEqual(mega, single * 3) // hard cap
+        XCTAssertEqual(capped, mega)
+        XCTAssertEqual(Scoring.linesPerLevel, 14)
     }
 
     func testCascadesProduceChainsInNormalPlay() {
@@ -232,9 +368,9 @@ final class GameCoreTests: XCTestCase {
             if peak >= 2 { break }
         }
         XCTAssertGreaterThan(recycleWaves, 0)
-        XCTAssertGreaterThanOrEqual(peak, 2, "follow-up triples should create real chains")
-        var eng = GameEngine(seed: 1)
-        XCTAssertEqual(eng.state.pressMeterMax, 6)
+        XCTAssertGreaterThanOrEqual(peak, 2, "follow-up 4+ packs should create real chains")
+        let eng = GameEngine(seed: 1)
+        XCTAssertEqual(eng.state.pressMeterMax, 10)
     }
 
     /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).
@@ -302,6 +438,56 @@ final class GameCoreTests: XCTestCase {
         let out = URL(fileURLWithPath: "/tmp/trash-stack-play-verify.json")
         try data.write(to: out)
         XCTAssertGreaterThan(eng.state.score, 0, "played loop should score")
+    }
+
+    /// Fresh New Game (no shot seed) must gravity-lock, recycle, and eventually top out.
+    func testFreshNewGameClearsAndCanTopOut() {
+        var eng = GameEngine(seed: 4242)
+        eng.paceCascades = true
+        XCTAssertFalse(eng.state.over)
+        XCTAssertNotNil(eng.state.active)
+        XCTAssertEqual(eng.state.score, 0)
+
+        var recycles = 0
+        var lastScore = 0
+        for step in 0..<400 {
+            if eng.state.over { break }
+            // Alternate nudges so clusters can form, then hard-drop to stack.
+            _ = eng.tryMove(dx: step % 2 == 0 ? -1 : 1, dy: 0)
+            if step % 3 == 0 { _ = eng.tryRotate() }
+            eng.hardDrop()
+            for e in eng.drainEvents() {
+                if case .recycled = e { recycles += 1 }
+            }
+            XCTAssertGreaterThanOrEqual(eng.state.score, lastScore, "score must never go backwards")
+            lastScore = eng.state.score
+            // Settle paced cascades the way CompactorScene does.
+            var guardTicks = 0
+            while eng.cascadeActive, guardTicks < 24 {
+                _ = eng.advanceCascade()
+                for e in eng.drainEvents() {
+                    if case .recycled = e { recycles += 1 }
+                }
+                guardTicks += 1
+            }
+        }
+        XCTAssertGreaterThanOrEqual(recycles, 2, "fresh run should produce at least two recycles")
+        XCTAssertGreaterThan(eng.state.score, 0)
+        // Keep dropping until overflow if not already topped out.
+        var safety = 0
+        while !eng.state.over, safety < 500 {
+            eng.hardDrop()
+            _ = eng.drainEvents()
+            var guardTicks = 0
+            while eng.cascadeActive, guardTicks < 24 {
+                _ = eng.advanceCascade()
+                _ = eng.drainEvents()
+                guardTicks += 1
+            }
+            safety += 1
+        }
+        XCTAssertTrue(eng.state.over, "fresh New Game must be able to reach natural game over")
+        XCTAssertGreaterThan(eng.state.score, 0, "final score must be > 0 at game over")
     }
 
     func testLevelNeverGoesBackwardsAfterShotSeed() {

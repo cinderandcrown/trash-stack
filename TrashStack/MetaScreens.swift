@@ -506,10 +506,10 @@ struct SettingsView: View {
                         get: { profile.classicButtons },
                         set: { profile.classicButtons = $0; profile.persist() }
                     )) {
-                        Text("Buttons (classic pad)").foregroundStyle(.white)
+                        Text("Show buttons").foregroundStyle(.white)
                     }
                     .tint(NeonTheme.magenta)
-                    Text("Off = gesture-first board (drag, tap rotate, swipe drop/hold).")
+                    Text("Off by default — tap rotate, drag move, swipe ↓ drop, ↑ hold. SLAM appears when charged.")
                         .font(.caption2)
                         .foregroundStyle(NeonTheme.muted)
                     Text("Local reminders")

@@ -95,6 +95,20 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TrashStack.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TrashStack"
 
+  TrashStackUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TrashStackUITests
+    dependencies:
+      - target: TrashStack
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.cinderandcrown.trashstack.uitests
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_IDENTITY: "-"
+
 packages:
   GameCore:
     path: Packages/GameCore
@@ -114,6 +128,8 @@ schemes:
     build:
       targets:
         TrashStack: all
+        TrashStackTests: [test]
+        TrashStackUITests: [test]
     run:
       config: Debug
       storeKitConfiguration: StoreKit/Configuration.storekit
@@ -121,6 +137,8 @@ schemes:
       config: Debug
       targets:
         - TrashStackTests
+        # Included so -only-testing:TrashStackUITests works; CI unit-test step skips it.
+        - TrashStackUITests
       commandLineArguments:
         "-trashStackSkipAds": true
     archive:
