@@ -85,6 +85,8 @@ public final class CompactorScene: SKScene {
         let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
         backgroundColor = charcoal
         view.backgroundColor = charcoal
+        isPaused = false
+        view.isPaused = false
         preferredFPS = 60
         view.preferredFramesPerSecond = preferredFPS
         view.ignoresSiblingOrder = true

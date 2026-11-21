@@ -72,9 +72,8 @@ struct GameContainerView: View {
                     .padding(.horizontal, 8)
 
                 // Board fills remaining height; ~8px side margins via scene cellSize.
-                SpriteView(scene: scene)
-                    .background(Color(red: 0.05, green: 0.06, blue: 0.10))
-                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // UIKit SKView host — SwiftUI SpriteView+clipShape painted a flat grey void.
+                BoardSKView(scene: scene)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .topTrailing) {
                         miniNextHold
@@ -567,6 +566,7 @@ struct GameContainerView: View {
 
     private func bootstrap() {
         scene.scaleMode = .resizeFill
+        scene.isPaused = false
         scene.configureForProMotion(false)
         LaunchTiming.markPlayTap()
         AudioService.shared.applyPersistedMute()
@@ -596,29 +596,7 @@ struct GameContainerView: View {
             if playMode == .daily { return "daily" }
             return nil
         }()
-        // Apply board content immediately so the first SpriteKit paint is a filled bin, not gray empty.
-        if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
-            scene.applyShot(modeShot)
-            if modeShot == "revive" {
-                scene.autoplay = false
-                raccoonMood = .panic
-                nearMiss = true
-                // Smoke-only staged board — lock overlay score to that board, not a stale HUD.
-                captureGameOverScore(scene.engine.state.score)
-                lastState = scene.engine.state
-                syncHUD()
-                // Overlay presents same-turn; brief defer keeps first layout stable.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    showContinue = true
-                }
-            }
-        } else if playMode == .daily {
-            scene.applyShot("daily")
-        } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
-            // Weekly tournament — same seed for everyone this UTC week.
-            scene.reset(seed: WeeklyTournament.seed())
-            UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
-        }
+        // Wire stamp callback before applyShot / SKView present so cold launches cannot miss it.
         scene.onFirstGameFrame = {
             Task { @MainActor in
                 LaunchTiming.markFirstGameFrame()
@@ -650,6 +628,30 @@ struct GameContainerView: View {
                 displayScore = scene.engine.state.score
             }
         }
+        // Apply board content immediately so the first SpriteKit paint is a filled bin, not gray empty.
+        if let modeShot, ["game", "gameplay", "compactor", "press", "recycle", "revive", "demo", "autoplay", "daily"].contains(modeShot) {
+            scene.applyShot(modeShot)
+            if modeShot == "revive" {
+                scene.autoplay = false
+                raccoonMood = .panic
+                nearMiss = true
+                // Smoke-only staged board — lock overlay score to that board, not a stale HUD.
+                captureGameOverScore(scene.engine.state.score)
+                lastState = scene.engine.state
+                syncHUD()
+                // Overlay presents same-turn; brief defer keeps first layout stable.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    showContinue = true
+                }
+            }
+        } else if playMode == .daily {
+            scene.applyShot("daily")
+        } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
+            // Weekly tournament — same seed for everyone this UTC week.
+            scene.reset(seed: WeeklyTournament.seed())
+            UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
+        }
+        syncHUD()
         scene.onGameOver = { state in
             Task { @MainActor in
                 // Lock the live top-out score before any sheet / HUD race.
