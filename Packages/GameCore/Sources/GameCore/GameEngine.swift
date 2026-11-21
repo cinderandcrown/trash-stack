@@ -373,7 +373,9 @@ public struct GameEngine: Sendable {
         }
         for (x, y) in conversions {
             guard var n = state.board[x, y] else { continue }
+            // Material is the single source of truth — retarget piece so texture/plate/label match.
             n.material = .metal
+            n.piece = JunkCatalog.representativePiece(for: .metal)
             state.board[x, y] = n
         }
     }
@@ -418,12 +420,14 @@ public struct GameEngine: Sendable {
         cascadeActive = true
         lastGravityMoves = []
         let cleared = emitCascadeWave(minSize: firstWaveMinSize)
+        // Always settle after a clear attempt — never leave unsupported tiles.
+        lastGravityMoves = applyGravity()
         if cleared {
-            // Pack in the same step as the clear — the prior float window left mid-air stacks.
-            lastGravityMoves = applyGravity()
+            // packed above
         } else {
             cascadeActive = false
             state.combo = 0
+            lastGravityMoves = []
             finishAfterCascades(needsSpawn: needsSpawn)
         }
     }
@@ -434,8 +438,9 @@ public struct GameEngine: Sendable {
         guard cascadeActive else { return false }
         lastGravityMoves = []
         let cleared = emitCascadeWave(minSize: cascadeFollowUpMin)
+        // Settle every wave — clear or not — so chain follow-ups never float.
+        lastGravityMoves = applyGravity()
         if cleared {
-            lastGravityMoves = applyGravity()
             return true
         }
         // Cascade done — settle orders/level, then spawn (or top-out) if this was a lock.
@@ -589,10 +594,16 @@ public struct GameEngine: Sendable {
         state.pressMeter = 0
         events.append(.pressed(cells: coords.count, score: score, scrap: scrap))
         bumpOrder(kind: .pressSlam, amount: 1)
-        applyGravity()
+        // Settle every column after the crush — never leave tiles hanging over the hole.
+        let packMoves = applyGravity()
         // Slam already spent the meter — triples may recycle on the first settle wave.
         if paceCascades {
             beginPacedCascade(firstWaveMinSize: 3, followUpMinSize: 3, needsSpawn: false)
+            // If nothing recycled, expose the crush-settle moves so the scene eases them.
+            // If a wave cleared, lastGravityMoves already holds the post-clear settle.
+            if lastGravityMoves.isEmpty {
+                lastGravityMoves = packMoves
+            }
         } else {
             _ = runRecycleCascades(firstWaveMinSize: 3, followUpMinSize: 3)
         }
@@ -628,7 +639,7 @@ public struct GameEngine: Sendable {
         state.board[x, y] = nil
         state.snatchAvailable = false
         events.append(.snatchUsed)
-        applyGravity()
+        lastGravityMoves = applyGravity()
         // May trigger recycles after settle.
         resolveRecyclesOnly()
         return true

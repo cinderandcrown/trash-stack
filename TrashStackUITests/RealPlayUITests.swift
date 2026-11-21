@@ -19,23 +19,27 @@ final class RealPlayUITests: XCTestCase {
         app.launchEnvironment["UI_TESTING"] = "1"
         app.launch()
 
-        // Prefer accessibility id; fall back to visible label (NeonButton).
+        // `-UITestRealPlay` boots straight into the game. If a title still appears
+        // (stale process), tap PLAY; otherwise wait on the board immediately.
         let play = app.buttons["playButton"].firstMatch.exists
             ? app.buttons["playButton"].firstMatch
             : app.buttons["PLAY"].firstMatch
-        XCTAssertTrue(play.waitForExistence(timeout: 30), "PLAY button missing on title")
-        XCTAssertTrue(play.isHittable, "PLAY button not hittable")
-        play.tap()
+        if play.waitForExistence(timeout: 3), play.isHittable {
+            play.tap()
+        }
 
         let gotIt = app.buttons["GOT IT — PLAY"].firstMatch
-        if gotIt.waitForExistence(timeout: 2) {
+        if gotIt.waitForExistence(timeout: 1) {
             gotIt.tap()
         }
 
         let board = app.otherElements["gameBoard"].firstMatch
-        _ = board.waitForExistence(timeout: 10)
+        XCTAssertTrue(
+            board.waitForExistence(timeout: 8),
+            "gameBoard must appear within ~10s of launch for real-play video"
+        )
 
-        // ~60s of steady inputs after PLAY (natural GO may end early).
+        // ~60s of steady inputs after board (natural GO may end early).
         let deadline = Date().addingTimeInterval(62)
         var gestures = 0
         var sawGameOver = false

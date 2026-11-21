@@ -53,14 +53,18 @@ finalize() {
 }
 trap finalize EXIT
 
-# Start recording, then XCTest launches the app and taps PLAY (1d0ae10 flow).
+# Stamp wall clock so we can trim XCTest bootstrap out of the export.
+RECORD_START_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+echo "$RECORD_START_EPOCH" > "$OUT_DIR/record-start-epoch.txt"
+
+# Start recording, then XCTest launches straight into the board (-UITestRealPlay → .game).
 xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$RAW" &
 REC_PID=$!
-sleep 2
+sleep 1
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force "$RAW" &
   REC_PID=$!
-  sleep 2
+  sleep 1
 fi
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo failed to start" >&2
@@ -68,7 +72,7 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   trap - EXIT
   exit 1
 fi
-echo "Recording started (XCTest will launch + PLAY)" >&2
+echo "Recording started at epoch $RECORD_START_EPOCH (XCTest → game board)" >&2
 
 set +e
 xcodebuild test-without-building \
@@ -127,15 +131,36 @@ for cand in /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
 done
 MUSIC="$PROJECT_ROOT/TrashStack/Resources/Audio/game_loop.wav"
 
-# Allow ~XCTest bootstrap + ~60s play (do not cut gameplay at 90s).
+# Trim XCTest bootstrap so play starts within ~10s of the exported video.
+# Prefer the app's first-game-frame wall epoch; fall back to a modest leader skip.
+SS="0"
+GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpoch 2>/dev/null || true)"
+if [[ -n "${GAME_EPOCH:-}" && -n "${RECORD_START_EPOCH:-}" ]]; then
+  SS="$(python3 - <<PY
+start=float("${RECORD_START_EPOCH}")
+game=float("${GAME_EPOCH}")
+# Lead-in 0.4s before first frame; clamp so we keep ≥55s of play.
+ss=max(0.0, game - start - 0.4)
+print(f"{min(ss, 90.0):.3f}")
+PY
+)"
+fi
+echo "real-play trim -ss ${SS}s (record=$RECORD_START_EPOCH game=${GAME_EPOCH:-none})" >&2
+
+# ~10s max leader + ~60s play.
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
-  "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[1:a]volume=0.34,atrim=0:130[aout]" \
+  "$FFMPEG_BIN" -hide_banner -y -ss "$SS" -i "$RAW" -stream_loop -1 -i "$MUSIC" \
+    -filter_complex "[1:a]volume=0.34,atrim=0:75[aout]" \
     -map 0:v -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -ac 1 -t 130 -movflags +faststart "$OUT" \
+    -c:a aac -b:a 128k -ac 1 -t 75 -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else
-  cp -f "$RAW" "$OUT"
+  if [[ -n "$FFMPEG_BIN" ]]; then
+    "$FFMPEG_BIN" -hide_banner -y -ss "$SS" -i "$RAW" -c copy -t 75 "$OUT" \
+      >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
+  else
+    cp -f "$RAW" "$OUT"
+  fi
 fi
 
 python3 - "$OUT" <<'PY'

@@ -509,7 +509,7 @@ public final class CompactorScene: SKScene {
         let sidePad: CGFloat = 8
         let topPad: CGFloat = 28 // room for anchored combo counter
         // Leave clear chrome under the dumpster frame so SLAM never touches it.
-        let bottomPad: CGFloat = 88
+        let bottomPad: CGFloat = 120
         let maxByW = max(8, (size.width - sidePad * 2) / cols)
         let maxByH = max(8, (size.height - topPad - bottomPad) / rows)
         let s = min(maxByW, maxByH)
@@ -524,7 +524,7 @@ public final class CompactorScene: SKScene {
         let totalH = cs.height * rows
         // Top band for combo; bottom band keeps the bin frame fully above SLAM chrome.
         let topPad: CGFloat = 28
-        let bottomPad: CGFloat = 88
+        let bottomPad: CGFloat = 120
         let y = max(bottomPad, (size.height - totalH - topPad - bottomPad) * 0.5 + bottomPad)
         return CGPoint(
             x: (size.width - totalW) / 2,
@@ -639,10 +639,10 @@ public final class CompactorScene: SKScene {
             }
             render(immediate: false)
         }
-        // Soft-drag — rate-limited so each cell eases ~100–120ms (never spam softDrop every frame).
+        // Soft-drag — one cell per tween window so the 110ms ease reads at ~25fps.
         if softDragging {
             softDragAcc += Double(dt)
-            let step = max(0.10, min(0.12, feel.cellTweenSec))
+            let step = max(0.10, feel.cellTweenSec)
             if softDragAcc >= step {
                 softDragAcc = 0
                 _ = engine.softDrop()
@@ -823,7 +823,7 @@ public final class CompactorScene: SKScene {
         }
         if poseTweening {
             // ~100–120ms ease-out so falls/slides read at ~25fps capture.
-            let dur = max(0.10, min(0.12, feel.cellTweenSec))
+            let dur = max(0.10, feel.cellTweenSec)
             let t = min(1, (CACurrentMediaTime() - poseTweenStart) / dur)
             let eased = 1 - pow(1 - t, 3)
             visualX = poseFromX + (poseToX - poseFromX) * CGFloat(eased)
@@ -911,7 +911,7 @@ public final class CompactorScene: SKScene {
                     count: min(28, 8 + cells + combo * 2)
                 )
                 spawnParticle(named: "DebrisNeon", at: clearPt, count: min(16, 4 + cells))
-                onToast?("\(cells) \(material.rawValue.uppercased()) recycled")
+                onToast?("\(cells) \(JunkCatalog.label(for: material)) recycled")
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
                 cheerUntil = CACurrentMediaTime() + 1.2
@@ -1008,7 +1008,8 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)"
+        let mat = p.def.material
+        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)-\(mat.rawValue)"
         if ghostRoot?.name == tag { return }
         clearGhost()
         let root = SKNode()
@@ -1018,7 +1019,8 @@ public final class CompactorScene: SKScene {
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
-        let fill = plateColor(for: p.def.material)
+        // Outline only — same material color as the falling piece (never a solid fill / wrong tint).
+        let stroke = plateColor(for: mat).withAlphaComponent(0.9)
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         let pad: CGFloat = 1.5
         for off in shape {
@@ -1031,10 +1033,9 @@ public final class CompactorScene: SKScene {
                 transform: nil
             )
             let outline = SKShapeNode(path: path)
-            // Piece-colored ghost at ~30% opacity (not a white wireframe).
-            outline.strokeColor = fill.withAlphaComponent(0.55)
-            outline.fillColor = fill.withAlphaComponent(0.30)
-            outline.lineWidth = 1.5
+            outline.strokeColor = stroke
+            outline.fillColor = .clear
+            outline.lineWidth = 2.4
             outline.glowWidth = 0
             outline.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
             root.addChild(outline)
@@ -1053,7 +1054,7 @@ public final class CompactorScene: SKScene {
         recycleCalloutBusy = true
         let item = recycleCalloutQueue.removeFirst()
         // Matched material only — short enough to fit on a Pro/SE board.
-        let matName = item.material.rawValue.uppercased()
+        let matName = JunkCatalog.label(for: item.material)
         let label = "\(item.cells) \(matName) = RECYCLED"
         let node = SKLabelNode(fontNamed: "AvenirNext-Heavy")
         node.name = "recycleCallout"
@@ -1243,8 +1244,7 @@ public final class CompactorScene: SKScene {
     }
 
     private func representativeTexture(for material: Material) -> SKTexture? {
-        let id = JunkCatalog.all.first(where: { $0.material == material })?.id ?? .can
-        return tex(JunkCatalog.textureName(for: id))
+        tex(JunkCatalog.textureName(forMaterial: material))
     }
 
     private func ghostPlateTexture(for material: Material) -> SKTexture? {
@@ -1559,7 +1559,7 @@ public final class CompactorScene: SKScene {
             fallFrom[key] = positionFor(x: m.from.x, boardY: m.from.y)
             fallCell[key] = m.cell
         }
-        let fallDur = max(0.10, min(0.12, feel.cellTweenSec))
+        let fallDur = max(0.10, feel.cellTweenSec)
 
         // Every occupied cell is a full rounded-square plate + material art on top
         // (no 2×2 merged sprites — stacking must stay cell-clear).
@@ -1570,14 +1570,14 @@ public final class CompactorScene: SKScene {
                 let cell = fallCell[key] ?? engine.state.board[x, boardY]
                 guard let node = cellNodes[y][x] else { continue }
                 if let cell {
-                    let name = JunkCatalog.textureName(for: cell.piece)
+                    // Texture + plate both follow cell.material (single source of truth).
+                    let name = JunkCatalog.textureName(for: cell)
                     let cellSizePx = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
                     if let plateTex {
                         node.texture = plateTex
                     } else {
                         node.texture = nil
                     }
-                    // Plate tint is material-only — never keyed off a misleading texture name.
                     node.color = plateColor(for: cell.material)
                     node.colorBlendFactor = 1
                     node.size = cellSizePx
@@ -1682,8 +1682,9 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
+        let mat = p.def.material
         let texName = JunkCatalog.textureName(for: p.id)
-        let tag = "\(p.id.rawValue)-\(p.rot)-\(texName)-\(p.def.material.rawValue)"
+        let tag = "\(p.id.rawValue)-\(p.rot)-\(texName)-\(mat.rawValue)"
         if activeRoot?.name == tag, !activeNodes.isEmpty { return }
         // New identity (spawn / rotate / material look) — snap pose so the next piece
         // never draws mid-bin at the previous piece's fall seat.
@@ -1704,7 +1705,7 @@ public final class CompactorScene: SKScene {
         activeRoot = root
         let cs = cellSize()
         let plateTex = tex("CellPlate")
-        let plate = plateColor(for: p.def.material)
+        let plate = plateColor(for: mat)
         // Per-cell rounded plates so every block reads as a full square (stacking stays clear).
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         for off in shape {

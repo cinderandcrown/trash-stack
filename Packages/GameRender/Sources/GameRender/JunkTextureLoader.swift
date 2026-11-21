@@ -12,18 +12,20 @@ public enum JunkTextureLoader {
     public static let appBundleId = "com.cinderandcrown.trashstack"
 
     /// Legacy atlas keys → files that match the material look map.
-    /// Do not alias metal pieces onto pink/kraft art — those misread as plastic/paper.
+    /// Never alias onto banana/swirl art — that misreads as a fifth material.
     private static let aliases: [String: String] = [
         "tube": "glass",
         "scrap": "plank",
         "bag": "tire",
         "box": "crate",
         "bottle": "glass",
-        // JunkID names that share pixels with material tiles:
         "plank": "cardboard",
         "pipe": "plastic",
         "crate": "pizza",
-        // bentPipe / fridge intentionally resolve to `can` via JunkCatalog.textureName.
+        // Swirl / peel leftovers → steel can (metal) so they never show in play.
+        "banana": "can",
+        "bentPipe": "can",
+        "fridge": "can",
     ]
 
     public static func image(named name: String) -> UIImage? {
