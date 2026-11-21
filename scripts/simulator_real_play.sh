@@ -132,35 +132,35 @@ done
 MUSIC="$PROJECT_ROOT/TrashStack/Resources/Audio/game_loop.wav"
 
 # Trim XCTest bootstrap so play starts within ~10s of the exported video.
-# Prefer the app's first-game-frame wall epoch; fall back to a modest leader skip.
+# Prefer the app's first-game-frame wall epoch; else keep a short leader (boots into .game).
 SS="0"
 GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpoch 2>/dev/null || true)"
 if [[ -n "${GAME_EPOCH:-}" && -n "${RECORD_START_EPOCH:-}" ]]; then
   SS="$(python3 - <<PY
 start=float("${RECORD_START_EPOCH}")
 game=float("${GAME_EPOCH}")
-# Lead-in 0.4s before first frame; clamp so we keep ≥55s of play.
 ss=max(0.0, game - start - 0.4)
 print(f"{min(ss, 90.0):.3f}")
 PY
 )"
 fi
-echo "real-play trim -ss ${SS}s (record=$RECORD_START_EPOCH game=${GAME_EPOCH:-none})" >&2
+echo "real-play trim start=${SS}s (record=$RECORD_START_EPOCH game=${GAME_EPOCH:-none})" >&2
 
-# ~10s max leader + ~60s play.
+# simctl H.264 often tags a bogus 0.25 tbr — force CFR via fps=30 or the mux collapses
+# to ~17 frames (Lavf 63+ on CI). Never put -ss before -i on these files.
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
-  "$FFMPEG_BIN" -hide_banner -y -ss "$SS" -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[1:a]volume=0.34,atrim=0:75[aout]" \
-    -map 0:v -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -ac 1 -t 75 -movflags +faststart "$OUT" \
+  "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
+    -filter_complex "[0:v]fps=30,trim=start=${SS}:duration=70,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=70,asetpts=PTS-STARTPTS[aout]" \
+    -map "[vout]" -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
+    -c:a aac -b:a 128k -ac 1 -movflags +faststart "$OUT" \
+    >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
+elif [[ -n "$FFMPEG_BIN" ]]; then
+  "$FFMPEG_BIN" -hide_banner -y -i "$RAW" \
+    -vf "fps=30,trim=start=${SS}:duration=70,setpts=PTS-STARTPTS" \
+    -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else
-  if [[ -n "$FFMPEG_BIN" ]]; then
-    "$FFMPEG_BIN" -hide_banner -y -ss "$SS" -i "$RAW" -c copy -t 75 "$OUT" \
-      >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
-  else
-    cp -f "$RAW" "$OUT"
-  fi
+  cp -f "$RAW" "$OUT"
 fi
 
 python3 - "$OUT" <<'PY'
