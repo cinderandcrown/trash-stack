@@ -27,7 +27,7 @@ struct GameContainerView: View {
     @State private var scoreAnimTask: Task<Void, Never>?
     @State private var sheetScoreAnimTask: Task<Void, Never>?
     @State private var pressMeter = 0
-    @State private var pressMax = 8
+    @State private var pressMax = 6
     @State private var snatchReady = true
     @State private var orders: [OrderTicket] = []
     @State private var preview: [JunkID] = []
@@ -113,10 +113,10 @@ struct GameContainerView: View {
                 }
 
                 // Gap + chrome strip fully below the dumpster frame (never flush to the lip).
-                Color.clear.frame(height: 14)
+                Color.clear.frame(height: 36)
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
                     .layoutPriority(1)
                     .background(NeonTheme.playChrome)
@@ -296,7 +296,7 @@ struct GameContainerView: View {
             if let toastText {
                 Text(toastText)
                     .font(.system(.callout, design: .rounded).weight(.black))
-                    .foregroundStyle(toastText.contains("CHAIN") ? NeonTheme.magenta : NeonTheme.teal)
+                    .foregroundStyle(toastForeground(for: toastText))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .minimumScaleFactor(0.7)
@@ -309,6 +309,17 @@ struct GameContainerView: View {
         }
         .frame(minHeight: toastText == nil ? 0 : 36)
         .animation(.easeOut(duration: 0.2), value: toastText)
+    }
+
+    /// Recycle toasts use the matched material color; everything else stays teal/magenta.
+    private func toastForeground(for text: String) -> Color {
+        let upper = text.uppercased()
+        if upper.contains("CHAIN") { return NeonTheme.magenta }
+        if upper.contains("METAL") { return Color(red: 0.62, green: 0.72, blue: 0.92) }
+        if upper.contains("PLASTIC") { return Color(red: 0.95, green: 0.22, blue: 0.70) }
+        if upper.contains("PAPER") { return Color(red: 0.92, green: 0.62, blue: 0.28) }
+        if upper.contains("GLASS") { return Color(red: 0.15, green: 0.88, blue: 0.94) }
+        return NeonTheme.teal
     }
 
     private var miniNextHold: some View {
