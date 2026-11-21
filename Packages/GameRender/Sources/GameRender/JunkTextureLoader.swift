@@ -11,18 +11,19 @@ import SpriteKit
 public enum JunkTextureLoader {
     public static let appBundleId = "com.cinderandcrown.trashstack"
 
-    /// Legacy atlas keys → current Higgsfield tile / silhouette files.
+    /// Legacy atlas keys → files that match the material look map.
+    /// Do not alias metal pieces onto pink/kraft art — those misread as plastic/paper.
     private static let aliases: [String: String] = [
         "tube": "glass",
-        "scrap": "cardboard",
-        "bag": "banana",
-        "box": "cardboard",
+        "scrap": "plank",
+        "bag": "tire",
+        "box": "crate",
         "bottle": "glass",
+        // JunkID names that share pixels with material tiles:
         "plank": "cardboard",
         "pipe": "plastic",
         "crate": "pizza",
-        "bentPipe": "banana",
-        "fridge": "cardboard",
+        // bentPipe / fridge intentionally resolve to `can` via JunkCatalog.textureName.
     ]
 
     public static func image(named name: String) -> UIImage? {

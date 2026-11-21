@@ -344,9 +344,10 @@ public struct GameEngine: Sendable {
             if state.level >= LevelTwist.stickyCans.rawValue, placeCount % 11 == 7, p.id == .can {
                 cell.sticky = true
             }
-            if state.level >= LevelTwist.leakingPipes.rawValue, placeCount % 17 == 5, p.id == .pipe {
+            // Leaking battery rides on steel cans — never rewrite a piece's material at lock
+            // (pink plastic pipe must stay plastic from spawn through lock).
+            if state.level >= LevelTwist.leakingPipes.rawValue, placeCount % 17 == 5, p.id == .can {
                 cell.hazard = .leakingBattery
-                cell.material = .metal
             }
             state.board[x, y] = cell
         }
@@ -829,7 +830,7 @@ public struct GameEngine: Sendable {
                     state.board[x, y] = Cell(piece: .can, material: .metal)
                 }
             }
-            state.board[1, rows - 5] = Cell(piece: .pipe, material: .metal)
+            state.board[1, rows - 5] = Cell(piece: .bentPipe, material: .metal)
             // Glass side clutter
             for y in (rows - 3)..<rows {
                 state.board[5, y] = Cell(piece: .bottle, material: .glass)
@@ -940,7 +941,7 @@ public struct GameEngine: Sendable {
             // Seed a near-recycle metal pocket for an early satisfying clear.
             for y in (rows - 3)..<rows {
                 state.board[0, y] = Cell(piece: .can, material: .metal)
-                state.board[1, y] = Cell(piece: .pipe, material: .metal)
+                state.board[1, y] = Cell(piece: .bentPipe, material: .metal)
             }
             state.score = 0
             state.level = 1

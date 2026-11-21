@@ -90,6 +90,95 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(eng.state.board[6, rows - 2]?.piece, .bentPipe)
     }
 
+    /// A piece's id / material / texture must be identical from spawn through lock.
+    func testPieceIdentityStableFromSpawnToLock() {
+        for id in JunkID.allCases {
+            var eng = GameEngine(seed: 99)
+            // Paced cascades so a 4-cell square can be inspected before follow-ups spawn.
+            eng.paceCascades = true
+            eng.seedBoardForTesting(
+                cells: [],
+                active: ActivePiece(id: id, x: 3, y: 0)
+            )
+            let expectedMat = JunkCatalog.def(for: id).material
+            let expectedTex = JunkCatalog.textureName(for: id)
+            var steps = 0
+            while let active = eng.state.active, steps < 48 {
+                XCTAssertEqual(active.id, id, "id changed mid-fall for \(id)")
+                XCTAssertEqual(active.def.material, expectedMat, "material changed mid-fall for \(id)")
+                XCTAssertEqual(
+                    JunkCatalog.textureName(for: active.id),
+                    expectedTex,
+                    "texture changed mid-fall for \(id)"
+                )
+                if eng.isGrounded() {
+                    let cells = active.cells
+                    eng.lock()
+                    // Lock must commit spawn identity. A full-piece recycle (crate/tire/fridge)
+                    // may clear those cells in the same wave — surviving cells must still match.
+                    for (x, y) in cells {
+                        guard let locked = eng.state.board[x, y] else { continue }
+                        XCTAssertEqual(locked.piece, id, "locked piece for \(id)")
+                        XCTAssertEqual(locked.material, expectedMat, "locked material for \(id)")
+                    }
+                    for y in 0..<eng.state.board.config.rows {
+                        for x in 0..<eng.state.board.config.cols {
+                            guard let c = eng.state.board[x, y], c.piece == id else { continue }
+                            XCTAssertEqual(c.material, expectedMat, "board material flip for \(id)")
+                        }
+                    }
+                    break
+                }
+                XCTAssertTrue(eng.softDrop(), "soft drop should advance \(id)")
+                steps += 1
+            }
+            XCTAssertLessThan(steps, 48, "never locked \(id)")
+        }
+    }
+
+    /// Lock must never rewrite a plastic pipe into metal (old leaking-pipe hazard bug).
+    func testLockPreservesPipePlasticMaterial() {
+        var eng = GameEngine(seed: 3)
+        eng.paceCascades = true
+        eng.seedBoardForTesting(cells: [], active: ActivePiece(id: .pipe, x: 2, y: 0))
+        var steps = 0
+        while !eng.isGrounded(), steps < 48 {
+            _ = eng.softDrop()
+            steps += 1
+        }
+        let cells = eng.state.active!.cells
+        eng.lock()
+        for (x, y) in cells {
+            XCTAssertEqual(eng.state.board[x, y]?.piece, .pipe)
+            XCTAssertEqual(eng.state.board[x, y]?.material, .plastic)
+        }
+    }
+
+    /// Every catalog entry's texture must belong to its material's icon family.
+    func testMaterialLookMapIsHonest() {
+        let allowed: [Material: Set<String>] = [
+            .metal: ["can"],
+            .plastic: ["pipe", "plastic", "tire"],
+            .glass: ["glass", "bottle"],
+            .paper: ["plank", "cardboard", "crate", "pizza"],
+        ]
+        for def in JunkCatalog.all {
+            let ok = allowed[def.material] ?? []
+            XCTAssertTrue(
+                ok.contains(def.textureName),
+                "\(def.id) material \(def.material) must not use texture '\(def.textureName)' (allowed \(ok))"
+            )
+        }
+        // Pink bottle bar is plastic — never metal.
+        XCTAssertEqual(JunkCatalog.def(for: .pipe).material, .plastic)
+        XCTAssertEqual(JunkCatalog.textureName(for: .pipe), "pipe")
+        // Metal L / fridge share the steel can icon (not banana / cardboard).
+        XCTAssertEqual(JunkCatalog.def(for: .bentPipe).material, .metal)
+        XCTAssertEqual(JunkCatalog.textureName(for: .bentPipe), "can")
+        XCTAssertEqual(JunkCatalog.def(for: .fridge).material, .metal)
+        XCTAssertEqual(JunkCatalog.textureName(for: .fridge), "can")
+    }
+
     /// Seeded: paper 2×2 sitting on pink plastic — paper clears, plastic remains and packs.
     func testPaperClearLeavesPlasticBelowAndPacks() {
         var eng = GameEngine(seed: 42)
