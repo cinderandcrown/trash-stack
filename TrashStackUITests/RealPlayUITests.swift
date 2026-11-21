@@ -19,11 +19,10 @@ final class RealPlayUITests: XCTestCase {
         app.launchEnvironment["UI_TESTING"] = "1"
         app.launch()
 
-        // Title → PLAY (harness forces title so this is a visible New Game).
         let play = app.buttons["PLAY"].firstMatch
         XCTAssertTrue(play.waitForExistence(timeout: 25), "PLAY button missing on title")
         // Hold on title so recordVideo (started once the app is up) captures the brand frame.
-        Thread.sleep(forTimeInterval: 1.2)
+        Thread.sleep(forTimeInterval: 1.0)
         play.tap()
 
         let gotIt = app.buttons["GOT IT — PLAY"].firstMatch
@@ -31,19 +30,17 @@ final class RealPlayUITests: XCTestCase {
             gotIt.tap()
         }
 
-        // Prefer the SKView accessibility id; fall back to screen mid-board.
         let board = app.otherElements["gameBoard"].firstMatch
         _ = board.waitForExistence(timeout: 8)
 
-        let deadline = Date().addingTimeInterval(82)
+        // SpriteKit never fully "idles" — keep the loop lean so taps/swipes stay dense.
+        let deadline = Date().addingTimeInterval(88)
         var gestures = 0
         var sawGameOver = false
 
         while Date() < deadline {
-            if app.staticTexts["NEW BEST"].exists
-                || app.staticTexts["SO CLOSE"].exists
-                || app.staticTexts["BIN FULL"].exists
-                || app.otherElements["Game over"].exists {
+            // Check GO sparingly — full hierarchy queries are expensive under SpriteKit.
+            if gestures % 5 == 0, isGameOverVisible(in: app) {
                 sawGameOver = true
                 break
             }
@@ -76,33 +73,26 @@ final class RealPlayUITests: XCTestCase {
             // rotating / dropping so gravity, landings, and recycles are visible.
             switch gestures % 9 {
             case 0, 1, 2:
-                mid.press(forDuration: 0.04, thenDragTo: left)
+                mid.press(forDuration: 0.01, thenDragTo: left)
             case 3:
-                mid.tap() // rotate
+                mid.tap()
             case 4, 5:
-                top.press(forDuration: 0.04, thenDragTo: bottom) // hard drop
+                top.press(forDuration: 0.01, thenDragTo: bottom)
             case 6:
-                mid.press(forDuration: 0.04, thenDragTo: right)
+                mid.press(forDuration: 0.01, thenDragTo: right)
                 mid.tap()
             default:
-                top.press(forDuration: 0.04, thenDragTo: bottom)
+                top.press(forDuration: 0.01, thenDragTo: bottom)
             }
             gestures += 1
-            Thread.sleep(forTimeInterval: 0.28)
+            Thread.sleep(forTimeInterval: 0.08)
         }
 
-        XCTAssertGreaterThan(gestures, 25, "Expected sustained real-play gestures, got \(gestures)")
-        // Prefer natural overflow; if still alive the recording still shows live play.
         if !sawGameOver {
-            _ = app.staticTexts["NEW BEST"].waitForExistence(timeout: 3)
-                || app.staticTexts["BIN FULL"].waitForExistence(timeout: 1)
-                || app.staticTexts["SO CLOSE"].waitForExistence(timeout: 1)
+            sawGameOver = isGameOverVisible(in: app)
         }
-        // Hold a beat so recordVideo captures the GO overlay score.
-        if app.staticTexts["NEW BEST"].exists
-            || app.staticTexts["BIN FULL"].exists
-            || app.staticTexts["SO CLOSE"].exists {
-            Thread.sleep(forTimeInterval: 2.5)
+        if sawGameOver {
+            Thread.sleep(forTimeInterval: 2.2)
             let score = app.staticTexts["gameOverScore"].firstMatch
             if score.exists {
                 let raw = score.label.replacingOccurrences(of: ",", with: "")
@@ -111,5 +101,19 @@ final class RealPlayUITests: XCTestCase {
                 }
             }
         }
+
+        // Natural overflow can end the run early; otherwise require a sustained session.
+        if sawGameOver {
+            XCTAssertGreaterThan(gestures, 8, "Expected some real-play before game over, got \(gestures)")
+        } else {
+            XCTAssertGreaterThan(gestures, 25, "Expected sustained real-play gestures, got \(gestures)")
+        }
+    }
+
+    private func isGameOverVisible(in app: XCUIApplication) -> Bool {
+        app.staticTexts["NEW BEST"].exists
+            || app.staticTexts["BIN FULL"].exists
+            || app.staticTexts["SO CLOSE"].exists
+            || app.otherElements["Game over"].exists
     }
 }
