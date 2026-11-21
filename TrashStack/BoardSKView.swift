@@ -23,6 +23,10 @@ struct BoardSKView: UIViewRepresentable {
         view.isPaused = false
         view.layer.cornerRadius = 10
         view.layer.masksToBounds = true
+        // XCUITest real-play targets this host for taps/swipes into SpriteKit touches.
+        view.isAccessibilityElement = true
+        view.accessibilityIdentifier = "gameBoard"
+        view.accessibilityLabel = "Game board"
         // Seed a non-zero size before first present — zero-bound present left a grey void.
         scene.size = CGSize(width: 390, height: 780)
         present(scene, in: view)

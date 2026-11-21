@@ -75,6 +75,7 @@ struct GameContainerView: View {
                 // UIKit SKView host — SwiftUI SpriteView+clipShape painted a flat grey void.
                 BoardSKView(scene: scene)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .accessibilityIdentifier("gameBoard")
                     .overlay(alignment: .topTrailing) {
                         miniNextHold
                             .padding(.trailing, 6)
@@ -203,7 +204,7 @@ struct GameContainerView: View {
                     Text(isNewBest ? "NEW BEST" : (nearMiss ? "SO CLOSE" : "BIN FULL"))
                         .font(.title2.bold())
                         .foregroundStyle(isNewBest ? NeonTheme.teal : NeonTheme.magenta)
-                    Text("\(sheetScore)")
+                    Text(ScoreFormat.commas(sheetScore))
                         .font(.system(size: 44, weight: .black, design: .rounded))
                         .monospacedDigit()
                         .foregroundStyle(
@@ -211,34 +212,20 @@ struct GameContainerView: View {
                         )
                         .contentTransition(.numericText())
                         .animation(.easeOut(duration: 0.12), value: sheetScore)
-                    Text(isNewBest
-                         ? "Best \(overScore) · you beat \(overBestBefore)"
-                         : "Best \(max(overBestBefore, overScore))"
-                           + (profile.dailyStreak > 0 ? " · streak \(profile.dailyStreak)d" : ""))
+                        .accessibilityIdentifier("gameOverScore")
+                    Text(gameOverBestSubtitle)
                         .font(.caption.weight(.bold))
                         .foregroundStyle(NeonTheme.muted)
-                    Text(nearMiss
-                         ? "One revive (opt-in ad) or jump straight back in."
-                         : "Revive once with an opt-in ad, or play again now.")
+                    Text(reviveHelpText)
                         .multilineTextAlignment(.center)
                         .foregroundStyle(NeonTheme.muted)
                     NeonButton(title: "Play again") {
                         showContinue = false
                         Task { await playAgainNow() }
                     }
-                    NeonButton(title: "Revive (ad)", style: .secondary) {
-                        Task {
-                            // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
-                            await AdsBootstrap.startAfterFirstWinIfNeeded()
-                            let ok = await AdsService.shared.showRewarded(placement: "revive")
-                            showContinue = false
-                            if ok {
-                                continued = true
-                                scene.revive()
-                                AudioService.shared.playMusic("game_loop")
-                            } else {
-                                await finalizeOver()
-                            }
+                    if !continued {
+                        NeonButton(title: reviveButtonTitle, style: .secondary) {
+                            Task { await performRevive() }
                         }
                     }
                     NeonButton(title: "Clock out", style: .ghost) {
@@ -274,11 +261,12 @@ struct GameContainerView: View {
                 .accessibilityLabel("The Bandit")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(displayScore)")
+                Text(ScoreFormat.commas(displayScore))
                     .font(.system(size: 24, weight: .black, design: .rounded))
                     .monospacedDigit()
                     .foregroundStyle(.white)
                     .contentTransition(.numericText())
+                    .accessibilityIdentifier("hudScore")
                 HStack(spacing: 8) {
                     Text("LVL \(hudLevel)")
                         .font(.caption.weight(.black).monospacedDigit())
@@ -649,6 +637,9 @@ struct GameContainerView: View {
             // Weekly tournament — same seed for everyone this UTC week.
             scene.reset(seed: WeeklyTournament.seed())
             UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
+        } else {
+            // Fresh New Game — clear any leftover evidence/autoplay latch from a prior pose.
+            scene.reset()
         }
         syncHUD()
         scene.onGameOver = { state in
@@ -746,40 +737,76 @@ struct GameContainerView: View {
         AudioService.shared.playMusic("game_loop")
     }
 
+    private var gameOverBestSubtitle: String {
+        let best = max(overBestBefore, overScore)
+        if isNewBest {
+            if overBestBefore > 0 {
+                return "Best \(ScoreFormat.commas(overScore)) · beat \(ScoreFormat.commas(overBestBefore))"
+            }
+            return "Best \(ScoreFormat.commas(overScore))"
+        }
+        var line = "Best \(ScoreFormat.commas(best))"
+        if profile.dailyStreak > 0 {
+            line += " · streak \(profile.dailyStreak)d"
+        }
+        return line
+    }
+
+    private var reviveAdsAvailable: Bool { AdsService.shared.rewardedAdsConfigured }
+
+    private var reviveButtonTitle: String {
+        reviveAdsAvailable ? "Revive (ad)" : "Revive"
+    }
+
+    private var reviveHelpText: String {
+        if continued { return "You've already revived this run." }
+        if reviveAdsAvailable {
+            return nearMiss
+                ? "One revive (opt-in ad) or jump straight back in."
+                : "Revive once with an opt-in ad, or play again now."
+        }
+        return "One free revive this run, or play again now."
+    }
+
+    @MainActor
+    private func performRevive() async {
+        if reviveAdsAvailable {
+            // ATT/UMP only on opt-in rewarded tap — never stacked on the loss sheet itself.
+            await AdsBootstrap.startAfterFirstWinIfNeeded()
+            let ok = await AdsService.shared.showRewarded(placement: "revive")
+            showContinue = false
+            if ok {
+                continued = true
+                scene.revive()
+                AudioService.shared.playMusic("game_loop")
+            } else {
+                await finalizeOver()
+            }
+            return
+        }
+        // No ad network configured — free once-per-run revive (never a dead button).
+        showContinue = false
+        continued = true
+        scene.revive()
+        AudioService.shared.playMusic("game_loop")
+    }
+
     @MainActor
     private func captureGameOverScore(_ score: Int) {
+        // Idempotent: scene used to re-fire onGameOver every tick and kept resetting
+        // sheetScore to 0 mid-animation (CI screenshots showed "NEW BEST / 0").
+        if overScore > 0, score == overScore, sheetScore == score { return }
         overScore = score
         hudScore = score
         displayScore = score
         overBestBefore = max(profile.highScore, profile.endlessHighScore)
         isNewBest = score > overBestBefore
-        sheetScore = 0
-        animateSheetScore(to: score)
-    }
-
-    @MainActor
-    private func animateSheetScore(to target: Int) {
+        // Show the true final score immediately — screenshots and testers must never see 0.
         sheetScoreAnimTask?.cancel()
-        guard target > 0 else {
-            sheetScore = target
-            return
-        }
-        sheetScoreAnimTask = Task { @MainActor in
-            let steps = min(36, max(12, target / 180))
-            let start = 0
-            for step in 1...steps {
-                if Task.isCancelled { return }
-                try? await Task.sleep(nanoseconds: 28_000_000)
-                if Task.isCancelled { return }
-                let t = Double(step) / Double(steps)
-                let eased = 1 - pow(1 - t, 3)
-                sheetScore = start + Int(Double(target) * eased)
-            }
-            sheetScore = target
-            if isNewBest {
-                AudioService.shared.playSFX("levelup", pitch: 1.2)
-                HapticsService.shared.clear()
-            }
+        sheetScore = score
+        if isNewBest {
+            AudioService.shared.playSFX("levelup", pitch: 1.2)
+            HapticsService.shared.clear()
         }
     }
 

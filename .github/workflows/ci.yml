@@ -157,6 +157,41 @@ jobs:
             fi
           fi
 
+      # Real New Game capture — hard gate. Demo/autoplay slideshow is not evidence.
+      - name: Real-play recording (fresh New Game ≥60s)
+        id: real_play
+        timeout-minutes: 15
+        env:
+          DEVICE: ${{ steps.tests.outputs.device }}
+        run: |
+          set -euo pipefail
+          app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
+          test -n "$app"
+          mkdir -p smoke-artifacts
+          chmod +x scripts/simulator_real_play.sh
+          # Bounce sim so leftover smoke/shot defaults cannot stick.
+          xcrun simctl terminate "$DEVICE" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
+          ./scripts/simulator_real_play.sh "$DEVICE" "$app" smoke-artifacts
+          test -s smoke-artifacts/real-play.mp4
+          sz=$(wc -c < smoke-artifacts/real-play.mp4 | tr -d ' ')
+          if (( sz < 1000000 )); then
+            echo "real-play.mp4 too small ($sz)" >&2
+            exit 1
+          fi
+          ls -la smoke-artifacts/real-play.mp4
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo "run_id=${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload real-play early
+        if: always() && steps.real_play.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-play-evidence
+          path: |
+            smoke-artifacts/real-play.mp4
+            smoke-artifacts/real-play-silent.mp4
+          if-no-files-found: warn
+
       # TODO(smoke-flake): simulator_smoke is non-blocking until io/bootstatus flakes
       # are fixed. Keep uploading artifacts for Magpie/eyes. Unit tests still gate.
       # Known skips when red: late-mode shots (revive/base/shop/notif), bootstatus,
@@ -174,10 +209,19 @@ jobs:
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
           mkdir -p smoke-artifacts
+          # Preserve real-play if smoke overwrites the folder partially.
+          keep_rp=""
+          if [[ -s smoke-artifacts/real-play.mp4 ]]; then
+            cp -f smoke-artifacts/real-play.mp4 /tmp/real-play-keep.mp4
+            keep_rp=1
+          fi
           # Calm+Fit path only — skip optional meta/marketing stills so SE create
           # still has host RAM after ~60s recordVideo.
           CALM_FIT_ONLY=1 ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
-          test -s smoke-artifacts/gameplay-demo.mp4
+          if [[ -n "$keep_rp" && -s /tmp/real-play-keep.mp4 ]]; then
+            cp -f /tmp/real-play-keep.mp4 smoke-artifacts/real-play.mp4
+          fi
+          test -s smoke-artifacts/real-play.mp4
           test -s smoke-artifacts/fit/pro-title.png
           test -s smoke-artifacts/fit/pro-play.png
           test -s smoke-artifacts/fit/pro-game-over.png
@@ -307,12 +351,8 @@ jobs:
               fail=1
             fi
           }
-          # Prefer muxed demo; accept silent capture if mux was skipped after a good record.
-          if [[ ! -s smoke-artifacts/gameplay-demo.mp4 && -s smoke-artifacts/gameplay-demo-silent.mp4 ]]; then
-            echo "Promoting silent capture → gameplay-demo.mp4 for evidence gate" >&2
-            cp -f smoke-artifacts/gameplay-demo-silent.mp4 smoke-artifacts/gameplay-demo.mp4
-          fi
-          need smoke-artifacts/gameplay-demo.mp4
+          # Real-play is the Calm+Fit gate — demo slideshow is not evidence.
+          need smoke-artifacts/real-play.mp4
           need smoke-artifacts/fit/pro-title.png
           need smoke-artifacts/fit/pro-play.png
           need smoke-artifacts/fit/pro-game-over.png
@@ -323,11 +363,10 @@ jobs:
             echo "MISSING board still (02/03 or fit/pro-play)" >&2
             fail=1
           fi
-          # Reject tiny/empty mp4 and splash-sized "play" frames.
-          if [[ -s smoke-artifacts/gameplay-demo.mp4 ]]; then
-            sz=$(wc -c < smoke-artifacts/gameplay-demo.mp4 | tr -d ' ')
-            if (( sz < 500000 )); then
-              echo "gameplay-demo.mp4 too small ($sz)" >&2
+          if [[ -s smoke-artifacts/real-play.mp4 ]]; then
+            sz=$(wc -c < smoke-artifacts/real-play.mp4 | tr -d ' ')
+            if (( sz < 1000000 )); then
+              echo "real-play.mp4 too small ($sz)" >&2
               fail=1
             fi
           fi

@@ -46,6 +46,7 @@ struct TitleView: View {
                     // Straight onto the board — how-to is an overlay, not a separate screen.
                     screen = .game
                 }
+                .accessibilityIdentifier("playButton")
                 .padding(.horizontal, 36)
                 NeonButton(title: "TRASH TALK", style: .secondary) {
                     AudioService.shared.playSFX("ui")

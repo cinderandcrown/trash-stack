@@ -308,6 +308,56 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThan(eng.state.score, 0, "played loop should score")
     }
 
+    /// Fresh New Game (no shot seed) must gravity-lock, recycle, and eventually top out.
+    func testFreshNewGameClearsAndCanTopOut() {
+        var eng = GameEngine(seed: 4242)
+        eng.paceCascades = true
+        XCTAssertFalse(eng.state.over)
+        XCTAssertNotNil(eng.state.active)
+        XCTAssertEqual(eng.state.score, 0)
+
+        var recycles = 0
+        var lastScore = 0
+        for step in 0..<400 {
+            if eng.state.over { break }
+            // Alternate nudges so clusters can form, then hard-drop to stack.
+            _ = eng.tryMove(dx: step % 2 == 0 ? -1 : 1, dy: 0)
+            if step % 3 == 0 { _ = eng.tryRotate() }
+            eng.hardDrop()
+            for e in eng.drainEvents() {
+                if case .recycled = e { recycles += 1 }
+            }
+            XCTAssertGreaterThanOrEqual(eng.state.score, lastScore, "score must never go backwards")
+            lastScore = eng.state.score
+            // Settle paced cascades the way CompactorScene does.
+            var guardTicks = 0
+            while eng.cascadeActive, guardTicks < 24 {
+                _ = eng.advanceCascade()
+                for e in eng.drainEvents() {
+                    if case .recycled = e { recycles += 1 }
+                }
+                guardTicks += 1
+            }
+        }
+        XCTAssertGreaterThanOrEqual(recycles, 2, "fresh run should produce at least two recycles")
+        XCTAssertGreaterThan(eng.state.score, 0)
+        // Keep dropping until overflow if not already topped out.
+        var safety = 0
+        while !eng.state.over, safety < 500 {
+            eng.hardDrop()
+            _ = eng.drainEvents()
+            var guardTicks = 0
+            while eng.cascadeActive, guardTicks < 24 {
+                _ = eng.advanceCascade()
+                _ = eng.drainEvents()
+                guardTicks += 1
+            }
+            safety += 1
+        }
+        XCTAssertTrue(eng.state.over, "fresh New Game must be able to reach natural game over")
+        XCTAssertGreaterThan(eng.state.score, 0, "final score must be > 0 at game over")
+    }
+
     func testLevelNeverGoesBackwardsAfterShotSeed() {
         var eng = GameEngine(seed: 99)
         eng.applyShotScenario("game")

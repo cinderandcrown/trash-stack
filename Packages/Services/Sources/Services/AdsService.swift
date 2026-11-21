@@ -29,10 +29,23 @@ public final class AdsService: ObservableObject {
 
     public func noteRunStarted() { sessionRuns += 1 }
 
+    /// True only when a real rewarded placement is wired. The app ships Google's
+    /// sample App ID and this stub always "succeeds" — treat that as unconfigured
+    /// so game-over never offers a dead "Revive (ad)" button to testers.
+    public var rewardedAdsConfigured: Bool {
+        if adsRemoved { return false }
+        if UserDefaults.standard.bool(forKey: "trashStack.skipAds") { return false }
+        if ProcessInfo.processInfo.arguments.contains("-trashStackSkipAds") { return false }
+        // Production unit IDs are not in the binary yet (sample App ID only).
+        return false
+    }
+
     /// Rewarded ads are always opt-in (caller must be user-initiated).
+    /// Returns false when no network is configured so callers can fall back to a free revive.
     public func showRewarded(placement: String) async -> Bool {
         guard !adsRemoved else { return true }
-        return true // Simulator / CI stub — app wires real GAD.
+        guard rewardedAdsConfigured else { return false }
+        return true // Real GAD rewarded would load/show here when configured.
     }
 
     public func shouldShowInterstitial() -> Bool {

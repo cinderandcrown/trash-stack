@@ -95,6 +95,20 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/TrashStack.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/TrashStack"
 
+  TrashStackUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TrashStackUITests
+    dependencies:
+      - target: TrashStack
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.cinderandcrown.trashstack.uitests
+        TARGETED_DEVICE_FAMILY: "1"
+        CODE_SIGN_IDENTITY: "-"
+
 packages:
   GameCore:
     path: Packages/GameCore
@@ -114,6 +128,9 @@ schemes:
     build:
       targets:
         TrashStack: all
+        TrashStackTests: [test]
+        # Built by build-for-testing; driven only via -only-testing in simulator_real_play.sh
+        TrashStackUITests: [test]
     run:
       config: Debug
       storeKitConfiguration: StoreKit/Configuration.storekit

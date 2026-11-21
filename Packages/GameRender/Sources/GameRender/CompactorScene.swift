@@ -41,6 +41,8 @@ public final class CompactorScene: SKScene {
     private var lastTime: TimeInterval = 0
     private var fpsSamples: [Double] = []
     private var didBuild = false
+    /// Latch so SwiftUI only gets one game-over callback (repeat fires were resetting the overlay score to 0).
+    private var didFireGameOver = false
     /// Near-zero pad so solid tiles cover ≥85% of occupied cell area (QA coverage metric).
     private let cellPad: CGFloat = 0.0
     private var pendingShot: String?
@@ -138,6 +140,10 @@ public final class CompactorScene: SKScene {
         raccoonMood = .idle
         discoUntil = 0
         cheerUntil = 0
+        autoplay = false
+        holdForEvidence = false
+        didFireGameOver = false
+        pendingShot = nil
         updateComboCounter(forceHide: true)
         render(immediate: true)
     }
@@ -168,6 +174,8 @@ public final class CompactorScene: SKScene {
         lockResets = 0
         cascadeSettleAcc = 0
         clearTouchState()
+        // Fresh shot pose may already be over (revive) — allow one notify after SwiftUI wires the handler.
+        didFireGameOver = false
         holdForEvidence = [
             "game", "gameplay", "compactor", "press", "recycle", "revive", "game-over",
         ].contains(shot)
@@ -588,7 +596,7 @@ public final class CompactorScene: SKScene {
                 }
                 if engine.state.over {
                     demoPhase = 2
-                    onGameOver?(engine.state)
+                    notifyGameOverIfNeeded()
                 }
                 render(immediate: false)
             }
@@ -658,7 +666,7 @@ public final class CompactorScene: SKScene {
         hasVisualPose = false
         render(immediate: false)
         // Never fire game-over mid-cascade — wait for settle.
-        if engine.state.over, !engine.cascadeActive { onGameOver?(engine.state) }
+        if engine.state.over, !engine.cascadeActive { notifyGameOverIfNeeded() }
     }
 
     /// Advance paced recycle waves ~300ms apart so chains are readable.
@@ -673,7 +681,7 @@ public final class CompactorScene: SKScene {
         render(immediate: false)
         updateComboCounter()
         if !more, engine.state.over {
-            onGameOver?(engine.state)
+            notifyGameOverIfNeeded()
         }
     }
 
@@ -1767,7 +1775,7 @@ public final class CompactorScene: SKScene {
             handleEvents()
             hasVisualPose = false
             render(immediate: false)
-            if engine.state.over { onGameOver?(engine.state) }
+            if engine.state.over { notifyGameOverIfNeeded() }
             return
         }
         // Swipe up = HOLD.
@@ -1823,7 +1831,7 @@ public final class CompactorScene: SKScene {
         if engine.cascadeActive { cascadeSettleAcc = 0 }
         hasVisualPose = false
         render(immediate: false)
-        if engine.state.over, !engine.cascadeActive { onGameOver?(engine.state) }
+        if engine.state.over, !engine.cascadeActive { notifyGameOverIfNeeded() }
     }
     public func stash() {
         guard !engine.cascadeActive else { return }
@@ -1853,8 +1861,17 @@ public final class CompactorScene: SKScene {
         raccoonMood = .idle
         cascadeSettleAcc = 0
         hasVisualPose = false
+        didFireGameOver = false
         updateComboCounter(forceHide: true)
         render(immediate: true)
+    }
+
+    /// One-shot game-over notify — callers used to fire every update tick and
+    /// SwiftUI's capture path kept resetting the overlay score animation to 0.
+    private func notifyGameOverIfNeeded() {
+        guard engine.state.over, !didFireGameOver else { return }
+        didFireGameOver = true
+        onGameOver?(engine.state)
     }
 }
 #else

@@ -25,22 +25,29 @@ enum PublisherIdentGate {
 struct RootView: View {
     @EnvironmentObject var profile: PlayerProfile
     /// Play-first: after the skippable C&C ident, land on the board — not a menu hub.
-    @State private var screen: AppScreen = .game
+    /// Real-play UITest starts on title so PLAY → fresh New Game is visible on camera.
+    @State private var screen: AppScreen = Self.isUITestRealPlay ? .title : .game
     @State private var showNotifPrompt = false
     @State private var marketingCaption = ""
     @State private var playMode: PlayMode = .endless
     @State private var streakSnapshot: (streak: Int, scrap: Int, gems: Int) = (0, 0, 0)
     @State private var shareCardText = ""
     @State private var shareScore = 0
-    @State private var showIdent = PublisherIdentGate.shouldPresent()
+    @State private var showIdent = Self.isUITestRealPlay ? false : PublisherIdentGate.shouldPresent()
     /// Must be true from first paint for ident shots — if this starts false, the sequence finishes into title before onAppear can flip it.
     @State private var holdIdentShot: Bool = {
+        if Self.isUITestRealPlay { return false }
         let shot = PlayerProfile.shotArgument()
             ?? UserDefaults.standard.string(forKey: "trashStack.shot")
         return shot == "ident" || shot == "publisher"
     }()
     /// Bump to force GameContainerView recreate without flashing the title menu.
     @State private var gameEpoch = 0
+
+    /// XCUITest real-play harness — never seed boards / soft-swap shots.
+    private static var isUITestRealPlay: Bool {
+        ProcessInfo.processInfo.arguments.contains("-UITestRealPlay")
+    }
 
     var body: some View {
         ZStack {
@@ -136,6 +143,21 @@ struct RootView: View {
             if let pref = PlayMode(rawValue: profile.preferredMode.rawValue) {
                 playMode = pref
             }
+            if Self.isUITestRealPlay {
+                // Fresh New Game path only — no shot seeds, no how-to gate, no soft-swap.
+                profile.tutorialDone = true
+                profile.classicButtons = false
+                UserDefaults.standard.removeObject(forKey: "trashStack.shot")
+                UserDefaults.standard.removeObject(forKey: "trashStack.shotActive")
+                UserDefaults.standard.set(true, forKey: "tutorialDone")
+                holdIdentShot = false
+                showIdent = false
+                showNotifPrompt = false
+                playMode = .endless
+                screen = .title
+                LaunchTiming.markFirstTitleFrame()
+                return
+            }
             applyShotMode()
         }
         // Smoke harness: pick up shot switches from defaults or Documents/smoke-shot.txt
@@ -151,6 +173,8 @@ struct RootView: View {
 
     /// True for CI / screenshot launches (skip-ads or an explicit shot argument).
     private static var smokeHarnessActive: Bool {
+        // Real-play must never soft-swap into demo/shot boards mid-recording.
+        if isUITestRealPlay { return false }
         let args = ProcessInfo.processInfo.arguments
         if args.contains("-trashStackSkipAds") { return true }
         if UserDefaults.standard.bool(forKey: "trashStack.skipAds") { return true }
