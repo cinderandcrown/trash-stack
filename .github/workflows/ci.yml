@@ -205,6 +205,19 @@ jobs:
             exit 0
           fi
           echo "Full smoke missed Pro fit aliases — reboot + screenshot-only pass"
+          # Keep smoke board stills; only replace missing/bad fit aliases.
+          keep_play=0
+          if [[ -s smoke-artifacts/fit/pro-play.png ]] \
+            && ! python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-play.png >/dev/null 2>&1; then
+            keep_play=1
+            cp -f smoke-artifacts/fit/pro-play.png /tmp/pro-play-keep.png
+          elif [[ -s smoke-artifacts/03-compactor-clear.png ]]; then
+            keep_play=1
+            cp -f smoke-artifacts/03-compactor-clear.png /tmp/pro-play-keep.png
+          elif [[ -s smoke-artifacts/02-gameplay.png ]]; then
+            keep_play=1
+            cp -f smoke-artifacts/02-gameplay.png /tmp/pro-play-keep.png
+          fi
           rm -f smoke-artifacts/fit/pro-game-over.png
           xcrun simctl terminate "$DEVICE" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
           xcrun simctl shutdown "$DEVICE" >/dev/null 2>&1 || true
@@ -212,9 +225,14 @@ jobs:
           xcrun simctl bootstatus "$DEVICE" -b >/tmp/pro-fit-boot.log 2>&1 || true
           chmod +x scripts/simulator_fit_shots.sh
           ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro
+          if (( keep_play == 1 )) && [[ -s /tmp/pro-play-keep.png ]]; then
+            cp -f /tmp/pro-play-keep.png smoke-artifacts/fit/pro-play.png
+            echo "Restored fit/pro-play.png from smoke board still" >&2
+          fi
           test -s smoke-artifacts/fit/pro-title.png
           test -s smoke-artifacts/fit/pro-play.png
           test -s smoke-artifacts/fit/pro-game-over.png
+          python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-game-over.png
 
       # Upload Pro evidence BEFORE SE. Prior run: smoke+fit succeeded, then SE create
       # OOMed the runner and we lost every artifact (no upload ever ran).
@@ -319,11 +337,32 @@ jobs:
               echo "fit/pro-play.png suspiciously small ($psz) — likely splash/grey" >&2
               fail=1
             fi
+            # Reject GO modal mislabeled as play (prior tip had pro-play == pro-game-over).
+            if python3 scripts/assert_fit_game_over.py smoke-artifacts/fit/pro-play.png >/dev/null 2>&1; then
+              echo "fit/pro-play.png is a game-over overlay — not a play board" >&2
+              # Prefer smoke board stills when available.
+              if [[ -s smoke-artifacts/03-compactor-clear.png ]]; then
+                cp -f smoke-artifacts/03-compactor-clear.png smoke-artifacts/fit/pro-play.png
+                echo "Repaired fit/pro-play.png from 03-compactor-clear.png" >&2
+              elif [[ -s smoke-artifacts/02-gameplay.png ]]; then
+                cp -f smoke-artifacts/02-gameplay.png smoke-artifacts/fit/pro-play.png
+                echo "Repaired fit/pro-play.png from 02-gameplay.png" >&2
+              else
+                fail=1
+              fi
+            fi
           fi
           # Pro + SE GO must be real overlays (panel + title + CTA).
           for go in smoke-artifacts/fit/pro-game-over.png smoke-artifacts/fit/se-game-over.png; do
             if [[ -s "$go" ]]; then
               python3 scripts/assert_fit_game_over.py "$go" || { echo "$go failed overlay assert" >&2; fail=1; }
+            fi
+          done
+          # Play boards must NOT be overlays.
+          for play in smoke-artifacts/fit/pro-play.png smoke-artifacts/fit/se-play.png; do
+            if [[ -s "$play" ]] && python3 scripts/assert_fit_game_over.py "$play" >/dev/null 2>&1; then
+              echo "$play looks like game-over, not play" >&2
+              fail=1
             fi
           done
           if (( fail != 0 )); then

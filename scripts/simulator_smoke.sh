@@ -2266,15 +2266,17 @@ done
 mkdir -p "$OUT_DIR/fit"
 [[ -s "$OUT_DIR/01-title.png" && ! -s "$OUT_DIR/fit/pro-title.png" ]] \
   && cp -f "$OUT_DIR/01-title.png" "$OUT_DIR/fit/pro-title.png"
-# Prefer already-promoted fit play; else copy best board candidate that passes markers.
-if [[ ! -s "$OUT_DIR/fit/pro-play.png" ]]; then
-  for f in 03-compactor-clear.png 02-gameplay.png 04-recycle-combo.png; do
-    if [[ -s "$OUT_DIR/$f" ]] && assert_shot_matches_mode "game" "$OUT_DIR/$f" 2>/dev/null; then
-      cp -f "$OUT_DIR/$f" "$OUT_DIR/fit/pro-play.png"
-      echo "Late-promoted fit/pro-play.png from $f" >&2
-      break
-    fi
-  done
+# Always prefer a verified mid-run board for pro-play (fit fallback can overwrite with GO).
+PLAY_SRC=""
+for f in 03-compactor-clear.png 02-gameplay.png 04-recycle-combo.png; do
+  if [[ -s "$OUT_DIR/$f" ]] && assert_shot_matches_mode "game" "$OUT_DIR/$f" 2>/dev/null; then
+    PLAY_SRC="$OUT_DIR/$f"
+    break
+  fi
+done
+if [[ -n "$PLAY_SRC" ]]; then
+  cp -f "$PLAY_SRC" "$OUT_DIR/fit/pro-play.png"
+  echo "Promoted fit/pro-play.png from ${PLAY_SRC##*/}" >&2
 fi
 if [[ -s "$OUT_DIR/fit/pro-play.png" ]] && assert_shot_matches_mode "game" "$OUT_DIR/fit/pro-play.png"; then
   echo "OK fit/pro-play.png ($(wc -c < "$OUT_DIR/fit/pro-play.png") bytes) board painted"
