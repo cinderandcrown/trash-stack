@@ -8,15 +8,38 @@ import GameCore
 
 /// Drives the real CompactorScene (not just GameCore) through a clear and checks sprite seats.
 final class CompactorSceneSettleTests: XCTestCase {
-    func testClearAndSettleSpritesMatchModelGrid() {
+    func testClearAndSettleSpritesMatchModelGrid() async {
+        let result = await Self.clearAndSettleOnMain()
+        XCTAssertGreaterThan(result.cols, 0)
+        XCTAssertTrue(result.noFloats, "model must be packed after clear+settle")
+        XCTAssertTrue(result.spritesMatch, "every cell sprite seat/occupancy must match the model grid after settle")
+        XCTAssertEqual(result.floorPlastic, .plastic)
+        XCTAssertEqual(result.abovePaper, .paper)
+        XCTAssertTrue(result.gapEmpty, "gap under packed stack must be empty")
+    }
+
+    func testLockOverlapDoesNotPaintStaleSpriteOverResident() async {
+        let result = await Self.lockOverlapOnMain()
+        XCTAssertEqual(result.resident, .paper)
+        XCTAssertTrue(result.spritesMatch)
+    }
+
+    @MainActor
+    private static func clearAndSettleOnMain() -> (
+        cols: Int,
+        noFloats: Bool,
+        spritesMatch: Bool,
+        floorPlastic: Material?,
+        abovePaper: Material?,
+        gapEmpty: Bool
+    ) {
         let size = CGSize(width: 390, height: 844)
         let view = SKView(frame: CGRect(origin: .zero, size: size))
         let scene = CompactorScene(size: size)
         view.presentScene(scene)
-        // didMove → rebuild; give the run loop a beat so the scene is live.
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
-        XCTAssertFalse(scene.engine.state.board.config.cols == 0)
 
+        let cols = scene.engine.state.board.config.cols
         let rows = scene.engine.state.board.config.rows
         scene.engine.paceCascades = true
         scene.engine.seedBoardForTesting(
@@ -35,21 +58,18 @@ final class CompactorSceneSettleTests: XCTestCase {
         scene.engine.hardDrop()
         scene.testDriveClearAndSettle()
 
-        XCTAssertTrue(
-            scene.engine.boardHasNoFloatingTiles(),
-            "model must be packed after clear+settle"
+        return (
+            cols: cols,
+            noFloats: scene.engine.boardHasNoFloatingTiles(),
+            spritesMatch: scene.assertSpritesMatchModel(),
+            floorPlastic: scene.engine.state.board[0, rows - 1]?.material,
+            abovePaper: scene.engine.state.board[0, rows - 2]?.material,
+            gapEmpty: scene.engine.state.board[0, rows - 3] == nil
         )
-        XCTAssertTrue(
-            scene.assertSpritesMatchModel(),
-            "every cell sprite seat/occupancy must match the model grid after settle"
-        )
-        // Leftmost column: plastic + paper must sit on the floor with no empty gap under them.
-        XCTAssertEqual(scene.engine.state.board[0, rows - 1]?.material, .plastic)
-        XCTAssertEqual(scene.engine.state.board[0, rows - 2]?.material, .paper)
-        XCTAssertNil(scene.engine.state.board[0, rows - 3])
     }
 
-    func testLockOverlapDoesNotPaintStaleSpriteOverResident() {
+    @MainActor
+    private static func lockOverlapOnMain() -> (resident: Material?, spritesMatch: Bool) {
         let size = CGSize(width: 390, height: 844)
         let view = SKView(frame: CGRect(origin: .zero, size: size))
         let scene = CompactorScene(size: size)
@@ -67,7 +87,9 @@ final class CompactorSceneSettleTests: XCTestCase {
         scene.engine.lock()
         scene.render(immediate: true)
 
-        XCTAssertEqual(scene.engine.state.board[4, rows - 1]?.material, .paper)
-        XCTAssertTrue(scene.assertSpritesMatchModel())
+        return (
+            resident: scene.engine.state.board[4, rows - 1]?.material,
+            spritesMatch: scene.assertSpritesMatchModel()
+        )
     }
 }
