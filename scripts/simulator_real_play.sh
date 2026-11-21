@@ -155,29 +155,30 @@ print(f"{min(ss, 90.0):.3f}")
 PY
 )"
 fi
-# Last resort: scan silent capture for the first dark play frame (skip springboard).
+# Last resort: scan silent capture for first neon play frame (skip springboard + dark splash).
 if python3 -c "import sys; sys.exit(0 if float('${SS:-0}') < 1.0 else 1)" 2>/dev/null; then
   DETECTED="$(python3 - "$RAW" <<'PY'
-import subprocess, sys, struct, zlib
+import subprocess, sys
 path = sys.argv[1]
-# Sample 1 fps; pick first frame whose mean luma is low (alley vs iOS springboard).
-for t in range(0, 100):
+# Springboard = bright. Publisher splash = near-black, no neon. Play = dark + cyan/magenta neon.
+for t in range(0, 110):
     raw = subprocess.run(
         ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path,
-         "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "64x128", "pipe:1"],
+         "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "96x192", "pipe:1"],
         capture_output=True,
     ).stdout
-    if len(raw) < 64 * 128 * 3:
+    if len(raw) < 96 * 192 * 3:
         continue
-    # Mean luma
-    s = 0
-    n = 64 * 128
+    n = len(raw) // 3
+    luma = 0.0
+    neon = 0
     for i in range(0, len(raw), 3):
         r, g, b = raw[i], raw[i + 1], raw[i + 2]
-        s += 0.2126 * r + 0.7152 * g + 0.0722 * b
-    mean = s / n
-    # Springboard wallpapers are mid/light; play alley is dark.
-    if mean < 55:
+        luma += 0.2126 * r + 0.7152 * g + 0.0722 * b
+        if (g > 140 and b > 140 and r < 100) or (r > 160 and b > 120 and g < 100):
+            neon += 1
+    mean = luma / n
+    if mean < 55 and neon >= 20:
         print(f"{max(0, t - 1)}")
         break
 else:
