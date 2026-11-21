@@ -238,9 +238,12 @@ jobs:
             echo "SE UDID collided with Pro — refusing labeled SE evidence" >&2
             exit 1
           fi
+          # Fresh boot before install — prior SE pass failed install on a stale/shutdown device.
+          xcrun simctl boot "$se" >/dev/null 2>&1 || true
+          xcrun simctl bootstatus "$se" -b >/tmp/se-boot.log 2>&1 || true
           chmod +x scripts/simulator_fit_shots.sh
           # Lean settle — SE is screenshot-only; keep wall clock under step budget.
-          SHOT_DEADLINE_S=8 SIMCTL_DEADLINE_S=10 \
+          SHOT_DEADLINE_S=8 SIMCTL_DEADLINE_S=15 \
             ./scripts/simulator_fit_shots.sh "$se" "$app" smoke-artifacts se
           test -s smoke-artifacts/fit/se-title.png
           test -s smoke-artifacts/fit/se-play.png

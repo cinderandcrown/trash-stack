@@ -1114,15 +1114,17 @@ def band_stats(y0, y1, x0=0.15, x1=0.85):
 game = mode in {"game","gameplay","compactor","press","recycle","demo","autoplay","daily","mkt-play","mkt-crush","mkt-recycle","mkt-daily"}
 menu = mode in {"base","pass","shop","notif","share","streak","mkt-base","mkt-pass","mkt-shop"}
 if mode == "revive":
-    # Look for magenta "SO CLOSE" / teal Revive CTA in the lower half (sheet).
-    mag = teal = 0
-    for fy in (0.52, 0.62, 0.72, 0.82):
-        for fx in (0.3, 0.5, 0.7):
+    # Real GO overlay dims the board (Color.black ~0.72) and shows magenta title + teal CTA.
+    # Require magenta title hits — teal alone matches glass/bottle tiles on a bare board.
+    dark = mag = teal = 0
+    for fy in (0.40, 0.50, 0.58, 0.68, 0.78):
+        for fx in (0.25, 0.40, 0.50, 0.60, 0.75):
             r, g, b = sample(fx, fy)
-            if r > 160 and b > 120 and g < 130: mag += 1
-            if g > 140 and b > 140 and r < 120: teal += 1
-    if mag + teal < 2:
-        print(f"Mode '{mode}' missing revive-sheet colors (magenta={mag} teal={teal})", file=sys.stderr); sys.exit(4)
+            if r < 55 and g < 55 and b < 55: dark += 1
+            if r > 160 and b > 100 and g < 140: mag += 1
+            if g > 130 and b > 130 and r < 140: teal += 1
+    if dark < 6 or mag < 2 or teal < 1:
+        print(f"Mode '{mode}' missing revive overlay (magenta={mag} teal={teal} dark={dark})", file=sys.stderr); sys.exit(4)
 elif game:
     # Board lives in the lower-mid of the phone frame (HUD above, controls below).
     var, mean = band_stats(0.48, 0.78)
@@ -2070,16 +2072,17 @@ elif (( GAME_SHOT_RC != 0 )); then
   fi
 fi
 
-# Game-over must be a real overlay (score/best/retry), not C&C splash.
+# Game-over must be a real overlay (score/best/retry), not C&C splash / bare board.
 SOFT_SHOT_ONLY=0
 ensure_app_terminated || true
 write_smoke_shot_file "revive" || true
+rm -f "$OUT_DIR/fit/pro-game-over.png"
 set +e
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 5
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 6
 set -e
 if [[ -s "$OUT_DIR/05-game-over-revive.png" ]]; then
   assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png" || true
-  if assert_shot_matches_mode "revive" "$OUT_DIR/05-game-over-revive.png" 2>/dev/null; then
+  if assert_shot_matches_mode "revive" "$OUT_DIR/05-game-over-revive.png"; then
     cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
     echo "Promoted fit/pro-game-over.png from 05-game-over-revive" >&2
   else
@@ -2261,12 +2264,14 @@ else
   echo "Missing required painted board (fit/pro-play.png)" >&2
   REQUIRED_OK=0
 fi
-if [[ ! -s "$OUT_DIR/fit/pro-game-over.png" && -s "$OUT_DIR/05-game-over-revive.png" ]]; then
-  cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
-fi
+# Never promote a bare BIN-OVERFLOW board as game-over — require overlay assert.
 if [[ -s "$OUT_DIR/fit/pro-game-over.png" ]] && assert_shot_matches_mode "revive" "$OUT_DIR/fit/pro-game-over.png"; then
   echo "OK fit/pro-game-over.png ($(wc -c < "$OUT_DIR/fit/pro-game-over.png") bytes) overlay"
+elif [[ -s "$OUT_DIR/05-game-over-revive.png" ]] && assert_shot_matches_mode "revive" "$OUT_DIR/05-game-over-revive.png"; then
+  cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
+  echo "OK fit/pro-game-over.png (from 05) overlay"
 else
+  rm -f "$OUT_DIR/fit/pro-game-over.png"
   echo "Missing required game-over overlay (fit/pro-game-over.png)" >&2
   REQUIRED_OK=0
 fi

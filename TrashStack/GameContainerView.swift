@@ -639,10 +639,9 @@ struct GameContainerView: View {
                 captureGameOverScore(scene.engine.state.score)
                 lastState = scene.engine.state
                 syncHUD()
-                // Overlay presents same-turn; brief defer keeps first layout stable.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                    showContinue = true
-                }
+                // Show the score/best/retry overlay immediately. A 0.2s defer left CI
+                // screenshots on the bare topped-out board ("BIN OVERFLOW" only).
+                showContinue = true
             }
         } else if playMode == .daily {
             scene.applyShot("daily")

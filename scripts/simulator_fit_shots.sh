@@ -232,24 +232,26 @@ def sample(fx, fy):
     return rows[y][i], rows[y][i+1], rows[y][i+2]
 
 # Reject phoenix splash.
-dark = sum(1 for fy in (0.2,0.4,0.6,0.8) for fx in (0.2,0.5,0.8)
+splash_dark = sum(1 for fy in (0.2,0.4,0.6,0.8) for fx in (0.2,0.5,0.8)
            if (lambda r,g,b: r<40 and g<40 and b<40)(*sample(fx,fy)))
 orange = sum(1 for fy in (0.35,0.45,0.55) for fx in (0.4,0.5,0.6)
              if (lambda r,g,b: r>180 and g>80 and b<80)(*sample(fx,fy)))
-if dark >= 6 and orange >= 2:
+if splash_dark >= 6 and orange >= 2:
     print(f"FAIL game-over is publisher splash: {path.name}", file=sys.stderr)
     raise SystemExit(1)
-# Overlay should show magenta/teal CTA colors in mid/lower frame.
-mag = teal = 0
-for fy in (0.45, 0.55, 0.65, 0.75):
-    for fx in (0.3, 0.5, 0.7):
+# Dim scrim + magenta title / teal CTA — reject bare BIN-OVERFLOW boards.
+# Magenta title is required; teal alone matches bottle tiles on a bare board.
+dark = mag = teal = 0
+for fy in (0.40, 0.50, 0.58, 0.68, 0.78):
+    for fx in (0.25, 0.40, 0.50, 0.60, 0.75):
         r,g,b = sample(fx, fy)
-        if r > 160 and b > 120 and g < 140: mag += 1
-        if g > 140 and b > 140 and r < 130: teal += 1
-if mag + teal < 2:
-    print(f"FAIL game-over missing overlay colors (mag={mag} teal={teal}): {path.name}", file=sys.stderr)
+        if r < 55 and g < 55 and b < 55: dark += 1
+        if r > 160 and b > 100 and g < 140: mag += 1
+        if g > 130 and b > 130 and r < 140: teal += 1
+if dark < 6 or mag < 2 or teal < 1:
+    print(f"FAIL game-over missing overlay (mag={mag} teal={teal} dark={dark}): {path.name}", file=sys.stderr)
     raise SystemExit(1)
-print(f"fit game-over OK {path.name}: mag={mag} teal={teal}")
+print(f"fit game-over OK {path.name}: mag={mag} teal={teal} dark={dark}")
 PY
 }
 
@@ -307,10 +309,24 @@ cold_launch_shot() {
 
 echo "Fit shots on $DEVICE tag=$TAG → $FIT_DIR" >&2
 raw_deadline 40 xcrun simctl boot "$DEVICE" >/tmp/fit-boot.log 2>&1 || true
-raw_deadline 60 xcrun simctl bootstatus "$DEVICE" -b >/tmp/fit-boot.log 2>&1 || true
+raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >/tmp/fit-boot.log 2>&1 || true
 raw_deadline 20 xcrun simctl uninstall "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
-if ! raw_deadline 60 xcrun simctl install "$DEVICE" "$APP_PATH"; then
-  echo "Fit shots: install failed" >&2
+INSTALL_OK=0
+for inst_try in 1 2 3; do
+  if raw_deadline 90 xcrun simctl install "$DEVICE" "$APP_PATH" >/tmp/fit-install.log 2>&1; then
+    INSTALL_OK=1
+    break
+  fi
+  echo "Fit install attempt=$inst_try failed — reboot + retry" >&2
+  cat /tmp/fit-install.log >&2 || true
+  raw_deadline 20 xcrun simctl shutdown "$DEVICE" >/dev/null 2>&1 || true
+  sleep 1
+  raw_deadline 40 xcrun simctl boot "$DEVICE" >/tmp/fit-boot.log 2>&1 || true
+  raw_deadline 90 xcrun simctl bootstatus "$DEVICE" -b >/tmp/fit-boot.log 2>&1 || true
+done
+if (( INSTALL_OK != 1 )); then
+  echo "Fit shots: install failed after retries" >&2
+  cat /tmp/fit-install.log >&2 || true
   exit 1
 fi
 
