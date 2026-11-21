@@ -227,33 +227,7 @@ jobs:
           test -s smoke-artifacts/fit/se-play.png
           test -s smoke-artifacts/fit/se-game-over.png
           # Reject C&C splash labeled as title (too dark / no neon wordmark).
-          python3 - <<'PY'
-from pathlib import Path
-import struct, zlib
-p = Path("smoke-artifacts/fit/se-title.png")
-data = p.read_bytes()
-pos = 8; w=h=ct=None; idat=bytearray()
-while pos+8 <= len(data):
-    ln = struct.unpack(">I", data[pos:pos+4])[0]
-    ctype = data[pos+4:pos+8]; chunk = data[pos+8:pos+8+ln]; pos += 12+ln
-    if ctype == b"IHDR":
-        w,h,bd,ct = struct.unpack(">IIBB", chunk[:10])
-    elif ctype == b"IDAT":
-        idat.extend(chunk)
-    elif ctype == b"IEND":
-        break
-raw = zlib.decompress(bytes(idat)); bpp = 3 if ct == 2 else 4; stride = w*bpp+1
-bright = 0; n = 0
-for y in range(int(h*0.15), int(h*0.55), max(1, h//40)):
-    row = raw[y*stride+1:(y+1)*stride]
-    for x in range(int(w*0.15), int(w*0.85), max(1, w//40)):
-        i = x*bpp; r,g,b = row[i], row[i+1], row[i+2]; n += 1
-        if r+g+b > 180: bright += 1
-ratio = bright / max(1, n)
-print(f"se-title bright ratio={ratio:.3f} size={w}x{h}")
-if ratio < 0.02:
-    raise SystemExit("se-title looks like C&C splash / blank — not the title screen")
-PY
+          python3 scripts/assert_fit_title.py smoke-artifacts/fit/se-title.png
           ls -la smoke-artifacts/fit/
 
       - name: Upload smoke artifacts
