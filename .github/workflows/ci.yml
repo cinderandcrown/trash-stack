@@ -129,6 +129,7 @@ jobs:
           run_tests() {
             rm -rf TestResults.xcresult
             set +e
+            # Skip UITests here — real-play step drives them under recordVideo.
             xcodebuild test-without-building \
               -project TrashStack.xcodeproj \
               -scheme TrashStack \
@@ -136,6 +137,7 @@ jobs:
               -derivedDataPath DerivedData \
               -resultBundlePath TestResults.xcresult \
               -parallel-testing-enabled NO \
+              -skip-testing:TrashStackUITests \
               | tee xcodebuild-test.log \
               | xcbeautify --renderer github-actions
             local ec=${PIPESTATUS[0]}
@@ -421,4 +423,8 @@ jobs:
             xcodebuild.log
             xcodebuild-test.log
             TestResults.xcresult
+            /tmp/real-play-xctest.log
+            /tmp/real-play-mux.log
+            smoke-artifacts/real-play.mp4
+            smoke-artifacts/real-play-silent.mp4
           if-no-files-found: ignore

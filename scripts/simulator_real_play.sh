@@ -64,7 +64,7 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
 fi
 
 # Drive only the real-play UI test (app already installed; test host relaunches it).
-# Prefer test-without-building — CI already ran build-for-testing.
+# Prefer test-without-building — CI already ran build-for-testing with UITests in scheme.
 set +e
 xcodebuild test-without-building \
   -project "$PROJECT_ROOT/TrashStack.xcodeproj" \
@@ -75,8 +75,11 @@ xcodebuild test-without-building \
   -parallel-testing-enabled NO \
   >/tmp/real-play-xctest.log 2>&1
 XC_EC=$?
-if (( XC_EC != 0 )) && grep -Eqi 'not found|does not contain|Unable to find|no such module|UITests' /tmp/real-play-xctest.log; then
-  echo "UITests missing from build — rebuilding with xcodebuild test" >&2
+if (( XC_EC != 0 )) && grep -Eqi 'isn.t a member|not found|does not contain|Unable to find|no such module' /tmp/real-play-xctest.log; then
+  echo "UITests scheme/build miss — regenerating + xcodebuild test" >&2
+  if command -v xcodegen >/dev/null 2>&1; then
+    (cd "$PROJECT_ROOT" && xcodegen generate) >/tmp/real-play-xcodegen.log 2>&1 || true
+  fi
   xcodebuild test \
     -project "$PROJECT_ROOT/TrashStack.xcodeproj" \
     -scheme TrashStack \
@@ -90,7 +93,11 @@ fi
 set -e
 if (( XC_EC != 0 )); then
   echo "Real-play UITest failed (ec=$XC_EC) — log tail:" >&2
-  tail -n 80 /tmp/real-play-xctest.log >&2 || true
+  tail -n 120 /tmp/real-play-xctest.log >&2 || true
+  # Fail hard — a silent springboard recording is not evidence.
+  finalize
+  trap - EXIT
+  exit "$XC_EC"
 fi
 
 finalize

@@ -129,7 +129,6 @@ schemes:
       targets:
         TrashStack: all
         TrashStackTests: [test]
-        # Built by build-for-testing; driven only via -only-testing in simulator_real_play.sh
         TrashStackUITests: [test]
     run:
       config: Debug
@@ -138,6 +137,8 @@ schemes:
       config: Debug
       targets:
         - TrashStackTests
+        # Included so -only-testing:TrashStackUITests works; CI unit-test step skips it.
+        - TrashStackUITests
       commandLineArguments:
         "-trashStackSkipAds": true
     archive:
