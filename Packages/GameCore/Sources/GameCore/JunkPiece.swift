@@ -28,7 +28,7 @@ public enum HazardKind: String, Sendable, Codable, Equatable {
 public struct JunkDef: Sendable, Equatable {
     public let id: JunkID
     public let material: Material
-    /// Atlas / asset key (may differ from rawValue for legacy art files).
+    /// Atlas / asset key — must read as this def's material (see material look map).
     public let textureName: String
     /// Rotations as lists of (dx, dy) cells relative to pivot.
     public let rotations: [[[Int]]]
@@ -58,8 +58,15 @@ public struct JunkDef: Sendable, Equatable {
 
 public enum JunkCatalog {
     /// Compactor-bin junk items. See docs/DESIGN.md.
-    /// Visual tile art (Higgsfield pack): one material look per piece type.
-    /// Recycle matching still uses the four Material buckets (metal/glass/plastic/paper).
+    ///
+    /// Material look map (one color family + icon family per material):
+    /// - metal   → steel blue-gray plate · `can` icon
+    /// - plastic → magenta-pink plate · `pipe` / `tire` icons (pink bottle + dark tire)
+    /// - glass   → cyan plate · `glass` icon
+    /// - paper   → kraft orange/tan plate · `plank` / `crate` icons
+    ///
+    /// Pink bottle art is plastic (never metal). Banana/cardboard silhouettes are not used
+    /// for metal — metal bars/appliances share the steel `can` icon so they read as metal.
     public static let all: [JunkDef] = [
         JunkDef(id: .can, material: .metal, textureName: "can", rotations: [
             [[0, 0]],
@@ -68,27 +75,30 @@ public enum JunkCatalog {
             [[0, 0], [0, 1]],
             [[0, 0], [1, 0]],
         ], weight: 12),
-        JunkDef(id: .plank, material: .paper, textureName: "cardboard", rotations: [
+        JunkDef(id: .plank, material: .paper, textureName: "plank", rotations: [
             [[0, 0], [1, 0], [2, 0]],
             [[0, 0], [0, 1], [0, 2]],
         ], weight: 10),
-        JunkDef(id: .pipe, material: .metal, textureName: "plastic", rotations: [
+        // Pink bottle bar — plastic (art is plastic; never metal).
+        JunkDef(id: .pipe, material: .plastic, textureName: "pipe", rotations: [
             [[0, 0], [1, 0], [2, 0]],
             [[0, 0], [0, 1], [0, 2]],
         ], weight: 10),
-        JunkDef(id: .crate, material: .paper, textureName: "pizza", rotations: [
+        JunkDef(id: .crate, material: .paper, textureName: "crate", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1]],
         ], weight: 9),
         JunkDef(id: .tire, material: .plastic, textureName: "tire", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1]],
         ], weight: 9),
-        JunkDef(id: .bentPipe, material: .metal, textureName: "banana", rotations: [
+        // L-metal — steel can icon (banana art misread as paper).
+        JunkDef(id: .bentPipe, material: .metal, textureName: "can", rotations: [
             [[0, 0], [0, 1], [1, 1]],
             [[0, 1], [1, 0], [1, 1]],
             [[0, 0], [1, 0], [1, 1]],
             [[0, 0], [1, 0], [0, 1]],
         ], weight: 10),
-        JunkDef(id: .fridge, material: .metal, textureName: "cardboard", rotations: [
+        // Bulky metal — steel can icon (cardboard art misread as paper).
+        JunkDef(id: .fridge, material: .metal, textureName: "can", rotations: [
             [[0, 0], [1, 0], [0, 1], [1, 1], [0, 2], [1, 2]],
             [[0, 0], [1, 0], [2, 0], [0, 1], [1, 1], [2, 1]],
         ], weight: 3),

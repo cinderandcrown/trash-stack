@@ -680,7 +680,13 @@ public final class CompactorScene: SKScene {
         if engine.cascadeActive {
             cascadeSettleAcc = 0
         }
-        hasVisualPose = false
+        // If a new piece already spawned (sync cascades), keep the snap from `.spawned`.
+        // Only drop the pose when the bin is empty mid-cascade.
+        if engine.state.active == nil {
+            hasVisualPose = false
+        } else {
+            snapActivePose()
+        }
         render(immediate: false)
         // Never fire game-over mid-cascade — wait for settle.
         if engine.state.over, !engine.cascadeActive { notifyGameOverIfNeeded() }
@@ -919,7 +925,9 @@ public final class CompactorScene: SKScene {
             case .leveledUp(let lvl):
                 onToast?(LevelTwist.active(at: lvl).toastTitle)
             case .spawned:
-                hasVisualPose = false
+                // Snap pose to the new piece immediately — never inherit the previous
+                // piece's mid-fall visualX/Y (that painted the next junk at the old seat).
+                snapActivePose()
                 updateLandingGhost()
             case .gameOver:
                 clearGhost()
@@ -1010,8 +1018,7 @@ public final class CompactorScene: SKScene {
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
-        let mat = p.def.material
-        let fill = plateColor(for: p.id, material: mat)
+        let fill = plateColor(for: p.def.material)
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         let pad: CGFloat = 1.5
         for off in shape {
@@ -1544,14 +1551,14 @@ public final class CompactorScene: SKScene {
         let cs = cellSize()
         let plateTex = tex("CellPlate")
         let gravityMoves = immediate ? [] : engine.consumeGravityMoves()
-        let fallFrom: [String: CGPoint] = {
-            var map: [String: CGPoint] = [:]
-            for m in gravityMoves {
-                let key = "\(m.to.x),\(m.to.y)"
-                map[key] = positionFor(x: m.from.x, boardY: m.from.y)
-            }
-            return map
-        }()
+        // Prefer the move's own cell payload so a reused slot never keeps the prior tile's art.
+        var fallFrom: [String: CGPoint] = [:]
+        var fallCell: [String: Cell] = [:]
+        for m in gravityMoves {
+            let key = "\(m.to.x),\(m.to.y)"
+            fallFrom[key] = positionFor(x: m.from.x, boardY: m.from.y)
+            fallCell[key] = m.cell
+        }
         let fallDur = max(0.10, min(0.12, feel.cellTweenSec))
 
         // Every occupied cell is a full rounded-square plate + material art on top
@@ -1559,7 +1566,8 @@ public final class CompactorScene: SKScene {
         for y in 0..<vis {
             for x in 0..<engine.state.board.config.cols {
                 let boardY = y + hid
-                let cell = engine.state.board[x, boardY]
+                let key = "\(x),\(boardY)"
+                let cell = fallCell[key] ?? engine.state.board[x, boardY]
                 guard let node = cellNodes[y][x] else { continue }
                 if let cell {
                     let name = JunkCatalog.textureName(for: cell.piece)
@@ -1569,7 +1577,8 @@ public final class CompactorScene: SKScene {
                     } else {
                         node.texture = nil
                     }
-                    node.color = plateColor(for: cell.piece, material: cell.material)
+                    // Plate tint is material-only — never keyed off a misleading texture name.
+                    node.color = plateColor(for: cell.material)
                     node.colorBlendFactor = 1
                     node.size = cellSizePx
                     node.alpha = cell.sticky ? 0.7 : 1
@@ -1586,7 +1595,6 @@ public final class CompactorScene: SKScene {
                         }
                     }
                     let dest = positionFor(x: x, boardY: boardY)
-                    let key = "\(x),\(boardY)"
                     if immediate {
                         node.removeAction(forKey: "settle")
                         node.position = dest
@@ -1674,8 +1682,17 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        let tag = "\(p.id.rawValue)-\(p.rot)"
+        let texName = JunkCatalog.textureName(for: p.id)
+        let tag = "\(p.id.rawValue)-\(p.rot)-\(texName)-\(p.def.material.rawValue)"
         if activeRoot?.name == tag, !activeNodes.isEmpty { return }
+        // New identity (spawn / rotate / material look) — snap pose so the next piece
+        // never draws mid-bin at the previous piece's fall seat.
+        visualX = CGFloat(p.x)
+        visualY = CGFloat(p.y)
+        poseToX = visualX
+        poseToY = visualY
+        poseTweening = false
+        hasVisualPose = true
         activeRoot?.removeFromParent()
         activeNodes.forEach { $0.removeFromParent() }
         activeNodes.removeAll()
@@ -1686,8 +1703,8 @@ public final class CompactorScene: SKScene {
         (boardCrop ?? self).addChild(root)
         activeRoot = root
         let cs = cellSize()
-        let name = JunkCatalog.textureName(for: p.id)
         let plateTex = tex("CellPlate")
+        let plate = plateColor(for: p.def.material)
         // Per-cell rounded plates so every block reads as a full square (stacking stays clear).
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         for off in shape {
@@ -1696,11 +1713,11 @@ public final class CompactorScene: SKScene {
             if let plateTex {
                 n = SKSpriteNode(texture: plateTex, size: cellSizePx)
             } else {
-                n = SKSpriteNode(color: plateColor(for: p.id, material: p.def.material), size: cellSizePx)
+                n = SKSpriteNode(color: plate, size: cellSizePx)
             }
-            n.color = plateColor(for: p.id, material: p.def.material)
+            n.color = plate
             n.colorBlendFactor = 1
-            if let t = tex(name) {
+            if let t = tex(texName) {
                 let icon = SKSpriteNode(texture: t, size: CGSize(width: cellSizePx.width * 0.62, height: cellSizePx.height * 0.62))
                 icon.name = "icon"
                 icon.zPosition = 1
@@ -1729,26 +1746,16 @@ public final class CompactorScene: SKScene {
     }
 
     private func fallbackColor(_ mat: Material) -> SKColor {
-        // Saturated solids so a near-full bin reads as ≥85% coverage, not silhouette stickers.
-        switch mat {
-        case .metal: return SKColor(red: 0.62, green: 0.70, blue: 0.82, alpha: 1)
-        case .plastic: return SKColor(red: 0.98, green: 0.22, blue: 0.72, alpha: 1)
-        case .paper: return SKColor(red: 0.95, green: 0.72, blue: 0.28, alpha: 1)
-        case .glass: return SKColor(red: 0.18, green: 0.92, blue: 0.96, alpha: 1)
-        }
+        plateColor(for: mat)
     }
 
-    /// Plate tint matched to each Higgsfield tile so object-shaped art still reads as a full block.
-    private func plateColor(for piece: JunkID, material: Material) -> SKColor {
-        switch JunkCatalog.textureName(for: piece) {
-        case "can": return SKColor(red: 0.44, green: 0.43, blue: 0.60, alpha: 1)
-        case "glass": return SKColor(red: 0.11, green: 0.58, blue: 0.64, alpha: 1)
-        case "plastic": return SKColor(red: 0.85, green: 0.22, blue: 0.40, alpha: 1)
-        case "cardboard": return SKColor(red: 0.80, green: 0.49, blue: 0.24, alpha: 1)
-        case "pizza": return SKColor(red: 0.72, green: 0.55, blue: 0.41, alpha: 1)
-        case "banana": return SKColor(red: 0.85, green: 0.66, blue: 0.10, alpha: 1)
-        case "tire": return SKColor(red: 0.29, green: 0.25, blue: 0.40, alpha: 1)
-        default: return fallbackColor(material)
+    /// One unmistakable plate color family per material (never keyed off texture name).
+    private func plateColor(for material: Material) -> SKColor {
+        switch material {
+        case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.78, alpha: 1)   // steel blue-gray
+        case .plastic: return SKColor(red: 0.95, green: 0.22, blue: 0.70, alpha: 1) // magenta-pink
+        case .paper: return SKColor(red: 0.92, green: 0.62, blue: 0.28, alpha: 1)   // kraft orange
+        case .glass: return SKColor(red: 0.15, green: 0.88, blue: 0.94, alpha: 1)   // cyan
         }
     }
 
@@ -1922,7 +1929,11 @@ public final class CompactorScene: SKScene {
             groundedElapsed = 0
             lockResets = 0
             handleEvents()
-            hasVisualPose = false
+            if engine.state.active == nil {
+                hasVisualPose = false
+            } else {
+                snapActivePose()
+            }
             render(immediate: false)
             if engine.state.over { notifyGameOverIfNeeded() }
             return
@@ -1976,14 +1987,19 @@ public final class CompactorScene: SKScene {
         lockResets = 0
         handleEvents()
         if engine.cascadeActive { cascadeSettleAcc = 0 }
-        hasVisualPose = false
+        if engine.state.active == nil {
+            hasVisualPose = false
+        } else {
+            snapActivePose()
+        }
         render(immediate: false)
         if engine.state.over, !engine.cascadeActive { notifyGameOverIfNeeded() }
     }
     public func stash() {
         guard !engine.cascadeActive else { return }
         engine.stash()
-        hasVisualPose = false
+        // Stash swaps the active identity — snap so the held piece never inherits fall Y.
+        snapActivePose()
         render(immediate: true)
     }
     public func magnet() {
