@@ -1008,8 +1008,8 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        // Same material field the falling tiles use — never a stale/wrong tint.
-        let mat = p.def.material
+        // Spawn-frozen material — same field the falling tiles / label use.
+        let mat = p.material
         let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)-\(mat.rawValue)"
         if ghostRoot?.name == tag { return }
         clearGhost()
@@ -1065,7 +1065,9 @@ public final class CompactorScene: SKScene {
         node.name = "recycleCallout"
         node.text = label
         node.fontSize = 14
-        node.fontColor = SKColor(red: 0.05, green: 0.95, blue: 0.92, alpha: 1)
+        // Label color = material plate color (never a universal cyan).
+        let (r, g, b) = plateRGB(for: item.material)
+        node.fontColor = SKColor(red: r, green: g, blue: b, alpha: 1)
         node.horizontalAlignmentMode = .center
         node.verticalAlignmentMode = .center
         node.zPosition = 72
@@ -1687,12 +1689,21 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        let mat = p.def.material
-        let texName = JunkCatalog.textureName(for: p.id)
+        // Spawn-frozen material + texture — never re-derive mid-fall.
+        let mat = p.material
+        let texName = p.textureName
         let tag = "\(p.id.rawValue)-\(p.rot)-\(texName)-\(mat.rawValue)"
-        if activeRoot?.name == tag, !activeNodes.isEmpty { return }
-        // New identity (spawn / rotate / material look) — snap pose so the next piece
-        // never draws mid-bin at the previous piece's fall seat.
+        if activeRoot?.name == tag, !activeNodes.isEmpty {
+            // Re-assert plate color every frame so a recycled CellPlate tint cannot drift.
+            let plate = plateColor(for: mat)
+            for n in activeNodes {
+                n.color = plate
+                n.colorBlendFactor = 1
+            }
+            return
+        }
+        // New identity (spawn / rotate) — snap pose so the next piece never draws mid-bin
+        // at the previous piece's fall seat (the cyan→pink mid-fall bug).
         visualX = CGFloat(p.x)
         visualY = CGFloat(p.y)
         poseToX = visualX

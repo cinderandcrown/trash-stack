@@ -337,9 +337,9 @@ public struct GameEngine: Sendable {
 
     public mutating func lock(hard: Bool = false) {
         guard let p = state.active, !cascadeActive else { return }
-        let def = p.def
         for (x, y) in p.cells {
-            var cell = Cell(piece: p.id, material: def.material)
+            // Use the spawn-frozen material — never re-lookup mid-lock.
+            var cell = Cell(piece: p.id, material: p.material)
             // Per-level twists: sticky cans (L3+), leaking pipes (L4+).
             if state.level >= LevelTwist.stickyCans.rawValue, placeCount % 11 == 7, p.id == .can {
                 cell.sticky = true
@@ -422,12 +422,14 @@ public struct GameEngine: Sendable {
         let cleared = emitCascadeWave(minSize: firstWaveMinSize)
         // Always settle after a clear attempt — never leave unsupported tiles.
         lastGravityMoves = applyGravity()
+        // Second pack is a no-op when already settled; catches any residual gaps.
+        lastGravityMoves = Self.mergeGravityMoves(lastGravityMoves, applyGravity())
         if cleared {
             // packed above
         } else {
             cascadeActive = false
             state.combo = 0
-            lastGravityMoves = []
+            // Keep settle moves so the scene can ease post-lock packs that had no recycle.
             finishAfterCascades(needsSpawn: needsSpawn)
         }
     }
@@ -440,6 +442,7 @@ public struct GameEngine: Sendable {
         let cleared = emitCascadeWave(minSize: cascadeFollowUpMin)
         // Settle every wave — clear or not — so chain follow-ups never float.
         lastGravityMoves = applyGravity()
+        lastGravityMoves = Self.mergeGravityMoves(lastGravityMoves, applyGravity())
         if cleared {
             return true
         }
@@ -599,15 +602,23 @@ public struct GameEngine: Sendable {
         // Slam already spent the meter — triples may recycle on the first settle wave.
         if paceCascades {
             beginPacedCascade(firstWaveMinSize: 3, followUpMinSize: 3, needsSpawn: false)
-            // If nothing recycled, expose the crush-settle moves so the scene eases them.
-            // If a wave cleared, lastGravityMoves already holds the post-clear settle.
-            if lastGravityMoves.isEmpty {
-                lastGravityMoves = packMoves
-            }
+            // Scene must ease every cell that moved: crush-pack and any post-clear pack.
+            lastGravityMoves = Self.mergeGravityMoves(packMoves, lastGravityMoves)
         } else {
             _ = runRecycleCascades(firstWaveMinSize: 3, followUpMinSize: 3)
         }
+        // Final settle pass — board must be packed even if a cascade wave no-oped.
+        let finalPack = applyGravity()
+        lastGravityMoves = Self.mergeGravityMoves(lastGravityMoves, finalPack)
         return true
+    }
+
+    /// Prefer later destinations when the same cell packs twice (slam then clear).
+    private static func mergeGravityMoves(_ a: [GravityMove], _ b: [GravityMove]) -> [GravityMove] {
+        var byDest: [String: GravityMove] = [:]
+        for m in a { byDest["\(m.to.x),\(m.to.y)"] = m }
+        for m in b { byDest["\(m.to.x),\(m.to.y)"] = m }
+        return Array(byDest.values)
     }
 
     /// Stack height in visible rows (0 = empty). Used for danger telegraph.

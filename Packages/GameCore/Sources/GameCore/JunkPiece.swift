@@ -75,6 +75,7 @@ public enum JunkCatalog {
             [[0, 0], [0, 1]],
             [[0, 0], [1, 0]],
         ], weight: 12),
+        // Plank keeps plank art — never cardboard/fridge chevron.
         JunkDef(id: .plank, material: .paper, textureName: "plank", rotations: [
             [[0, 0], [1, 0], [2, 0]],
             [[0, 0], [0, 1], [0, 2]],
@@ -134,6 +135,16 @@ public enum JunkCatalog {
     /// Recycle callout / toast label — same field the matcher uses.
     public static func label(for material: Material) -> String {
         material.rawValue.uppercased()
+    }
+
+    /// Short sidebar chip for a material (PA / GL / PL / ME).
+    public static func shortLabel(for material: Material) -> String {
+        switch material {
+        case .paper: return "PA"
+        case .glass: return "GL"
+        case .plastic: return "PL"
+        case .metal: return "ME"
+        }
     }
 
     /// Representative piece id for a material (hazard conversions stay honest).

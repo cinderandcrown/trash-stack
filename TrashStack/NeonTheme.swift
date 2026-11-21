@@ -8,6 +8,10 @@ import GameRender
 /// Asset-catalog first, then app Resources/UI, then GameRender package textures.
 enum BundleArt {
     static func uiImage(_ name: String) -> UIImage? {
+        // Junk look-map first so banana/bentPipe/fridge never paint as swirl/chevron.
+        if let junk = JunkTextureLoader.image(named: name) {
+            return junk
+        }
         if let img = UIImage(named: name) { return img }
         for bundle in JunkTextureLoader.candidateBundles() {
             if let img = UIImage(named: name, in: bundle, compatibleWith: nil) { return img }

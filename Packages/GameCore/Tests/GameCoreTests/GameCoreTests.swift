@@ -105,12 +105,9 @@ final class GameCoreTests: XCTestCase {
             var steps = 0
             while let active = eng.state.active, steps < 48 {
                 XCTAssertEqual(active.id, id, "id changed mid-fall for \(id)")
-                XCTAssertEqual(active.def.material, expectedMat, "material changed mid-fall for \(id)")
-                XCTAssertEqual(
-                    JunkCatalog.textureName(for: active.id),
-                    expectedTex,
-                    "texture changed mid-fall for \(id)"
-                )
+                XCTAssertEqual(active.material, expectedMat, "material changed mid-fall for \(id)")
+                XCTAssertEqual(active.textureName, expectedTex, "texture changed mid-fall for \(id)")
+                XCTAssertEqual(active.def.material, expectedMat, "def material drifted for \(id)")
                 if eng.isGrounded() {
                     let cells = active.cells
                     eng.lock()
@@ -160,14 +157,16 @@ final class GameCoreTests: XCTestCase {
             .metal: ["can"],
             .plastic: ["pipe", "plastic", "tire"],
             .glass: ["glass", "bottle"],
-            .paper: ["plank", "cardboard", "crate", "pizza"],
+            .paper: ["plank", "crate", "pizza"],
         ]
+        let banned = Set(["banana", "bentPipe", "fridge"])
         for def in JunkCatalog.all {
             let ok = allowed[def.material] ?? []
             XCTAssertTrue(
                 ok.contains(def.textureName),
                 "\(def.id) material \(def.material) must not use texture '\(def.textureName)' (allowed \(ok))"
             )
+            XCTAssertFalse(banned.contains(def.textureName), "\(def.id) must not use banned texture")
         }
         // Pink bottle bar is plastic — never metal.
         XCTAssertEqual(JunkCatalog.def(for: .pipe).material, .plastic)
@@ -251,14 +250,20 @@ final class GameCoreTests: XCTestCase {
         for id in JunkID.allCases {
             let def = JunkCatalog.def(for: id)
             let cell = Cell(piece: id, material: def.material)
+            let active = ActivePiece(id: id, x: 0, y: 0)
             let tex = JunkCatalog.textureName(for: cell)
             let label = JunkCatalog.label(for: cell.material)
             XCTAssertEqual(cell.material, def.material, "\(id) cell material")
+            XCTAssertEqual(active.material, def.material, "\(id) active material frozen at spawn")
+            XCTAssertEqual(active.textureName, def.textureName, "\(id) active texture frozen at spawn")
             XCTAssertEqual(tex, def.textureName, "\(id) display texture must match catalog")
+            XCTAssertEqual(tex, active.textureName, "\(id) cell texture == active texture")
             XCTAssertEqual(label, def.material.rawValue.uppercased(), "\(id) label")
-            // No swirl / banana art for any playable piece.
+            // No swirl / banana / fridge-chevron art for any playable piece.
             XCTAssertNotEqual(tex, "banana", "\(id) must not use swirl banana art")
             XCTAssertNotEqual(tex, "bentPipe", "\(id) must not use raw bentPipe swirl key")
+            XCTAssertNotEqual(tex, "fridge", "\(id) must not use fridge chevron art")
+            XCTAssertNotEqual(tex, "cardboard", "\(id) must not use cardboard chevron art")
         }
         // Hazard conversion keeps texture/label/match on the same material.
         var corroded = Cell(piece: .crate, material: .paper)

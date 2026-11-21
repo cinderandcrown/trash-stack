@@ -12,39 +12,48 @@ public enum JunkTextureLoader {
     public static let appBundleId = "com.cinderandcrown.trashstack"
 
     /// Legacy atlas keys → files that match the material look map.
-    /// Never alias onto banana/swirl art — that misreads as a fifth material.
+    /// Banana / bentPipe / fridge swirl-chevron leftovers always resolve to steel `can`.
     private static let aliases: [String: String] = [
         "tube": "glass",
         "scrap": "plank",
         "bag": "tire",
         "box": "crate",
         "bottle": "glass",
-        "plank": "cardboard",
+        // Keep plank on plank art — cardboard aliases looked like fridge chevrons.
         "pipe": "plastic",
         "crate": "pizza",
-        // Swirl / peel leftovers → steel can (metal) so they never show in play.
         "banana": "can",
         "bentPipe": "can",
         "fridge": "can",
     ]
 
+    /// Keys that must never appear on a playable tile.
+    private static let banned: Set<String> = ["banana", "bentPipe", "fridge"]
+
+    public static func resolveName(_ name: String) -> String {
+        let aliased = aliases[name] ?? name
+        if banned.contains(aliased) { return "can" }
+        if banned.contains(name) { return "can" }
+        return aliased
+    }
+
     public static func image(named name: String) -> UIImage? {
-        let resolved = aliases[name] ?? name
+        let resolved = resolveName(name)
         if let img = imageFromModule(named: resolved) { return img }
-        if let img = imageFromModule(named: name) { return img }
+        if resolved != name, let img = imageFromModule(named: name) { return img }
         if let img = UIImage(named: resolved) { return img }
         if let img = UIImage(named: name) { return img }
         for bundle in candidateBundles() {
-            if let img = UIImage(named: name, in: bundle, compatibleWith: nil) {
+            if let img = UIImage(named: resolved, in: bundle, compatibleWith: nil) {
                 return img
             }
             for sub in ["Junk", "HUD", "UI", "Resources/Junk", "Resources/HUD", "Resources/UI"] {
-                if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
+                if let url = bundle.url(forResource: resolved, withExtension: "png", subdirectory: sub),
                    let img = UIImage(contentsOfFile: url.path) {
                     return img
                 }
             }
-            if let url = bundle.url(forResource: name, withExtension: "png"),
+            if let url = bundle.url(forResource: resolved, withExtension: "png"),
                let img = UIImage(contentsOfFile: url.path) {
                 return img
             }
@@ -62,16 +71,16 @@ public enum JunkTextureLoader {
 
     /// Package-local PNGs under Resources/Junk and Resources/HUD.
     public static func imageFromModule(named name: String) -> UIImage? {
+        let resolved = resolveName(name)
         let bundle = Bundle.module
-        // SPM `.copy("Resources")` may keep or strip the Resources/ prefix — try both.
         let subs = ["Junk", "HUD", "Resources/Junk", "Resources/HUD", "Resources"]
         for sub in subs {
-            if let url = bundle.url(forResource: name, withExtension: "png", subdirectory: sub),
+            if let url = bundle.url(forResource: resolved, withExtension: "png", subdirectory: sub),
                let img = UIImage(contentsOfFile: url.path) {
                 return img
             }
         }
-        if let url = bundle.url(forResource: name, withExtension: "png"),
+        if let url = bundle.url(forResource: resolved, withExtension: "png"),
            let img = UIImage(contentsOfFile: url.path) {
             return img
         }

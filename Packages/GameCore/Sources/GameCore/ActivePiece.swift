@@ -5,12 +5,19 @@ public struct ActivePiece: Sendable, Equatable {
     public var rot: Int
     public var x: Int
     public var y: Int
+    /// Frozen at spawn — never re-derived mid-fall (prevents cyan→pink plate swaps).
+    public let material: Material
+    /// Frozen at spawn — same field the board / label / match use.
+    public let textureName: String
 
     public init(id: JunkID, rot: Int = 0, x: Int, y: Int) {
+        let def = JunkCatalog.def(for: id)
         self.id = id
         self.rot = rot
         self.x = x
         self.y = y
+        self.material = def.material
+        self.textureName = def.textureName
     }
 
     public var def: JunkDef { JunkCatalog.def(for: id) }
