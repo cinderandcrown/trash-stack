@@ -16,30 +16,56 @@ SIMCTL_DEADLINE_S="${SIMCTL_DEADLINE_S:-12}"
 FIT_DIR="$OUT_DIR/fit"
 mkdir -p "$FIT_DIR"
 
+# Same-session setpgrp (not start_new_session): killpg gets EPERM on macOS CI
+# with start_new_session and leaves orphaned simctl children that break install.
 raw_deadline() {
   local secs="$1" rc=0
   shift
   python3 - "$secs" "$@" <<'PY' || rc=$?
 import os, signal, subprocess, sys, time
 secs = float(sys.argv[1]); cmd = sys.argv[2:]
+
 def nuke(pid: int) -> None:
-    try: os.killpg(pid, signal.SIGKILL)
-    except ProcessLookupError: pass
-p = subprocess.Popen(cmd, start_new_session=True)
-t0 = time.time()
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            return
+        except OSError:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+            try:
+                out = subprocess.check_output(
+                    ["pgrep", "-P", str(pid)], text=True, stderr=subprocess.DEVNULL
+                )
+            except Exception:
+                out = ""
+            for line in out.split():
+                try:
+                    os.kill(int(line.strip()), sig)
+                except (OSError, ValueError):
+                    pass
+        if sig == signal.SIGTERM:
+            time.sleep(0.25)
+
+proc = subprocess.Popen(cmd, preexec_fn=os.setpgrp)
 try:
-    while True:
-        rc = p.poll()
-        if rc is not None:
-            sys.exit(rc)
-        if time.time() - t0 >= secs:
-            nuke(p.pid)
-            time.sleep(0.2)
-            nuke(p.pid)
-            sys.exit(124)
-        time.sleep(0.05)
-except KeyboardInterrupt:
-    nuke(p.pid); raise
+    code = proc.wait(timeout=secs)
+    sys.exit(code if code is not None else 0)
+except subprocess.TimeoutExpired:
+    nuke(proc.pid)
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            proc.wait(timeout=0.2)
+            break
+        except subprocess.TimeoutExpired:
+            nuke(proc.pid)
+        except Exception:
+            break
+    sys.exit(124)
 PY
   return "$rc"
 }
@@ -234,10 +260,11 @@ cold_launch_shot() {
   local attempt
   for attempt in 1 2 3; do
     kill_app
-    raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true || true
-    raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool false || true
-    raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.skipAds" -bool true || true
-    raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "$mode" || true
+    # Launch args carry shot mode — avoid a stack of spawn defaults that wedge simctl.
+    if (( attempt == 1 )); then
+      raw_deadline 5 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" tutorialDone -bool true >/dev/null 2>&1 || true
+      raw_deadline 5 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" classicButtons -bool false >/dev/null 2>&1 || true
+    fi
     raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
       -trashStackShot "$mode" -trashStackSkipAds -trashStackSkipIdent >/tmp/fit-launch-"$mode".out 2>&1 || true
     cat /tmp/fit-launch-"$mode".out >&2 || true
@@ -272,7 +299,7 @@ cold_launch_shot() {
         ;;
     esac
     echo "Fit: $mode shot rejected attempt=$attempt — relaunching" >&2
-    settle=$(python3 -c "print(min(8, $settle + 1.5))")
+    settle=$(python3 -c "print(min(7, $settle + 1.0))")
   done
   echo "Fit shots: failed $mode → $out" >&2
   return 1

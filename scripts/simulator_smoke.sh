@@ -256,6 +256,11 @@ on_deadline_timeout() {
   if (( IN_RECOVER == 1 )); then
     return 0
   fi
+  # Never erase mid-video — recover wiped the device and left 0-byte mp4 + no fit.
+  if [[ "$CURRENT_STEP" == "record_video" || "$CURRENT_STEP" == "ffmpeg_mux" ]]; then
+    echo "deadline TIMEOUT (no-recover) cmd=$label step=$CURRENT_STEP" >&2
+    return 0
+  fi
   DEADLINE_FAILS=$((DEADLINE_FAILS + 1))
   echo "deadline TIMEOUT ($DEADLINE_FAILS/$CONSEC_DEADLINE_LIMIT) cmd=$label step=$CURRENT_STEP" >&2
   if (( DEADLINE_FAILS >= CONSEC_DEADLINE_LIMIT )); then
@@ -854,8 +859,11 @@ launch_shot() {
 
     left=$(shot_budget_left "$shot_start")
     if (( left < 5 )); then sleep 1; continue; fi
-    # Poll until past OS LaunchLogo / first real frame (fixed sleep alone is flaky on CI).
-    local poll_deadline=$((SECONDS + settle + 8))
+    # Poll until past OS LaunchLogo / first real frame.
+    # Cap settle poll at 18s — longer loops (settle+8 with retries) blew 150–198s.
+    local poll_window=$((settle + 6))
+    (( poll_window > 18 )) && poll_window=18
+    local poll_deadline=$((SECONDS + poll_window))
     local got_frame=0
     local shot_fail=0
     while (( SECONDS < poll_deadline )); do
@@ -865,11 +873,11 @@ launch_shot() {
       if ! shot "$outfile"; then
         shot_fail=$((shot_fail + 1))
         # Don't burn the step budget on wedged io — bail this attempt fast.
-        if (( shot_fail >= 3 )); then
+        if (( shot_fail >= 2 )); then
           echo "screenshot wedged for mode='$mode' (fail=$shot_fail) — next attempt" >&2
           break
         fi
-        sleep 0.6
+        sleep 0.5
         continue
       fi
       shot_fail=0
@@ -878,7 +886,7 @@ launch_shot() {
         break
       fi
       echo "Waiting past LaunchLogo/splash for mode='$mode' ($(stat -c%s "$outfile" 2>/dev/null || echo 0) bytes)" >&2
-      sleep 0.8
+      sleep 0.6
     done
     if (( got_frame == 0 )); then
       echo "No post-LaunchLogo frame for mode='$mode' attempt=$attempts — retrying" >&2
@@ -1643,47 +1651,34 @@ fi
 assert_not_launch_splash "$OUT_DIR/00-publisher-ident.png"
 assert_shot_matches_mode "ident" "$OUT_DIR/00-publisher-ident.png"
 smoke_budget
-# Settle long enough for mid-game / crush juice / recycle banner.
-# Kill the sticky title PID first — simctl launch often reuses it and leaves the
-# frame on title (markers pass on alley variance, SSIM vs title stays ≥0.85).
-echo "Terminating before first gameplay launch (clear sticky title PID)" >&2
-# Hard kill — soft terminate alone left a title PID that ignored -trashStackShot game.
-ensure_app_terminated || true
-APP_DATA_CONTAINER=""
-write_smoke_shot_file "game" || true
-write_shot_defaults "game" 8
-# First gameplay shot needs simctl launch + SkipIdent; juice shots soft-switch after.
-# Cap attempts via settle; on failure skip stills but continue so video can cold-launch.
-set +e
-launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
-GAME_SHOT_RC=$?
-set -e
-if (( GAME_SHOT_RC != 0 )) || [[ ! -s "$OUT_DIR/02-gameplay.png" ]]; then
-  echo "WARN game shot failed (rc=$GAME_SHOT_RC) — continuing to video path" >&2
-else
-  assert_no_missing_textures "$OUT_DIR/02-gameplay.png" || true
-fi
-SOFT_SHOT_ONLY=1
-if [[ -s "$OUT_DIR/02-gameplay.png" ]]; then
-  set +e
-  launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 3
-  set -e
-  assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png" || true
-fi
 
-# Record ~45–60s autoplay clip ASAP (before flaky later shots can abort the script).
+# Promote title into fit/ immediately — later steps must not leave us without it.
+mkdir -p "$OUT_DIR/fit"
+{
+  echo "tag=pro"
+  echo "udid=$DEVICE"
+  xcrun simctl list devices 2>/dev/null | grep "$DEVICE" || true
+} > "$OUT_DIR/fit/pro-device.txt"
+cp -f "$OUT_DIR/01-title.png" "$OUT_DIR/fit/pro-title.png"
+
+# --- VIDEO FIRST -------------------------------------------------------------
+# Prior order (game → soft compactor → video) burned ~200s+ of simctl and tripped
+# wedge recover (erase) before recordVideo could start. Capture the demo while
+# the device is still responsive; board stills + GO come after finalize.
 CURRENT_STEP="record_video"
 note_timing step "$CURRENT_STEP" "$STEP_BUDGET_S" 0 0 "start"
 VIDEO_T0=$SECONDS
 ensure_app_terminated || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" || true
-# Gesture-first Feel P0 — classic pad off so recordVideo shows board gestures + Higgsfield art.
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "classicButtons" -bool false || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSec" >/dev/null 2>&1 || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSecString" >/dev/null 2>&1 || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpoch" >/dev/null 2>&1 || true
-with_deadline 8 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpochString" >/dev/null 2>&1 || true
-# Drop stale game_* lines from a prior gameplay shot so we don't accept old stamps.
+APP_DATA_CONTAINER=""
+# Soft Documents nudge — never with_deadline (those 124s feed consec wedge → erase).
+write_smoke_shot_file "demo" || true
+raw_deadline 6 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "demo" >/dev/null 2>&1 || true
+raw_deadline 6 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "classicButtons" -bool false >/dev/null 2>&1 || true
+raw_deadline 4 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSec" >/dev/null 2>&1 || true
+raw_deadline 4 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.launchToGameSecString" >/dev/null 2>&1 || true
+raw_deadline 4 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpoch" >/dev/null 2>&1 || true
+raw_deadline 4 xcrun simctl spawn "$DEVICE" defaults delete "$BUNDLE_ID" "trashStack.firstGameFrameWallEpochString" >/dev/null 2>&1 || true
+# Drop stale game_* lines so we don't accept old stamps.
 _docs_clear="$(launch_docs_path)"
 if [[ -n "$_docs_clear" && -f "$_docs_clear" ]]; then
   python3 - "$_docs_clear" <<'PY' || true
@@ -2030,13 +2025,72 @@ if fps > 0 and fps < 50:
 print(f"FPS assert ok ({fps})")
 PY
 
-# Post-video stills are best-effort — never abort the suite after a good demo mp4.
+# Post-video calm-fit stills: painted board + real game-over, then optional extras.
+# Reset wedge counter — video path used raw deadlines; device should still be alive.
+DEADLINE_FAILS=0
+ensure_app_terminated || true
+APP_DATA_CONTAINER=""
+write_smoke_shot_file "game" || true
+raw_deadline 6 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "game" >/dev/null 2>&1 || true
+SOFT_SHOT_ONLY=0
+set +e
+launch_shot "game" "$OUT_DIR/02-gameplay.png" 3
+GAME_SHOT_RC=$?
+set -e
+if (( GAME_SHOT_RC == 0 )) && [[ -s "$OUT_DIR/02-gameplay.png" ]]; then
+  assert_no_missing_textures "$OUT_DIR/02-gameplay.png" || true
+  cp -f "$OUT_DIR/02-gameplay.png" "$OUT_DIR/fit/pro-play.png"
+  echo "Promoted fit/pro-play.png from 02-gameplay" >&2
+fi
+# Compactor soft-switch only if game already painted — one attempt, no recover burn.
+if [[ -s "$OUT_DIR/fit/pro-play.png" ]]; then
+  SOFT_SHOT_ONLY=1
+  set +e
+  launch_shot "compactor" "$OUT_DIR/03-compactor-clear.png" 3
+  set -e
+  if [[ -s "$OUT_DIR/03-compactor-clear.png" ]]; then
+    assert_no_missing_textures "$OUT_DIR/03-compactor-clear.png" || true
+    # Prefer richer mid-run board for fit when markers pass.
+    if assert_shot_matches_mode "compactor" "$OUT_DIR/03-compactor-clear.png" 2>/dev/null; then
+      cp -f "$OUT_DIR/03-compactor-clear.png" "$OUT_DIR/fit/pro-play.png"
+      echo "Promoted fit/pro-play.png from 03-compactor-clear" >&2
+    fi
+  fi
+elif (( GAME_SHOT_RC != 0 )); then
+  # Cold fallback: one hard game launch if first paint missed.
+  echo "WARN game shot missed — one cold retry for fit/pro-play" >&2
+  ensure_app_terminated || true
+  write_smoke_shot_file "game" || true
+  SOFT_SHOT_ONLY=0
+  set +e
+  launch_shot "game" "$OUT_DIR/02-gameplay.png" 4
+  set -e
+  if [[ -s "$OUT_DIR/02-gameplay.png" ]] && assert_shot_matches_mode "game" "$OUT_DIR/02-gameplay.png" 2>/dev/null; then
+    cp -f "$OUT_DIR/02-gameplay.png" "$OUT_DIR/fit/pro-play.png"
+  fi
+fi
+
+# Game-over must be a real overlay (score/best/retry), not C&C splash.
+SOFT_SHOT_ONLY=0
+ensure_app_terminated || true
+write_smoke_shot_file "revive" || true
+set +e
+launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 5
+set -e
+if [[ -s "$OUT_DIR/05-game-over-revive.png" ]]; then
+  assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png" || true
+  if assert_shot_matches_mode "revive" "$OUT_DIR/05-game-over-revive.png" 2>/dev/null; then
+    cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
+    echo "Promoted fit/pro-game-over.png from 05-game-over-revive" >&2
+  else
+    echo "WARN 05-game-over-revive failed overlay markers — not promoting as fit GO" >&2
+  fi
+fi
+
+# Optional extras — never abort after a good demo mp4.
 SOFT_SHOT_ONLY=1
 launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 4 || true
 assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png" || true
-SOFT_SHOT_ONLY=0
-launch_shot "revive" "$OUT_DIR/05-game-over-revive.png" 5 || true
-assert_no_missing_textures "$OUT_DIR/05-game-over-revive.png" || true
 SOFT_SHOT_ONLY=0
 launch_shot "base" "$OUT_DIR/06-base.png" 2 || true
 SOFT_SHOT_ONLY=1
@@ -2171,7 +2225,7 @@ for i in range(len(grids)):
 print("Screenshot SSIM distinctness OK")
 PY
 
-# Hard-required evidence for calm-fit: title, a painted board, revive overlay, demo mp4.
+# Hard-required evidence for calm-fit: title, painted board, revive overlay, demo mp4.
 REQUIRED_OK=1
 for f in 01-title.png gameplay-demo.mp4 launch-time-seconds.txt; do
   path="$OUT_DIR/$f"
@@ -2182,20 +2236,33 @@ for f in 01-title.png gameplay-demo.mp4 launch-time-seconds.txt; do
     echo "OK $path ($(wc -c < "$path") bytes)"
   fi
 done
-BOARD_OK=0
-for f in 03-compactor-clear.png 02-gameplay.png 04-recycle-combo.png; do
-  if [[ -s "$OUT_DIR/$f" ]]; then
-    echo "OK board candidate $OUT_DIR/$f ($(wc -c < "$OUT_DIR/$f") bytes)"
-    BOARD_OK=1
-    break
-  fi
-done
-if (( BOARD_OK == 0 )); then
-  echo "Missing required board screenshot (02/03/04)" >&2
+mkdir -p "$OUT_DIR/fit"
+[[ -s "$OUT_DIR/01-title.png" && ! -s "$OUT_DIR/fit/pro-title.png" ]] \
+  && cp -f "$OUT_DIR/01-title.png" "$OUT_DIR/fit/pro-title.png"
+# Prefer already-promoted fit play; else copy best board candidate that passes markers.
+if [[ ! -s "$OUT_DIR/fit/pro-play.png" ]]; then
+  for f in 03-compactor-clear.png 02-gameplay.png 04-recycle-combo.png; do
+    if [[ -s "$OUT_DIR/$f" ]] && assert_shot_matches_mode "game" "$OUT_DIR/$f" 2>/dev/null; then
+      cp -f "$OUT_DIR/$f" "$OUT_DIR/fit/pro-play.png"
+      echo "Late-promoted fit/pro-play.png from $f" >&2
+      break
+    fi
+  done
+fi
+if [[ -s "$OUT_DIR/fit/pro-play.png" ]] && assert_shot_matches_mode "game" "$OUT_DIR/fit/pro-play.png"; then
+  echo "OK fit/pro-play.png ($(wc -c < "$OUT_DIR/fit/pro-play.png") bytes) board painted"
+else
+  echo "Missing required painted board (fit/pro-play.png)" >&2
   REQUIRED_OK=0
 fi
-if [[ ! -s "$OUT_DIR/05-game-over-revive.png" ]]; then
-  echo "WARN missing 05-game-over-revive.png — fit fallback must supply GO" >&2
+if [[ ! -s "$OUT_DIR/fit/pro-game-over.png" && -s "$OUT_DIR/05-game-over-revive.png" ]]; then
+  cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
+fi
+if [[ -s "$OUT_DIR/fit/pro-game-over.png" ]] && assert_shot_matches_mode "revive" "$OUT_DIR/fit/pro-game-over.png"; then
+  echo "OK fit/pro-game-over.png ($(wc -c < "$OUT_DIR/fit/pro-game-over.png") bytes) overlay"
+else
+  echo "Missing required game-over overlay (fit/pro-game-over.png)" >&2
+  REQUIRED_OK=0
 fi
 for f in 00-publisher-ident.png 06-base.png 07-pass.png 08-shop.png 09-notification-prompt.png \
          recycle-chain-clip.mp4; do
@@ -2215,22 +2282,6 @@ for f in 01-play.png 02-crush.png 03-recycle.png 04-junkyard.png 05-pass.png 06-
   fi
 done
 
-# Calm+Fit evidence aliases — real sim screenshots only (title / mid-run / game-over).
-mkdir -p "$OUT_DIR/fit"
-{
-  echo "tag=pro"
-  echo "udid=$DEVICE"
-  xcrun simctl list devices 2>/dev/null | grep "$DEVICE" || true
-} > "$OUT_DIR/fit/pro-device.txt"
-[[ -s "$OUT_DIR/01-title.png" ]] && cp -f "$OUT_DIR/01-title.png" "$OUT_DIR/fit/pro-title.png"
-if [[ -s "$OUT_DIR/03-compactor-clear.png" ]]; then
-  cp -f "$OUT_DIR/03-compactor-clear.png" "$OUT_DIR/fit/pro-play.png"
-elif [[ -s "$OUT_DIR/02-gameplay.png" ]]; then
-  cp -f "$OUT_DIR/02-gameplay.png" "$OUT_DIR/fit/pro-play.png"
-elif [[ -s "$OUT_DIR/04-recycle-combo.png" ]]; then
-  cp -f "$OUT_DIR/04-recycle-combo.png" "$OUT_DIR/fit/pro-play.png"
-fi
-[[ -s "$OUT_DIR/05-game-over-revive.png" ]] && cp -f "$OUT_DIR/05-game-over-revive.png" "$OUT_DIR/fit/pro-game-over.png"
 raw_deadline 15 "$FFPROBE_BIN" -v error -show_entries format=duration -of default=nw=1:nk=1 \
   "$OUT_DIR/gameplay-demo.mp4" > "$OUT_DIR/fit/gameplay-demo-duration.txt" 2>/dev/null || true
 for f in fit/pro-title.png fit/pro-play.png fit/pro-game-over.png; do

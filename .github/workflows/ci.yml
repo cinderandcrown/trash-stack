@@ -238,6 +238,56 @@ jobs:
           path: smoke-artifacts/
           if-no-files-found: warn
 
+      # Hard gate AFTER upload so Magpie still gets partials, but the job stays red
+      # until Pro+SE play / game-over / non-empty demo mp4 are all real.
+      - name: Calm+Fit evidence gate
+        if: always() && steps.smoke_pro.outcome != 'skipped'
+        run: |
+          set -euo pipefail
+          fail=0
+          need() {
+            local p="$1"
+            if [[ -s "$p" ]]; then
+              echo "OK $p ($(wc -c < "$p") bytes)"
+            else
+              echo "MISSING $p" >&2
+              fail=1
+            fi
+          }
+          need smoke-artifacts/gameplay-demo.mp4
+          need smoke-artifacts/fit/pro-title.png
+          need smoke-artifacts/fit/pro-play.png
+          need smoke-artifacts/fit/pro-game-over.png
+          need smoke-artifacts/fit/se-title.png
+          need smoke-artifacts/fit/se-play.png
+          need smoke-artifacts/fit/se-game-over.png
+          if [[ ! -s smoke-artifacts/03-compactor-clear.png && ! -s smoke-artifacts/02-gameplay.png ]]; then
+            echo "MISSING board still (02-gameplay or 03-compactor-clear)" >&2
+            fail=1
+          fi
+          # Reject tiny/empty mp4 and splash-sized "play" frames.
+          if [[ -s smoke-artifacts/gameplay-demo.mp4 ]]; then
+            sz=$(wc -c < smoke-artifacts/gameplay-demo.mp4 | tr -d ' ')
+            if (( sz < 500000 )); then
+              echo "gameplay-demo.mp4 too small ($sz)" >&2
+              fail=1
+            fi
+          fi
+          if [[ -s smoke-artifacts/fit/pro-play.png ]]; then
+            psz=$(wc -c < smoke-artifacts/fit/pro-play.png | tr -d ' ')
+            if (( psz < 200000 )); then
+              echo "fit/pro-play.png suspiciously small ($psz) — likely splash/grey" >&2
+              fail=1
+            fi
+          fi
+          if (( fail != 0 )); then
+            echo "Calm+Fit evidence incomplete — refusing green" >&2
+            ls -la smoke-artifacts/ smoke-artifacts/fit/ 2>/dev/null || true
+            exit 1
+          fi
+          echo "Calm+Fit evidence gate passed"
+          ls -la smoke-artifacts/fit/
+
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
