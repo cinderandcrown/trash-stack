@@ -434,12 +434,8 @@ public final class CompactorScene: SKScene {
         }
 
         // Visible per-material recycle chutes (right of bin).
-        let chuteMats: [(Material, SKColor)] = [
-            (.metal, SKColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 1)),
-            (.plastic, SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 1)),
-            (.glass, SKColor(red: 0.15, green: 0.9, blue: 0.95, alpha: 1)),
-            (.paper, SKColor(red: 0.9, green: 0.7, blue: 0.35, alpha: 1)),
-        ]
+        // Same plateRGB families as tiles / callouts / ghosts (metal ≠ cyan).
+        let chuteMats: [(Material, SKColor)] = Material.allCases.map { ($0, plateColor(for: $0)) }
         for (i, pair) in chuteMats.enumerated() {
             let mouth = SKShapeNode(rectOf: CGSize(width: cs.width * 0.7, height: cs.height * 1.1), cornerRadius: 6)
             mouth.fillColor = pair.1.withAlphaComponent(0.35)
@@ -509,7 +505,8 @@ public final class CompactorScene: SKScene {
         let sidePad: CGFloat = 8
         let topPad: CGFloat = 28 // room for anchored combo counter
         // Leave clear chrome under the dumpster frame so SLAM never touches it.
-        let bottomPad: CGFloat = 88
+        // Leave room under the neon lip for the SLAM chrome (never overlap the frame).
+        let bottomPad: CGFloat = 148
         let maxByW = max(8, (size.width - sidePad * 2) / cols)
         let maxByH = max(8, (size.height - topPad - bottomPad) / rows)
         let s = min(maxByW, maxByH)
@@ -524,7 +521,7 @@ public final class CompactorScene: SKScene {
         let totalH = cs.height * rows
         // Top band for combo; bottom band keeps the bin frame fully above SLAM chrome.
         let topPad: CGFloat = 28
-        let bottomPad: CGFloat = 88
+        let bottomPad: CGFloat = 148
         let y = max(bottomPad, (size.height - totalH - topPad - bottomPad) * 0.5 + bottomPad)
         return CGPoint(
             x: (size.width - totalW) / 2,
@@ -639,10 +636,10 @@ public final class CompactorScene: SKScene {
             }
             render(immediate: false)
         }
-        // Soft-drag — rate-limited so each cell eases ~100–120ms (never spam softDrop every frame).
+        // Soft-drag — one cell per tween window so the 110ms ease reads at ~25fps.
         if softDragging {
             softDragAcc += Double(dt)
-            let step = max(0.10, min(0.12, feel.cellTweenSec))
+            let step = max(0.10, feel.cellTweenSec)
             if softDragAcc >= step {
                 softDragAcc = 0
                 _ = engine.softDrop()
@@ -703,8 +700,12 @@ public final class CompactorScene: SKScene {
         handleEvents()
         render(immediate: false)
         updateComboCounter()
-        if !more, engine.state.over {
-            notifyGameOverIfNeeded()
+        if !more {
+            // Cascade finished — snap every sprite to the packed model seats.
+            render(immediate: true)
+            if engine.state.over {
+                notifyGameOverIfNeeded()
+            }
         }
     }
 
@@ -823,7 +824,7 @@ public final class CompactorScene: SKScene {
         }
         if poseTweening {
             // ~100–120ms ease-out so falls/slides read at ~25fps capture.
-            let dur = max(0.10, min(0.12, feel.cellTweenSec))
+            let dur = max(0.10, feel.cellTweenSec)
             let t = min(1, (CACurrentMediaTime() - poseTweenStart) / dur)
             let eased = 1 - pow(1 - t, 3)
             visualX = poseFromX + (poseToX - poseFromX) * CGFloat(eased)
@@ -911,7 +912,7 @@ public final class CompactorScene: SKScene {
                     count: min(28, 8 + cells + combo * 2)
                 )
                 spawnParticle(named: "DebrisNeon", at: clearPt, count: min(16, 4 + cells))
-                onToast?("\(cells) \(material.rawValue.uppercased()) recycled")
+                onToast?("\(cells) \(JunkCatalog.label(for: material)) recycled")
             case .pressed(let cells, _, _):
                 animatePressPlate(cells: cells)
                 cheerUntil = CACurrentMediaTime() + 1.2
@@ -1008,17 +1009,22 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)"
+        // Spawn-frozen material — same field the falling tiles / label use.
+        let mat = p.material
+        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)-\(mat.rawValue)"
         if ghostRoot?.name == tag { return }
         clearGhost()
         let root = SKNode()
         root.name = tag
-        root.zPosition = 4
+        root.zPosition = 7
         root.alpha = 1
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
-        let fill = plateColor(for: p.def.material)
+        // Translucent outline in the falling piece's plate color (no solid fill, no white/magenta drift).
+        let (r, g, b) = plateRGB(for: mat)
+        let stroke = SKColor(red: r, green: g, blue: b, alpha: 0.95)
+        let wash = SKColor(red: r, green: g, blue: b, alpha: 0.14)
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         let pad: CGFloat = 1.5
         for off in shape {
@@ -1031,11 +1037,12 @@ public final class CompactorScene: SKScene {
                 transform: nil
             )
             let outline = SKShapeNode(path: path)
-            // Piece-colored ghost at ~30% opacity (not a white wireframe).
-            outline.strokeColor = fill.withAlphaComponent(0.55)
-            outline.fillColor = fill.withAlphaComponent(0.30)
-            outline.lineWidth = 1.5
+            outline.strokeColor = stroke
+            outline.fillColor = wash
+            outline.lineWidth = 3.0
             outline.glowWidth = 0
+            outline.lineCap = .round
+            outline.lineJoin = .round
             outline.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
             root.addChild(outline)
         }
@@ -1053,13 +1060,15 @@ public final class CompactorScene: SKScene {
         recycleCalloutBusy = true
         let item = recycleCalloutQueue.removeFirst()
         // Matched material only — short enough to fit on a Pro/SE board.
-        let matName = item.material.rawValue.uppercased()
+        let matName = JunkCatalog.label(for: item.material)
         let label = "\(item.cells) \(matName) = RECYCLED"
         let node = SKLabelNode(fontNamed: "AvenirNext-Heavy")
         node.name = "recycleCallout"
         node.text = label
         node.fontSize = 14
-        node.fontColor = SKColor(red: 0.05, green: 0.95, blue: 0.92, alpha: 1)
+        // Label color = material plate color (never a universal cyan).
+        let (r, g, b) = plateRGB(for: item.material)
+        node.fontColor = SKColor(red: r, green: g, blue: b, alpha: 1)
         node.horizontalAlignmentMode = .center
         node.verticalAlignmentMode = .center
         node.zPosition = 72
@@ -1234,17 +1243,12 @@ public final class CompactorScene: SKScene {
     }
 
     private func materialGlow(_ material: Material) -> SKColor {
-        switch material {
-        case .metal: return SKColor(red: 0.55, green: 0.7, blue: 0.85, alpha: 0.45)
-        case .plastic: return SKColor(red: 0.95, green: 0.2, blue: 0.75, alpha: 0.45)
-        case .glass: return SKColor(red: 0.2, green: 0.95, blue: 1, alpha: 0.45)
-        case .paper: return SKColor(red: 0.9, green: 0.7, blue: 0.35, alpha: 0.45)
-        }
+        let (r, g, b) = plateRGB(for: material)
+        return SKColor(red: r, green: g, blue: b, alpha: 0.45)
     }
 
     private func representativeTexture(for material: Material) -> SKTexture? {
-        let id = JunkCatalog.all.first(where: { $0.material == material })?.id ?? .can
-        return tex(JunkCatalog.textureName(for: id))
+        tex(JunkCatalog.textureName(forMaterial: material))
     }
 
     private func ghostPlateTexture(for material: Material) -> SKTexture? {
@@ -1559,7 +1563,7 @@ public final class CompactorScene: SKScene {
             fallFrom[key] = positionFor(x: m.from.x, boardY: m.from.y)
             fallCell[key] = m.cell
         }
-        let fallDur = max(0.10, min(0.12, feel.cellTweenSec))
+        let fallDur = max(0.10, feel.cellTweenSec)
 
         // Every occupied cell is a full rounded-square plate + material art on top
         // (no 2×2 merged sprites — stacking must stay cell-clear).
@@ -1567,17 +1571,18 @@ public final class CompactorScene: SKScene {
             for x in 0..<engine.state.board.config.cols {
                 let boardY = y + hid
                 let key = "\(x),\(boardY)"
-                let cell = fallCell[key] ?? engine.state.board[x, boardY]
+                // Model grid is authoritative — never paint a tile the board does not hold.
+                let cell = engine.state.board[x, boardY]
                 guard let node = cellNodes[y][x] else { continue }
                 if let cell {
-                    let name = JunkCatalog.textureName(for: cell.piece)
+                    // Texture + plate both follow cell.material (single source of truth).
+                    let name = JunkCatalog.textureName(for: cell)
                     let cellSizePx = CGSize(width: cs.width - cellPad, height: cs.height - cellPad)
                     if let plateTex {
                         node.texture = plateTex
                     } else {
                         node.texture = nil
                     }
-                    // Plate tint is material-only — never keyed off a misleading texture name.
                     node.color = plateColor(for: cell.material)
                     node.colorBlendFactor = 1
                     node.size = cellSizePx
@@ -1601,6 +1606,8 @@ public final class CompactorScene: SKScene {
                         node.setScale(1)
                     } else if let from = fallFrom[key] {
                         // Gravity pack — ease the sprite from its pre-clear seat into place.
+                        // Destination art always comes from the model cell above (not fallCell).
+                        _ = fallCell[key]
                         node.removeAction(forKey: "settle")
                         node.position = from
                         let drop = SKAction.move(to: dest, duration: fallDur)
@@ -1627,6 +1634,8 @@ public final class CompactorScene: SKScene {
                         icon.texture = nil
                         icon.alpha = 0
                     }
+                    // Snap empty slots to their grid seat so a stale settle tween cannot float art.
+                    node.position = positionFor(x: x, boardY: boardY)
                 }
             }
         }
@@ -1634,6 +1643,50 @@ public final class CompactorScene: SKScene {
         layoutActiveNodes()
         updateLandingGhost()
         updateNearMissTelegraph()
+    }
+
+    /// Test/QA: every visible sprite's occupancy matches the model grid; no floats; seats aligned.
+    public func assertSpritesMatchModel() -> Bool {
+        guard didBuild else { return false }
+        guard engine.boardHasNoFloatingTiles() else { return false }
+        let hid = engine.state.board.config.hiddenRows
+        let vis = engine.state.board.config.visibleRows
+        let tol: CGFloat = 1.5
+        for y in 0..<vis {
+            for x in 0..<engine.state.board.config.cols {
+                let boardY = y + hid
+                guard let node = cellNodes[y][x] else { return false }
+                let cell = engine.state.board[x, boardY]
+                if cell != nil {
+                    guard node.alpha > 0.05 else { return false }
+                    let dest = positionFor(x: x, boardY: boardY)
+                    // After snap-settle there must be no in-flight tween and seats must match.
+                    if node.action(forKey: "settle") != nil { return false }
+                    guard hypot(node.position.x - dest.x, node.position.y - dest.y) <= tol else {
+                        return false
+                    }
+                } else {
+                    guard node.alpha < 0.05 else { return false }
+                }
+            }
+        }
+        return true
+    }
+
+    /// Drive a paced clear then snap-settle — used by scene unit tests.
+    public func testDriveClearAndSettle() {
+        engine.paceCascades = true
+        handleEvents()
+        // Consume the first cascade wave's gravity into an eased render, then snap.
+        render(immediate: false)
+        var guardTicks = 0
+        while engine.cascadeActive, guardTicks < 12 {
+            _ = engine.advanceCascade()
+            handleEvents()
+            render(immediate: false)
+            guardTicks += 1
+        }
+        render(immediate: true)
     }
 
     /// Pulse cells that are one junk away from a recycle so the board reads as a puzzle, not noise.
@@ -1682,11 +1735,21 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        let texName = JunkCatalog.textureName(for: p.id)
-        let tag = "\(p.id.rawValue)-\(p.rot)-\(texName)-\(p.def.material.rawValue)"
-        if activeRoot?.name == tag, !activeNodes.isEmpty { return }
-        // New identity (spawn / rotate / material look) — snap pose so the next piece
-        // never draws mid-bin at the previous piece's fall seat.
+        // Spawn-frozen material + texture — never re-derive mid-fall.
+        let mat = p.material
+        let texName = p.textureName
+        let tag = "\(p.id.rawValue)-\(p.rot)-\(texName)-\(mat.rawValue)"
+        if activeRoot?.name == tag, !activeNodes.isEmpty {
+            // Re-assert plate color every frame so a recycled CellPlate tint cannot drift.
+            let plate = plateColor(for: mat)
+            for n in activeNodes {
+                n.color = plate
+                n.colorBlendFactor = 1
+            }
+            return
+        }
+        // New identity (spawn / rotate) — snap pose so the next piece never draws mid-bin
+        // at the previous piece's fall seat (the cyan→pink mid-fall bug).
         visualX = CGFloat(p.x)
         visualY = CGFloat(p.y)
         poseToX = visualX
@@ -1704,7 +1767,7 @@ public final class CompactorScene: SKScene {
         activeRoot = root
         let cs = cellSize()
         let plateTex = tex("CellPlate")
-        let plate = plateColor(for: p.def.material)
+        let plate = plateColor(for: mat)
         // Per-cell rounded plates so every block reads as a full square (stacking stays clear).
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         for off in shape {
@@ -1751,11 +1814,17 @@ public final class CompactorScene: SKScene {
 
     /// One unmistakable plate color family per material (never keyed off texture name).
     private func plateColor(for material: Material) -> SKColor {
+        let (r, g, b) = plateRGB(for: material)
+        return SKColor(red: r, green: g, blue: b, alpha: 1)
+    }
+
+    private func plateRGB(for material: Material) -> (CGFloat, CGFloat, CGFloat) {
         switch material {
-        case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.78, alpha: 1)   // steel blue-gray
-        case .plastic: return SKColor(red: 0.95, green: 0.22, blue: 0.70, alpha: 1) // magenta-pink
-        case .paper: return SKColor(red: 0.92, green: 0.62, blue: 0.28, alpha: 1)   // kraft orange
-        case .glass: return SKColor(red: 0.15, green: 0.88, blue: 0.94, alpha: 1)   // cyan
+        // Metal is silver-grey (not cyan). Glass alone owns the cyan family.
+        case .metal: return (0.78, 0.80, 0.84)
+        case .plastic: return (0.95, 0.22, 0.70) // magenta-pink
+        case .paper: return (0.96, 0.58, 0.18)   // kraft orange
+        case .glass: return (0.15, 0.88, 0.94)   // cyan
         }
     }
 

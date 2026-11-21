@@ -53,14 +53,18 @@ finalize() {
 }
 trap finalize EXIT
 
-# Start recording, then XCTest launches the app and taps PLAY (1d0ae10 flow).
+# Stamp wall clock so we can trim XCTest bootstrap out of the export.
+RECORD_START_EPOCH="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+echo "$RECORD_START_EPOCH" > "$OUT_DIR/record-start-epoch.txt"
+
+# Start recording, then XCTest launches straight into the board (-UITestRealPlay → .game).
 xcrun simctl io "$DEVICE" recordVideo --display=internal --codec=h264 --force "$RAW" &
 REC_PID=$!
-sleep 2
+sleep 1
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   xcrun simctl io "$DEVICE" recordVideo --codec=h264 --force "$RAW" &
   REC_PID=$!
-  sleep 2
+  sleep 1
 fi
 if ! kill -0 "$REC_PID" 2>/dev/null; then
   echo "recordVideo failed to start" >&2
@@ -68,7 +72,7 @@ if ! kill -0 "$REC_PID" 2>/dev/null; then
   trap - EXIT
   exit 1
 fi
-echo "Recording started (XCTest will launch + PLAY)" >&2
+echo "Recording started at epoch $RECORD_START_EPOCH (XCTest → game board)" >&2
 
 set +e
 xcodebuild test-without-building \
@@ -127,12 +131,92 @@ for cand in /opt/homebrew/bin/ffmpeg /usr/local/bin/ffmpeg; do
 done
 MUSIC="$PROJECT_ROOT/TrashStack/Resources/Audio/game_loop.wav"
 
-# Allow ~XCTest bootstrap + ~60s play (do not cut gameplay at 90s).
+# Trim XCTest bootstrap so play starts within ~10s of the exported video.
+# Prefer Documents stamp (reliable), then string defaults, then float defaults.
+# simctl `defaults read` of a Double often returns empty — never rely on it alone.
+SS="0"
+GAME_EPOCH=""
+CONTAINER="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+if [[ -n "${CONTAINER:-}" && -f "$CONTAINER/Documents/launch-timing.txt" ]]; then
+  GAME_EPOCH="$(grep -E '^game_first_frame_wall_epoch=' "$CONTAINER/Documents/launch-timing.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+fi
+if [[ -z "${GAME_EPOCH:-}" ]]; then
+  GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpochString 2>/dev/null | tr -d '[:space:]\"' || true)"
+fi
+if [[ -z "${GAME_EPOCH:-}" ]]; then
+  GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpoch 2>/dev/null | tr -d '[:space:]\"' || true)"
+fi
+if [[ -n "${GAME_EPOCH:-}" && -n "${RECORD_START_EPOCH:-}" ]]; then
+  SS="$(python3 - <<PY
+start=float("${RECORD_START_EPOCH}")
+game=float("${GAME_EPOCH}")
+ss=max(0.0, game - start - 0.4)
+print(f"{min(ss, 90.0):.3f}")
+PY
+)"
+fi
+# Last resort: scan silent capture for first neon play frame (skip springboard + dark splash).
+if python3 -c "import sys; sys.exit(0 if float('${SS:-0}') < 1.0 else 1)" 2>/dev/null; then
+  DETECTED="$(python3 - "$RAW" <<'PY'
+import subprocess, sys
+path = sys.argv[1]
+# Springboard = bright. Publisher splash = near-black, no neon. Play = dark + cyan/magenta neon.
+# XCTest bootstrap can exceed 2 minutes — scan well past that.
+for t in range(0, 200, 1):
+    raw = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path,
+         "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "96x192", "pipe:1"],
+        capture_output=True,
+    ).stdout
+    if len(raw) < 96 * 192 * 3:
+        continue
+    n = len(raw) // 3
+    luma = 0.0
+    neon = 0
+    for i in range(0, len(raw), 3):
+        r, g, b = raw[i], raw[i + 1], raw[i + 2]
+        luma += 0.2126 * r + 0.7152 * g + 0.0722 * b
+        if (g > 140 and b > 140 and r < 100) or (r > 160 and b > 120 and g < 100):
+            neon += 1
+    mean = luma / n
+    if mean < 55 and neon >= 20:
+        print(f"{max(0, t - 1)}")
+        break
+else:
+    print("0")
+PY
+)"
+  if [[ -n "${DETECTED:-}" && "${DETECTED}" != "0" ]]; then
+    SS="$DETECTED"
+    echo "real-play trim fallback scanned play@${SS}s" >&2
+  fi
+fi
+echo "real-play trim start=${SS}s (record=$RECORD_START_EPOCH game=${GAME_EPOCH:-none})" >&2
+# Guard: exported window must include play — if SS is still 0 on a long capture, force last 70s.
+if python3 -c "import sys; sys.exit(0 if float('${SS:-0}') < 1.0 else 1)" 2>/dev/null; then
+  RAW_DUR="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$RAW" 2>/dev/null || echo 0)"
+  SS="$(python3 - <<PY
+dur=float("${RAW_DUR}" or 0)
+print(f"{max(0.0, dur - 72.0):.3f}")
+PY
+)"
+  echo "real-play trim last-resort SS=${SS}s (dur=${RAW_DUR})" >&2
+fi
+
+# simctl H.264 often tags a bogus 0.25 tbr and leaves multi-second PTS gaps between
+# unique frames (slideshow / ~1 fps). Re-time after trim: setpts=N/30/TB assigns each
+# decoded frame a sequential 30 fps clock, then fps=30 locks CFR for the 70s window.
+# Never put -ss before -i on these files.
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[1:a]volume=0.34,atrim=0:130[aout]" \
-    -map 0:v -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -ac 1 -t 130 -movflags +faststart "$OUT" \
+    -filter_complex "[0:v]trim=start=${SS},setpts=N/30/TB,fps=30,trim=duration=70,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=70,asetpts=PTS-STARTPTS[aout]" \
+    -map "[vout]" -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
+    -c:a aac -b:a 128k -ac 1 -movflags +faststart "$OUT" \
+    >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
+elif [[ -n "$FFMPEG_BIN" ]]; then
+  "$FFMPEG_BIN" -hide_banner -y -i "$RAW" \
+    -vf "trim=start=${SS},setpts=N/30/TB,fps=30,trim=duration=70,setpts=PTS-STARTPTS" \
+    -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else
   cp -f "$RAW" "$OUT"

@@ -54,8 +54,8 @@ public struct FeelConfig: Codable, Sendable, Equatable {
         flashCooldownSec: 0.20,
         nearMissRows: 4,
         dasDelaySec: 0.16,
-        arrIntervalSec: 0.045,
-        softRepeatSec: 0.045,
+        arrIntervalSec: 0.11,
+        softRepeatSec: 0.11,
         cascadeStepSec: 0.30
     )
 }

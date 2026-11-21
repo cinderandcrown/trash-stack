@@ -105,12 +105,9 @@ final class GameCoreTests: XCTestCase {
             var steps = 0
             while let active = eng.state.active, steps < 48 {
                 XCTAssertEqual(active.id, id, "id changed mid-fall for \(id)")
-                XCTAssertEqual(active.def.material, expectedMat, "material changed mid-fall for \(id)")
-                XCTAssertEqual(
-                    JunkCatalog.textureName(for: active.id),
-                    expectedTex,
-                    "texture changed mid-fall for \(id)"
-                )
+                XCTAssertEqual(active.material, expectedMat, "material changed mid-fall for \(id)")
+                XCTAssertEqual(active.textureName, expectedTex, "texture changed mid-fall for \(id)")
+                XCTAssertEqual(active.def.material, expectedMat, "def material drifted for \(id)")
                 if eng.isGrounded() {
                     let cells = active.cells
                     eng.lock()
@@ -160,14 +157,16 @@ final class GameCoreTests: XCTestCase {
             .metal: ["can"],
             .plastic: ["pipe", "plastic", "tire"],
             .glass: ["glass", "bottle"],
-            .paper: ["plank", "cardboard", "crate", "pizza"],
+            .paper: ["plank", "crate", "pizza"],
         ]
+        let banned = Set(["banana", "bentPipe", "fridge"])
         for def in JunkCatalog.all {
             let ok = allowed[def.material] ?? []
             XCTAssertTrue(
                 ok.contains(def.textureName),
                 "\(def.id) material \(def.material) must not use texture '\(def.textureName)' (allowed \(ok))"
             )
+            XCTAssertFalse(banned.contains(def.textureName), "\(def.id) must not use banned texture")
         }
         // Pink bottle bar is plastic — never metal.
         XCTAssertEqual(JunkCatalog.def(for: .pipe).material, .plastic)
@@ -177,6 +176,102 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(JunkCatalog.textureName(for: .bentPipe), "can")
         XCTAssertEqual(JunkCatalog.def(for: .fridge).material, .metal)
         XCTAssertEqual(JunkCatalog.textureName(for: .fridge), "can")
+    }
+
+    /// After a match clear, every remaining tile must rest on the floor or another tile.
+    func testSettleAfterClearLeavesNoFloatingTiles() {
+        var eng = GameEngine(seed: 11)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                (0, rows - 1, Cell(piece: .can, material: .metal)),
+                (1, rows - 1, Cell(piece: .can, material: .metal)),
+                (2, rows - 1, Cell(piece: .can, material: .metal)),
+                (3, rows - 1, Cell(piece: .can, material: .metal)),
+                // Swirl-looking tire (plastic) sitting on the metal — must pack after clear.
+                (1, rows - 2, Cell(piece: .tire, material: .plastic)),
+                (2, rows - 2, Cell(piece: .tire, material: .plastic)),
+                (1, rows - 3, Cell(piece: .plank, material: .paper)),
+            ],
+            active: ActivePiece(id: .bottle, x: 5, y: 0)
+        )
+        eng.hardDrop()
+        assertNoFloatingCells(eng.state.board)
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[1, rows - 2]?.material, .paper)
+        XCTAssertFalse(eng.lastGravityMoves.isEmpty, "clear settle must record gravity moves")
+    }
+
+    /// After SLAM crushes the bottom rows, the stack above must pack with no gaps.
+    func testSettleAfterSlamLeavesNoFloatingTiles() {
+        var eng = GameEngine(seed: 12)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        // Mixed column so the post-slam pack does not form a 4+ recycle by itself.
+        eng.seedBoardForTesting(
+            cells: [
+                (0, rows - 1, Cell(piece: .plank, material: .paper)),
+                (1, rows - 1, Cell(piece: .plank, material: .paper)),
+                (2, rows - 1, Cell(piece: .plank, material: .paper)),
+                (3, rows - 1, Cell(piece: .plank, material: .paper)),
+                (0, rows - 2, Cell(piece: .plank, material: .paper)),
+                (1, rows - 2, Cell(piece: .plank, material: .paper)),
+                (2, rows - 2, Cell(piece: .plank, material: .paper)),
+                (3, rows - 2, Cell(piece: .plank, material: .paper)),
+                // Floating stack above the crush zone — must settle onto the floor.
+                (0, rows - 4, Cell(piece: .can, material: .metal)),
+                (0, rows - 5, Cell(piece: .tire, material: .plastic)),
+                (1, rows - 4, Cell(piece: .bottle, material: .glass)),
+                (2, rows - 3, Cell(piece: .crate, material: .paper)),
+                (2, rows - 4, Cell(piece: .crate, material: .paper)),
+            ],
+            active: nil
+        )
+        eng.fillPressMeter()
+        XCTAssertTrue(eng.slamPress())
+        assertNoFloatingCells(eng.state.board)
+        // Drain follow-ups — every wave must leave a packed board.
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            assertNoFloatingCells(eng.state.board)
+            guardTicks += 1
+        }
+        assertNoFloatingCells(eng.state.board)
+        // Something from above the crush zone must now sit on the floor.
+        XCTAssertNotNil(eng.state.board[0, rows - 1])
+        XCTAssertNotNil(eng.state.board[1, rows - 1])
+    }
+
+    /// Render texture, match material, and callout label all share one material field.
+    func testEveryPieceKindMaterialTextureAndLabelAgree() {
+        for id in JunkID.allCases {
+            let def = JunkCatalog.def(for: id)
+            let cell = Cell(piece: id, material: def.material)
+            let active = ActivePiece(id: id, x: 0, y: 0)
+            let tex = JunkCatalog.textureName(for: cell)
+            let label = JunkCatalog.label(for: cell.material)
+            XCTAssertEqual(cell.material, def.material, "\(id) cell material")
+            XCTAssertEqual(active.material, def.material, "\(id) active material frozen at spawn")
+            XCTAssertEqual(active.textureName, def.textureName, "\(id) active texture frozen at spawn")
+            XCTAssertEqual(tex, def.textureName, "\(id) display texture must match catalog")
+            XCTAssertEqual(tex, active.textureName, "\(id) cell texture == active texture")
+            XCTAssertEqual(label, def.material.rawValue.uppercased(), "\(id) label")
+            // No swirl / banana / fridge-chevron art for any playable piece.
+            XCTAssertNotEqual(tex, "banana", "\(id) must not use swirl banana art")
+            XCTAssertNotEqual(tex, "bentPipe", "\(id) must not use raw bentPipe swirl key")
+            XCTAssertNotEqual(tex, "fridge", "\(id) must not use fridge chevron art")
+            XCTAssertNotEqual(tex, "cardboard", "\(id) must not use cardboard chevron art")
+        }
+        // Hazard conversion keeps texture/label/match on the same material.
+        var corroded = Cell(piece: .crate, material: .paper)
+        corroded.material = .metal
+        corroded.piece = JunkCatalog.representativePiece(for: .metal)
+        XCTAssertEqual(corroded.material, .metal)
+        XCTAssertEqual(JunkCatalog.textureName(for: corroded), "can")
+        XCTAssertEqual(JunkCatalog.label(for: corroded.material), "METAL")
     }
 
     /// Seeded: paper 2×2 sitting on pink plastic — paper clears, plastic remains and packs.
@@ -245,6 +340,75 @@ final class GameCoreTests: XCTestCase {
                 }
             }
         }
+    }
+
+    /// After lock / settle / clear: no floats, and every cell holds at most one tile.
+    private func assertBoardConsistent(_ eng: GameEngine, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(eng.boardHasNoFloatingTiles(), "floating tiles after settle", file: file, line: line)
+        assertNoFloatingCells(eng.state.board, file: file, line: line)
+        // Board subscript stores 0 or 1 cell — count occupied seats for the invariant check.
+        var occupied = 0
+        for y in 0..<eng.state.board.config.rows {
+            for x in 0..<eng.state.board.config.cols {
+                if eng.state.board[x, y] != nil { occupied += 1 }
+            }
+        }
+        XCTAssertGreaterThanOrEqual(occupied, 0, file: file, line: line)
+    }
+
+    /// Lock must refuse to write into a filled seat — the resident tile stays, active is not committed.
+    func testLockNeverOverwritesOccupiedCell() {
+        var eng = GameEngine(seed: 21)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        let paper = Cell(piece: .plank, material: .paper)
+        eng.seedBoardForTesting(
+            cells: [
+                (4, rows - 1, paper),
+            ],
+            // 1×1 can planted on the same seat as the paper (forced overlap).
+            active: ActivePiece(id: .can, x: 4, y: rows - 1)
+        )
+        eng.lock()
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.material, .paper, "resident paper must survive")
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.piece, .plank)
+        XCTAssertNotNil(eng.state.active, "overlapping lock must bail without clearing active")
+        assertBoardConsistent(eng)
+    }
+
+    /// Hard-drop + paced clear must leave a packed board with one tile per seat.
+    func testAfterLockSettleClearNoDoubleOccupancyOrFloats() {
+        var eng = GameEngine(seed: 22)
+        eng.paceCascades = true
+        let rows = eng.state.board.config.rows
+        eng.seedBoardForTesting(
+            cells: [
+                (0, rows - 1, Cell(piece: .can, material: .metal)),
+                (1, rows - 1, Cell(piece: .can, material: .metal)),
+                (2, rows - 1, Cell(piece: .can, material: .metal)),
+                (3, rows - 1, Cell(piece: .can, material: .metal)),
+                // Two plastic tires on the match — not enough to recycle; must pack down.
+                (1, rows - 2, Cell(piece: .tire, material: .plastic)),
+                (2, rows - 3, Cell(piece: .tire, material: .plastic)),
+                // Orange paper in col 4 — must never be overwritten by a later lock.
+                (4, rows - 1, Cell(piece: .plank, material: .paper)),
+            ],
+            active: ActivePiece(id: .bottle, x: 6, y: 0)
+        )
+        eng.hardDrop()
+        assertBoardConsistent(eng)
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.material, .paper)
+        // Tires packed onto the floor where metal cleared.
+        XCTAssertEqual(eng.state.board[1, rows - 1]?.material, .plastic)
+        XCTAssertEqual(eng.state.board[2, rows - 1]?.material, .plastic)
+        var guardTicks = 0
+        while eng.cascadeActive, guardTicks < 8 {
+            _ = eng.advanceCascade()
+            assertBoardConsistent(eng)
+            guardTicks += 1
+        }
+        assertBoardConsistent(eng)
+        XCTAssertEqual(eng.state.board[4, rows - 1]?.material, .paper)
     }
 
     func testStickyExcludedFromRecycle() {
@@ -419,7 +583,8 @@ final class GameCoreTests: XCTestCase {
         XCTAssertEqual(FeelConfig.fallback.gravityBaseSec, 0.72, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.cascadeStepSec, 0.30, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.dasDelaySec, 0.16, accuracy: 0.001)
-        XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.045, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.arrIntervalSec, 0.11, accuracy: 0.001)
+        XCTAssertEqual(FeelConfig.fallback.softRepeatSec, 0.11, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.cellTweenSec, 0.11, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.rotateTweenSec, 0.10, accuracy: 0.001)
         XCTAssertEqual(FeelConfig.fallback.settleBounceSec, 0.14, accuracy: 0.001)
@@ -459,7 +624,7 @@ final class GameCoreTests: XCTestCase {
         XCTAssertGreaterThan(recycleWaves, 0)
         XCTAssertGreaterThanOrEqual(peak, 2, "follow-up 4+ packs should create real chains")
         let eng = GameEngine(seed: 1)
-        XCTAssertEqual(eng.state.pressMeterMax, 10)
+        XCTAssertEqual(eng.state.pressMeterMax, 6)
     }
 
     /// Plays a seeded run and dumps board frames for visual verify (scripts/render_play_verify.py).

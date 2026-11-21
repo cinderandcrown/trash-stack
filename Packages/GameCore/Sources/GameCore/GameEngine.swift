@@ -99,8 +99,8 @@ public struct GameState: Sendable, Equatable {
         backToBack = false
         magnetCharge = 0
         pressMeter = 0
-        // SLAM is earned — ~10 locks between charges for a calmer cadence.
-        pressMeterMax = 10
+        // SLAM is earned — enough locks that a short real-play session still shows a crush.
+        pressMeterMax = 6
         snatchAvailable = true
         orders = []
         over = false
@@ -336,10 +336,25 @@ public struct GameEngine: Sendable {
     }
 
     public mutating func lock(hard: Bool = false) {
-        guard let p = state.active, !cascadeActive else { return }
-        let def = p.def
+        guard var p = state.active, !cascadeActive else { return }
+        // Snap to the true resting row and refuse to write into filled cells.
+        p.y = p.landingY(on: state.board)
+        guard p.fits(state.board) else {
+            // Should be unreachable when lock is only called while grounded — bail without corrupt write.
+            state.active = p
+            return
+        }
         for (x, y) in p.cells {
-            var cell = Cell(piece: p.id, material: def.material)
+            // Never stack two tiles in one cell.
+            guard !state.board.occupied(x: x, y: y) else {
+                state.active = p
+                return
+            }
+        }
+        state.active = p
+        for (x, y) in p.cells {
+            // Use the spawn-frozen material — never re-lookup mid-lock.
+            var cell = Cell(piece: p.id, material: p.material)
             // Per-level twists: sticky cans (L3+), leaking pipes (L4+).
             if state.level >= LevelTwist.stickyCans.rawValue, placeCount % 11 == 7, p.id == .can {
                 cell.sticky = true
@@ -360,6 +375,23 @@ public struct GameEngine: Sendable {
         resolveAfterLock()
     }
 
+    /// True when every occupied cell rests on the floor or another tile (no gaps under tiles).
+    public func boardHasNoFloatingTiles() -> Bool {
+        let rows = state.board.config.rows
+        let cols = state.board.config.cols
+        for x in 0..<cols {
+            var seenEmpty = false
+            for y in (0..<rows).reversed() {
+                if state.board[x, y] == nil {
+                    seenEmpty = true
+                } else if seenEmpty {
+                    return false
+                }
+            }
+        }
+        return true
+    }
+
     private mutating func applyHazards() {
         var conversions: [(Int, Int)] = []
         for y in 0..<state.board.config.rows {
@@ -373,7 +405,9 @@ public struct GameEngine: Sendable {
         }
         for (x, y) in conversions {
             guard var n = state.board[x, y] else { continue }
+            // Material is the single source of truth — retarget piece so texture/plate/label match.
             n.material = .metal
+            n.piece = JunkCatalog.representativePiece(for: .metal)
             state.board[x, y] = n
         }
     }
@@ -418,12 +452,16 @@ public struct GameEngine: Sendable {
         cascadeActive = true
         lastGravityMoves = []
         let cleared = emitCascadeWave(minSize: firstWaveMinSize)
+        // Always settle after a clear attempt — never leave unsupported tiles.
+        lastGravityMoves = applyGravity()
+        // Second pack is a no-op when already settled; catches any residual gaps.
+        lastGravityMoves = Self.mergeGravityMoves(lastGravityMoves, applyGravity())
         if cleared {
-            // Pack in the same step as the clear — the prior float window left mid-air stacks.
-            lastGravityMoves = applyGravity()
+            // packed above
         } else {
             cascadeActive = false
             state.combo = 0
+            // Keep settle moves so the scene can ease post-lock packs that had no recycle.
             finishAfterCascades(needsSpawn: needsSpawn)
         }
     }
@@ -434,8 +472,10 @@ public struct GameEngine: Sendable {
         guard cascadeActive else { return false }
         lastGravityMoves = []
         let cleared = emitCascadeWave(minSize: cascadeFollowUpMin)
+        // Settle every wave — clear or not — so chain follow-ups never float.
+        lastGravityMoves = applyGravity()
+        lastGravityMoves = Self.mergeGravityMoves(lastGravityMoves, applyGravity())
         if cleared {
-            lastGravityMoves = applyGravity()
             return true
         }
         // Cascade done — settle orders/level, then spawn (or top-out) if this was a lock.
@@ -589,14 +629,28 @@ public struct GameEngine: Sendable {
         state.pressMeter = 0
         events.append(.pressed(cells: coords.count, score: score, scrap: scrap))
         bumpOrder(kind: .pressSlam, amount: 1)
-        applyGravity()
+        // Settle every column after the crush — never leave tiles hanging over the hole.
+        let packMoves = applyGravity()
         // Slam already spent the meter — triples may recycle on the first settle wave.
         if paceCascades {
             beginPacedCascade(firstWaveMinSize: 3, followUpMinSize: 3, needsSpawn: false)
+            // Scene must ease every cell that moved: crush-pack and any post-clear pack.
+            lastGravityMoves = Self.mergeGravityMoves(packMoves, lastGravityMoves)
         } else {
             _ = runRecycleCascades(firstWaveMinSize: 3, followUpMinSize: 3)
         }
+        // Final settle pass — board must be packed even if a cascade wave no-oped.
+        let finalPack = applyGravity()
+        lastGravityMoves = Self.mergeGravityMoves(lastGravityMoves, finalPack)
         return true
+    }
+
+    /// Prefer later destinations when the same cell packs twice (slam then clear).
+    private static func mergeGravityMoves(_ a: [GravityMove], _ b: [GravityMove]) -> [GravityMove] {
+        var byDest: [String: GravityMove] = [:]
+        for m in a { byDest["\(m.to.x),\(m.to.y)"] = m }
+        for m in b { byDest["\(m.to.x),\(m.to.y)"] = m }
+        return Array(byDest.values)
     }
 
     /// Stack height in visible rows (0 = empty). Used for danger telegraph.
@@ -628,7 +682,7 @@ public struct GameEngine: Sendable {
         state.board[x, y] = nil
         state.snatchAvailable = false
         events.append(.snatchUsed)
-        applyGravity()
+        lastGravityMoves = applyGravity()
         // May trigger recycles after settle.
         resolveRecyclesOnly()
         return true

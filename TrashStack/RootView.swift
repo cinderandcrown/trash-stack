@@ -53,7 +53,8 @@ struct RootView: View {
 
     /// First SwiftUI screen for this process — must match `-trashStackShot` when present.
     private static var initialScreen: AppScreen {
-        if isUITestRealPlay { return .title }
+        // Real-play CI: skip the title so the board is up within seconds of launch.
+        if isUITestRealPlay { return .game }
         let shot = (PlayerProfile.shotArgument()
             ?? UserDefaults.standard.string(forKey: "trashStack.shot"))?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -184,6 +185,7 @@ struct RootView: View {
             }
             if Self.isUITestRealPlay {
                 // Fresh New Game path only — no shot seeds, no how-to gate, no soft-swap.
+                // Boot straight into play so the real-play video is mostly gameplay.
                 profile.tutorialDone = true
                 profile.classicButtons = false
                 UserDefaults.standard.removeObject(forKey: "trashStack.shot")
@@ -193,7 +195,8 @@ struct RootView: View {
                 showIdent = false
                 showNotifPrompt = false
                 playMode = .endless
-                screen = .title
+                screen = .game
+                LaunchTiming.markPlayTap()
                 LaunchTiming.markFirstTitleFrame()
                 return
             }
