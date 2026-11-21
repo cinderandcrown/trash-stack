@@ -72,12 +72,12 @@ raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashSt
   xcrun simctl list devices | grep "$DEVICE" || true
 } > "$FIT_DIR/${TAG}-device.txt"
 
-# --- Title ---
+# --- Title (skip publisher ident; wait for neon wordmark) ---
 raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "title" || true
 raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
   -trashStackShot title -trashStackSkipAds -trashStackSkipIdent >/tmp/fit-launch-title.out 2>&1 || true
-sleep 2.5
+sleep 4.0
 shot "$FIT_DIR/${TAG}-title.png" || true
 if [[ ! -s "$FIT_DIR/${TAG}-title.png" ]]; then
   echo "Fit shots: missing ${TAG}-title.png" >&2
@@ -85,12 +85,13 @@ if [[ ! -s "$FIT_DIR/${TAG}-title.png" ]]; then
 fi
 echo "Wrote $FIT_DIR/${TAG}-title.png ($(wc -c < "$FIT_DIR/${TAG}-title.png") bytes)" >&2
 
-# --- Play mid-chain (recycle shot has combo juice) ---
+# --- Play mid-chain (recycle shot has combo juice + board art) ---
 raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || true
 raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "recycle" || true
 raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
   -trashStackShot recycle -trashStackSkipAds -trashStackSkipIdent >/tmp/fit-launch-play.out 2>&1 || true
-sleep 3.5
+# Recycle juice + textures need a beat after first frame.
+sleep 5.0
 shot "$FIT_DIR/${TAG}-play.png" || true
 if [[ ! -s "$FIT_DIR/${TAG}-play.png" ]]; then
   echo "Fit shots: missing ${TAG}-play.png" >&2
@@ -103,7 +104,7 @@ raw_deadline 8 xcrun simctl terminate "$DEVICE" "$BUNDLE_ID" >/dev/null 2>&1 || 
 raw_deadline 8 xcrun simctl spawn "$DEVICE" defaults write "$BUNDLE_ID" "trashStack.shot" -string "revive" || true
 raw_deadline "$SIMCTL_DEADLINE_S" xcrun simctl launch "$DEVICE" "$BUNDLE_ID" \
   -trashStackShot revive -trashStackSkipAds -trashStackSkipIdent >/tmp/fit-launch-go.out 2>&1 || true
-sleep 2.8
+sleep 4.0
 shot "$FIT_DIR/${TAG}-game-over.png" || true
 if [[ ! -s "$FIT_DIR/${TAG}-game-over.png" ]]; then
   echo "Fit shots: missing ${TAG}-game-over.png" >&2

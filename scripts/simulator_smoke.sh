@@ -535,14 +535,20 @@ print(f"Not launch splash OK {path} (stdlib; in-app stamp authoritative)")
 PY
 }
 
-# Resolve the live data container and Documents/launch-timing.txt every call
-# (path can lag right after install/launch; never cache a stale container).
+# Resolve Documents/launch-timing.txt. Cache the container after the first hit so the
+# 8s stamp poll is not burned by repeated get_app_container hangs.
+APP_DATA_CONTAINER_CACHED=""
 launch_docs_path() {
   local container=""
+  if [[ -n "$APP_DATA_CONTAINER_CACHED" && -d "$APP_DATA_CONTAINER_CACHED/Documents" ]]; then
+    printf '%s' "$APP_DATA_CONTAINER_CACHED/Documents/launch-timing.txt"
+    return 0
+  fi
   # Short deadline: stamp poll calls this repeatedly; a hang would miss the 8s window.
-  container="$(raw_deadline 3 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+  container="$(raw_deadline 2 xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
   container="$(echo "$container" | tr -d '[:space:]')"
   if [[ -n "$container" ]]; then
+    APP_DATA_CONTAINER_CACHED="$container"
     printf '%s' "$container/Documents/launch-timing.txt"
   fi
 }
@@ -1458,10 +1464,34 @@ PY
 printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
 printf '%s\n' "${WALL_DT}" > "$OUT_DIR/launch-wall-clock-seconds.txt"
 if (( STAMPS_OK == 0 )); then
-  echo "First SwiftUI frame stamps never arrived within 8s of launch invoke" >&2
+  # Last chance: parse whatever is on disk now (container resolve can lag the paint).
   docs="$(launch_docs_path)"
   echo "docs_path=${docs:-missing}" >&2
-  echo "docs=$(cat "$docs" 2>/dev/null || true)" >&2
+  body="$(cat "$docs" 2>/dev/null || true)"
+  echo "docs=${body}" >&2
+  if [[ -n "$body" ]]; then
+    INAPP_RAW="$(docs_field_from_body "$body" in_app_sec)"
+    [[ -z "$INAPP_RAW" ]] && INAPP_RAW="$(docs_field_from_body "$body" in_app_sec_string)"
+    INAPP_STR="$(docs_field_from_body "$body" in_app_sec_string)"
+    FRAME_EPOCH="$(docs_field_from_body "$body" first_frame_wall_epoch)"
+    if [[ -n "$INAPP_RAW" && -n "$FRAME_EPOCH" ]]; then
+      HOST_STAMPS_SEEN="$(python3 -c 'import time; print(f"{time.time():.6f}")')"
+      STAMPS_OK=1
+      WALL_DT="$(python3 - "$HOST_LAUNCH_EPOCH" "$FRAME_EPOCH" "$HOST_STAMPS_SEEN" <<'PY'
+import sys
+h=float(sys.argv[1]); f=float(sys.argv[2]); s=float(sys.argv[3])
+app=f-h
+print(f"{max(0.0, app):.4f}" if -2.0 <= app <= 30.0 else f"{max(0.0, s-h):.4f}")
+PY
+)"
+      echo "Accepted late Documents stamps in_app=$INAPP_RAW wall=$WALL_DT" >&2
+      printf '%s\n' "${INAPP_RAW:-}" > "$OUT_DIR/launch-time-seconds.txt"
+      printf '%s\n' "${WALL_DT}" > "$OUT_DIR/launch-wall-clock-seconds.txt"
+    fi
+  fi
+fi
+if (( STAMPS_OK == 0 )); then
+  echo "First SwiftUI frame stamps never arrived within 8s of launch invoke" >&2
   exit 1
 fi
 python3 - "$INAPP_RAW" "$WALL_DT" <<'PY'

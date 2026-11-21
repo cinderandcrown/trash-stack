@@ -117,9 +117,10 @@ jobs:
         timeout-minutes: 20
         run: |
           set -o pipefail
-          # Prefer iPhone 16 Pro for calm/fit evidence (Dynamic Island).
+          # Prefer a non-Max Pro for calm/fit evidence (Dynamic Island). Create if missing.
           device="$(python3 scripts/pick_iphone_simulator.py \
-            --prefer "iPhone 16 Pro" --prefer "iPhone 16" --prefer "iPhone 15 Pro")"
+            --prefer "iPhone 16 Pro" --prefer "iPhone 17 Pro" --prefer "iPhone 15 Pro" \
+            --prefer "iPhone 18 Pro" --create --require-match)"
           echo "device=$device" >> "$GITHUB_OUTPUT"
           echo "Simulator: $device"
           # Pre-boot + readiness: avoids XCTest host "RPC timeout / never finished bootstrapping" flakes.
@@ -179,6 +180,29 @@ jobs:
           test -s smoke-artifacts/fit/pro-play.png
           test -s smoke-artifacts/fit/pro-game-over.png
 
+      - name: Pro fit shots fallback (if full smoke missed aliases)
+        if: always() && steps.smoke_pro.outcome != 'skipped'
+        timeout-minutes: 10
+        continue-on-error: true
+        env:
+          DEVICE: ${{ steps.tests.outputs.device }}
+        run: |
+          set -euo pipefail
+          app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
+          test -n "$app"
+          mkdir -p smoke-artifacts/fit
+          if [[ -s smoke-artifacts/fit/pro-title.png && -s smoke-artifacts/fit/pro-play.png && -s smoke-artifacts/fit/pro-game-over.png ]]; then
+            echo "Pro fit aliases already present"
+            ls -la smoke-artifacts/fit/pro-*.png
+            exit 0
+          fi
+          echo "Full smoke missed Pro fit aliases — running screenshot-only pass"
+          chmod +x scripts/simulator_fit_shots.sh
+          ./scripts/simulator_fit_shots.sh "$DEVICE" "$app" smoke-artifacts pro
+          test -s smoke-artifacts/fit/pro-title.png
+          test -s smoke-artifacts/fit/pro-play.png
+          test -s smoke-artifacts/fit/pro-game-over.png
+
       - name: Simulator fit shots SE (title / play / game-over only)
         id: smoke_se
         timeout-minutes: 12
@@ -188,21 +212,48 @@ jobs:
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
           mkdir -p smoke-artifacts/fit
-          # Cheap second-device pass — real simctl screenshots, no video.
+          # Cheap second-device pass — real simctl screenshots on SE (create if absent).
           se="$(python3 scripts/pick_iphone_simulator.py \
-            --prefer "iPhone SE (3rd generation)" --prefer "iPhone SE (3rd" --prefer "iPhone SE")"
+            --prefer "iPhone SE (3rd generation)" --prefer "iPhone SE (3rd generation)" \
+            --prefer "iPhone SE" --create --require-match)"
           echo "SE simulator: $se"
-          # Avoid fighting the Pro device if it's the same UDID (fallback).
           if [[ "$se" == "${{ steps.tests.outputs.device }}" ]]; then
-            echo "SE pick matched Pro UDID — creating a dedicated SE device if possible"
-            se="$(python3 scripts/pick_iphone_simulator.py \
-              --prefer "iPhone SE (3rd generation)" --prefer "iPhone SE" || true)"
+            echo "SE UDID collided with Pro — refusing labeled SE evidence" >&2
+            exit 1
           fi
           chmod +x scripts/simulator_fit_shots.sh
           ./scripts/simulator_fit_shots.sh "$se" "$app" smoke-artifacts se
           test -s smoke-artifacts/fit/se-title.png
           test -s smoke-artifacts/fit/se-play.png
           test -s smoke-artifacts/fit/se-game-over.png
+          # Reject C&C splash labeled as title (too dark / no neon wordmark).
+          python3 - <<'PY'
+from pathlib import Path
+import struct, zlib
+p = Path("smoke-artifacts/fit/se-title.png")
+data = p.read_bytes()
+pos = 8; w=h=ct=None; idat=bytearray()
+while pos+8 <= len(data):
+    ln = struct.unpack(">I", data[pos:pos+4])[0]
+    ctype = data[pos+4:pos+8]; chunk = data[pos+8:pos+8+ln]; pos += 12+ln
+    if ctype == b"IHDR":
+        w,h,bd,ct = struct.unpack(">IIBB", chunk[:10])
+    elif ctype == b"IDAT":
+        idat.extend(chunk)
+    elif ctype == b"IEND":
+        break
+raw = zlib.decompress(bytes(idat)); bpp = 3 if ct == 2 else 4; stride = w*bpp+1
+bright = 0; n = 0
+for y in range(int(h*0.15), int(h*0.55), max(1, h//40)):
+    row = raw[y*stride+1:(y+1)*stride]
+    for x in range(int(w*0.15), int(w*0.85), max(1, w//40)):
+        i = x*bpp; r,g,b = row[i], row[i+1], row[i+2]; n += 1
+        if r+g+b > 180: bright += 1
+ratio = bright / max(1, n)
+print(f"se-title bright ratio={ratio:.3f} size={w}x{h}")
+if ratio < 0.02:
+    raise SystemExit("se-title looks like C&C splash / blank — not the title screen")
+PY
           ls -la smoke-artifacts/fit/
 
       - name: Upload smoke artifacts
