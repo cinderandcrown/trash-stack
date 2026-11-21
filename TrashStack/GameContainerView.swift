@@ -49,6 +49,16 @@ struct GameContainerView: View {
     @State private var showHowTo = false
     @State private var showGestureHint = false
     @State private var gestureHintTask: Task<Void, Never>?
+    @State private var traySlots: [JunkID?] = [nil, nil, nil]
+    @State private var movesLeft = 0
+    @State private var teachHint: String? = nil
+    @State private var starsEarned = 0
+    @State private var showLevelWin = false
+    @State private var boostMagnet = 0
+    @State private var boostCrusher = 0
+    @State private var boostSlam = 0
+    @State private var boostShuffle = 0
+    @State private var selectedTray: Int? = nil
 
     private var isPaused: Bool { pauseGate.isPaused }
 
@@ -96,7 +106,9 @@ struct GameContainerView: View {
                     }
                     .overlay(alignment: .top) {
                         if showGestureHint {
-                            Text("Tap rotate · drag move · swipe ↓ drop · ↑ hold")
+                            Text(scene.engine.state.isTurnBased
+                                 ? "Pick a tray piece · drag onto the board · tap to turn"
+                                 : "Tap rotate · drag move · swipe ↓ drop · ↑ hold")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
                                 .padding(8)
@@ -112,11 +124,11 @@ struct GameContainerView: View {
                     classicPad
                 }
 
-                // Gap + chrome strip fully below the dumpster neon lip (never overlaps the frame).
-                Color.clear.frame(height: 56)
-                powerRow
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
+                // Tray + boosters fully below the dumpster neon lip.
+                Color.clear.frame(height: 12)
+                turnBasedTray
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
                     .layoutPriority(1)
                     .background(NeonTheme.playChrome)
@@ -142,6 +154,59 @@ struct GameContainerView: View {
                 }
                 .transition(.opacity)
                 .zIndex(40)
+            }
+
+            if showLevelWin {
+                ZStack {
+                    Color.black.opacity(0.72).ignoresSafeArea()
+                    VStack(spacing: 14) {
+                        Text("LEVEL CLEAR")
+                            .font(.title.weight(.black))
+                            .foregroundStyle(NeonTheme.teal)
+                        Text(String(repeating: "★", count: max(1, starsEarned))
+                              + String(repeating: "☆", count: max(0, 3 - starsEarned)))
+                            .font(.largeTitle)
+                            .foregroundStyle(NeonTheme.gold)
+                            .accessibilityIdentifier("levelStars")
+                        Text(orders.first?.label ?? "Goal done")
+                            .font(.caption)
+                            .foregroundStyle(NeonTheme.muted)
+                        Button {
+                            showLevelWin = false
+                            let next = min(20, scene.engine.state.levelId + 1)
+                            profile.shiftProgress = max(profile.shiftProgress, next - 1)
+                            profile.persist()
+                            UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
+                            scene.startShiftLevel(next)
+                            syncHUD()
+                        } label: {
+                            Text(scene.engine.state.levelId >= 20 ? "MAP" : "NEXT LEVEL")
+                                .font(.headline.weight(.black))
+                                .foregroundStyle(.black)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(NeonTheme.teal)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("nextLevelButton")
+                        Button {
+                            showLevelWin = false
+                            screen = .shiftMap
+                        } label: {
+                            Text("Level map")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(NeonTheme.muted)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(24)
+                    .background(NeonTheme.playChrome)
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .padding(28)
+                }
+                .zIndex(80)
+                .accessibilityIdentifier("levelWinOverlay")
             }
 
             if showSnatchTip {
@@ -343,35 +408,100 @@ struct GameContainerView: View {
         }
     }
 
-    private var powerRow: some View {
-        let pressReady = pressMeter >= pressMax
-        return Group {
-            if pressReady {
-                // Only big control: SLAM when charged (above home indicator).
-                Button {
-                    scene.slamPress()
-                    AudioService.shared.playSFX("crush")
-                    HapticsService.shared.clear()
-                    syncHUD()
-                } label: {
-                    Text("SLAM")
-                        .font(.title3.weight(.black))
-                        .foregroundStyle(.black)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(LinearGradient(colors: [NeonTheme.gold, NeonTheme.magenta], startPoint: .leading, endPoint: .trailing))
-                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+    private var turnBasedTray: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Moves \(movesLeft)")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(NeonTheme.muted)
+                    .accessibilityIdentifier("movesLeft")
+                Spacer()
+                if let teachHint, !teachHint.isEmpty {
+                    Text(teachHint)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(NeonTheme.teal)
+                        .lineLimit(1)
                 }
-                .buttonStyle(.plain)
+            }
+            HStack(spacing: 12) {
+                ForEach(0..<3, id: \.self) { idx in
+                    Button {
+                        _ = scene.selectTraySlot(idx)
+                        selectedTray = idx
+                        syncHUD()
+                        AudioService.shared.playSFX("ui")
+                    } label: {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.white.opacity(selectedTray == idx ? 0.18 : 0.08))
+                                .frame(width: 64, height: 64)
+                            if let id = traySlots.indices.contains(idx) ? traySlots[idx] : nil {
+                                BundleImage(name: JunkCatalog.textureName(for: id))
+                                    .scaledToFit()
+                                    .frame(width: 44, height: 44)
+                            } else {
+                                Text("—")
+                                    .foregroundStyle(NeonTheme.muted)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Tray piece \(idx + 1)")
+                    .accessibilityIdentifier("traySlot\(idx)")
+                }
+            }
+            HStack(spacing: 8) {
+                boosterChip("Magnet", count: boostMagnet) {
+                    if let mat = scene.engine.state.active?.material
+                        ?? scene.engine.state.tray.compactMap({ $0 }).first.map({ JunkCatalog.def(for: $0).material }) {
+                        _ = scene.engine.useMagnet(material: mat)
+                        scene.flushEngineEvents()
+                        scene.render(immediate: false)
+                        syncHUD()
+                    }
+                }
+                boosterChip("Crush", count: boostCrusher) {
+                    let rows = scene.engine.state.board.config.rows
+                    outer: for y in (0..<rows).reversed() {
+                        for x in 0..<scene.engine.state.board.config.cols {
+                            if scene.engine.useCrusher(x: x, y: y) {
+                                scene.flushEngineEvents()
+                                scene.render(immediate: false)
+                                break outer
+                            }
+                        }
+                    }
+                    syncHUD()
+                }
+                boosterChip("SLAM", count: boostSlam) {
+                    _ = scene.engine.useSlamBooster()
+                    scene.flushEngineEvents()
+                    scene.render(immediate: false)
+                    AudioService.shared.playSFX("crush")
+                    syncHUD()
+                }
                 .accessibilityLabel("Slam press")
-            } else {
-                // Slim meter — no wall of buttons; snatch stays gesture/classic-pad only.
-                ProgressView(value: Double(pressMeter), total: Double(max(1, pressMax)))
-                    .tint(NeonTheme.teal)
-                    .padding(.vertical, 6)
-                    .accessibilityLabel("Press meter \(pressMeter) of \(pressMax)")
+                boosterChip("Shuffle", count: boostShuffle) {
+                    _ = scene.engine.useShuffle()
+                    scene.render(immediate: true)
+                    syncHUD()
+                }
             }
         }
+    }
+
+    private func boosterChip(_ title: String, count: Int, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text("\(title) \(count)")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(count > 0 ? Color.black : NeonTheme.muted)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(count > 0 ? NeonTheme.teal : Color.white.opacity(0.08))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .disabled(count <= 0)
     }
 
     private var pauseOverlay: some View {
@@ -494,11 +624,10 @@ struct GameContainerView: View {
         showHowTo = false
         scene.isPaused = false
         AudioService.shared.playSFX("ui")
-        // Gifted almost-cluster so the first recycle lands in under a minute.
-        scene.applyShot("ftue")
+        scene.startShiftLevel(1)
         syncHUD()
         displayScore = scene.engine.state.score
-        showToast("Drop the can onto the metal pile")
+        showToast(scene.engine.state.teachHint ?? "Drag a tray piece onto the board")
         presentGestureHint()
     }
 
@@ -513,7 +642,7 @@ struct GameContainerView: View {
 
     private func syncHUD() {
         hudScore = scene.engine.state.score
-        hudLevel = scene.engine.state.level
+        hudLevel = scene.engine.state.levelId > 0 ? scene.engine.state.levelId : scene.engine.state.level
         pressMeter = scene.engine.state.pressMeter
         pressMax = scene.engine.state.pressMeterMax
         snatchReady = scene.engine.state.snatchAvailable
@@ -521,6 +650,16 @@ struct GameContainerView: View {
         raccoonMood = scene.raccoonMood
         preview = scene.engine.peekNext(2)
         holdItem = scene.engine.state.hold
+        traySlots = scene.engine.state.tray
+        movesLeft = scene.engine.state.movesLeft
+        teachHint = scene.engine.state.teachHint
+        starsEarned = scene.engine.state.starsEarned
+        boostMagnet = scene.engine.state.boosters.magnet
+        boostCrusher = scene.engine.state.boosters.crusher
+        boostSlam = scene.engine.state.boosters.slam
+        boostShuffle = scene.engine.state.boosters.shuffle
+        selectedTray = scene.engine.state.selectedTrayIndex
+        if scene.engine.state.levelWon { showLevelWin = true }
         let wasNear = nearMiss
         nearMiss = scene.engine.isNearOverflow(threshold: scene.feel.nearMissRows)
         if nearMiss, !wasNear {
@@ -656,13 +795,16 @@ struct GameContainerView: View {
                 }
             }
         } else if playMode == .daily {
-            scene.applyShot("daily")
+            scene.startDailySortPuzzle()
+        } else if playMode == .shift {
+            let raw = UserDefaults.standard.string(forKey: "trashStack.shiftLevel") ?? "1"
+            let id = Int(raw) ?? Int(raw.split(separator: "-").last.flatMap { Int($0) } ?? 1) ?? 1
+            scene.startShiftLevel(max(1, id))
         } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
-            // Weekly tournament — same seed for everyone this UTC week.
             scene.reset(seed: WeeklyTournament.seed())
             UserDefaults.standard.set(false, forKey: "tt.weeklyRun")
         } else {
-            // Fresh New Game — clear any leftover evidence/autoplay latch from a prior pose.
+            // Fresh puzzle — Level 1 teaches drag-and-place.
             scene.reset()
         }
         syncHUD()
@@ -731,6 +873,18 @@ struct GameContainerView: View {
                         AudioService.shared.playSFX("crush")
                         HapticsService.shared.clear()
                         Task { await GameKitService.shared.reportAchievement(AchievementID.pressSlam) }
+                    case .levelWon(let stars):
+                        starsEarned = stars
+                        showLevelWin = true
+                        AudioService.shared.playSFX("levelup")
+                        showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
+                    case .placed:
+                        AudioService.shared.playSFX("lock", pitch: 0.9)
+                        HapticsService.shared.lock()
+                    case .shuffled:
+                        showToast("Tray shuffled")
+                    case .crushed:
+                        AudioService.shared.playSFX("crush", pitch: 1.1)
                     case .orderCompleted(let order):
                         AudioService.shared.playSFX("levelup")
                         completedOrderFlash = order.id

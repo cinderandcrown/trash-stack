@@ -13,19 +13,23 @@ struct ModeSelectView: View {
         ZStack {
             AlleyBackdrop()
             VStack(spacing: 14) {
-                MetaChromeHeader(title: "CHOOSE SHIFT") { screen = .title }
-                // Shift Mode hidden for v1 until handcrafted levels are real (QA P1-4).
+                MetaChromeHeader(title: "PLAY") { screen = .title }
                 modeCard(
-                    title: "Endless Night Shift",
-                    blurb: "High score · Game Center leaderboard",
-                    mode: .endless
+                    title: "Levels",
+                    blurb: "20 calm puzzles · drag pieces from your tray",
+                    mode: .shift
                 )
                 modeCard(
-                    title: "Daily Dumpster",
+                    title: "Daily Sort",
                     blurb: profile.didDailyToday
-                        ? "Today’s dump cleared · share your card"
-                        : "One seeded puzzle for everyone today",
+                        ? "Today’s sort cleared · share your card"
+                        : "One hand-made board · 3 lives · no timer",
                     mode: .daily
+                )
+                modeCard(
+                    title: "Endless",
+                    blurb: "Keep sorting for a high score",
+                    mode: .endless
                 )
                 Button {
                     AudioService.shared.playSFX("ui")
@@ -206,15 +210,15 @@ struct ShiftMapView: View {
         ZStack {
             AlleyBackdrop()
             VStack(spacing: 10) {
-                MetaChromeHeader(title: "SHIFT MAP") { screen = .modes }
+                MetaChromeHeader(title: "LEVEL MAP") { screen = .modes }
                 ScrollView {
                     VStack(spacing: 10) {
-                        ForEach(Array(ShiftCatalog.levels.enumerated()), id: \.element.id) { idx, level in
-                            let unlocked = idx <= profile.shiftProgress
+                        ForEach(LevelCatalog.all, id: \.id) { level in
+                            let unlocked = level.id <= profile.shiftProgress + 1
                             Button {
                                 guard unlocked else { return }
                                 playMode = .shift
-                                UserDefaults.standard.set(level.id, forKey: "trashStack.shiftLevel")
+                                UserDefaults.standard.set("\(level.id)", forKey: "trashStack.shiftLevel")
                                 LaunchTiming.markPlayTap()
                                 screen = .game
                             } label: {
@@ -223,10 +227,10 @@ struct ShiftMapView: View {
                                         Text(level.district.uppercased())
                                             .font(.caption2.weight(.bold))
                                             .foregroundStyle(NeonTheme.magenta)
-                                        Text(level.title)
+                                        Text("\(level.id). \(level.title)")
                                             .font(.headline)
                                             .foregroundStyle(.white)
-                                        Text(level.starGoals.joined(separator: " · "))
+                                        Text("\(level.goal.label) · \(level.moveLimit) moves")
                                             .font(.caption2)
                                             .foregroundStyle(NeonTheme.muted)
                                             .lineLimit(2)
@@ -241,6 +245,7 @@ struct ShiftMapView: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(!unlocked)
+                            .accessibilityIdentifier("levelMap\(level.id)")
                         }
                     }
                     .padding(.horizontal, 16)

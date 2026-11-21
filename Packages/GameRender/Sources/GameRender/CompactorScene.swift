@@ -143,6 +143,8 @@ public final class CompactorScene: SKScene {
     public func reset(seed: UInt64 = UInt64.random(in: 1...999_999)) {
         engine = GameEngine(seed: seed)
         engine.paceCascades = true
+        // Calm turn-based Level 1 by default (no falling timer).
+        engine.startLevel(LevelCatalog.level(id: 1), seed: seed)
         gravityAcc = 0
         groundedElapsed = 0
         lockResets = 0
@@ -157,6 +159,74 @@ public final class CompactorScene: SKScene {
         pendingShot = nil
         updateComboCounter(forceHide: true)
         render(immediate: true)
+        if let hint = engine.state.teachHint {
+            onToast?(hint)
+        }
+    }
+
+    /// Start a specific Shift level (turn-based).
+    public func startShiftLevel(_ id: Int, seed: UInt64 = UInt64.random(in: 1...999_999)) {
+        engine.paceCascades = true
+        engine.startLevel(LevelCatalog.level(id: id), seed: seed)
+        clearTouchState()
+        hasVisualPose = false
+        render(immediate: true)
+        if let hint = engine.state.teachHint {
+            onToast?(hint)
+        }
+    }
+
+    /// Start today's Daily Sort.
+    public func startDailySortPuzzle() {
+        engine.paceCascades = true
+        engine.startDailySort(DailySortCatalog.puzzle())
+        clearTouchState()
+        hasVisualPose = false
+        render(immediate: true)
+    }
+
+    @discardableResult
+    public func selectTraySlot(_ index: Int) -> Bool {
+        let ok = engine.selectTray(index)
+        if ok {
+            snapActivePose()
+            render(immediate: true)
+        }
+        return ok
+    }
+
+    @discardableResult
+    public func placeAtBoard(x: Int, y: Int) -> Bool {
+        guard engine.state.isTurnBased else { return false }
+        _ = engine.setPreview(x: x, y: y)
+        guard engine.placeSelected() else {
+            render(immediate: true)
+            return false
+        }
+        handleEvents()
+        if engine.cascadeActive { cascadeSettleAcc = 0 }
+        hasVisualPose = false
+        render(immediate: false)
+        return true
+    }
+
+    /// Board cell under a scene point (for tray drag drop).
+    public func boardCell(at scenePoint: CGPoint) -> (x: Int, y: Int)? {
+        let origin = gridOrigin()
+        let cs = cellSize()
+        let cols = engine.state.board.config.cols
+        let vis = engine.state.board.config.visibleRows
+        let hid = engine.state.board.config.hiddenRows
+        let lx = scenePoint.x - origin.x
+        let ly = scenePoint.y - origin.y
+        guard lx >= 0, ly >= 0, lx < cs.width * CGFloat(cols), ly < cs.height * CGFloat(vis) else {
+            return nil
+        }
+        let x = Int(lx / cs.width)
+        let visY = Int((cs.height * CGFloat(vis) - ly) / cs.height)
+        let boardY = visY + hid
+        guard x >= 0, x < cols, boardY >= hid, boardY < engine.state.board.config.rows else { return nil }
+        return (x, boardY)
     }
 
     /// TRASH TALK: queue incoming junk rows (warning meter, then land).
@@ -614,6 +684,8 @@ public final class CompactorScene: SKScene {
         }
         // Next piece / gravity wait until cascade waves finish.
         if engine.cascadeActive { return }
+        // Turn-based puzzle: no gravity timer — the player places from the tray.
+        if engine.state.isTurnBased { return }
         guard !engine.state.over, engine.state.active != nil else { return }
         // Speeds up every level; floor keeps it readable.
         let grav = max(feel.gravityMinSec, feel.gravityBaseSec - Double(engine.state.level) * feel.gravityLevelStep)
@@ -1003,15 +1075,16 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
-        let landY = p.landingY(on: engine.state.board)
-        // Hide ghost when already resting / one cell above land (noise).
-        if landY <= p.y + 1 {
+        // Turn-based: ghost sits at the preview pose; red when it does not fit.
+        let turnBased = engine.state.isTurnBased
+        let landY = turnBased ? p.y : p.landingY(on: engine.state.board)
+        if !turnBased, landY <= p.y + 1 {
             clearGhost()
             return
         }
-        // Spawn-frozen material — same field the falling tiles / label use.
+        let fits = p.fits(engine.state.board)
         let mat = p.material
-        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)-\(mat.rawValue)"
+        let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)-\(mat.rawValue)-\(fits)"
         if ghostRoot?.name == tag { return }
         clearGhost()
         let root = SKNode()
@@ -1021,10 +1094,14 @@ public final class CompactorScene: SKScene {
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
-        // Translucent outline in the falling piece's plate color (no solid fill, no white/magenta drift).
-        let (r, g, b) = plateRGB(for: mat)
+        let (r, g, b): (CGFloat, CGFloat, CGFloat)
+        if turnBased, !fits {
+            (r, g, b) = (0.95, 0.18, 0.22) // red = cannot place
+        } else {
+            (r, g, b) = plateRGB(for: mat)
+        }
         let stroke = SKColor(red: r, green: g, blue: b, alpha: 0.95)
-        let wash = SKColor(red: r, green: g, blue: b, alpha: 0.14)
+        let wash = SKColor(red: r, green: g, blue: b, alpha: fits ? 0.14 : 0.28)
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         let pad: CGFloat = 1.5
         for off in shape {
@@ -1936,15 +2013,26 @@ public final class CompactorScene: SKScene {
         movedCols = 0
         dragAccumX = 0
         softDragging = false
+        if engine.state.isTurnBased, engine.state.active == nil {
+            // Tap a tray slot via accessibility is handled in SwiftUI; board tap rotates later.
+        }
     }
 
     public override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let t = touches.first, let start = touchStart, engine.state.active != nil else { return }
         let p = t.location(in: self)
+        if engine.state.isTurnBased {
+            // Drag preview freely across the board — ghost turns red when blocked.
+            if let cell = boardCell(at: p) {
+                _ = engine.setPreview(x: cell.x, y: cell.y)
+                snapActivePose()
+                render(immediate: true)
+            }
+            return
+        }
         let dx = p.x - start.x
         let dy = p.y - start.y
         let colW = max(1, cellSize().width)
-        // 1:1 finger → column with ease snap (not a hard teleport).
         let cols = Int((dx / colW).rounded())
         if cols != movedCols {
             let step = cols > movedCols ? 1 : -1
@@ -1957,12 +2045,10 @@ public final class CompactorScene: SKScene {
             }
             movedCols = target
             if nudged {
-                // Logic moved instantly; smoothActivePose eases the sprite ~75ms.
                 onPieceSnap?()
             }
             render(immediate: false)
         }
-        // Slow drag down = soft drop; never latches past touch end/cancel.
         if dy < -cellSize().height * 0.55, abs(dy) > abs(dx) * 0.6 {
             softDragging = true
         } else if abs(dx) > abs(dy) {
@@ -1980,6 +2066,24 @@ public final class CompactorScene: SKScene {
         let dist = hypot(dx, dy)
         let origin = gridOrigin()
         let midX = origin.x + cellSize().width * CGFloat(engine.state.board.config.cols) * 0.5
+
+        if engine.state.isTurnBased {
+            if engine.state.active != nil {
+                // Tap = rotate; release after drag = try place.
+                if dist < 28, elapsed < 0.35 {
+                    _ = engine.rotatePreview(clockwise: start.x >= midX)
+                    snapActivePose()
+                    render(immediate: true)
+                    return
+                }
+                if let cell = boardCell(at: p) {
+                    _ = placeAtBoard(x: cell.x, y: cell.y)
+                } else {
+                    render(immediate: true)
+                }
+            }
+            return
+        }
 
         // Tap: left half CCW, right half CW.
         if dist < 32, elapsed < 0.35 {
@@ -2079,6 +2183,11 @@ public final class CompactorScene: SKScene {
         handleEvents()
         render(immediate: false)
     }
+    /// Drain engine events after an external turn-based mutation (boosters from SwiftUI).
+    public func flushEngineEvents() {
+        handleEvents()
+    }
+
     public func slamPress() {
         guard !engine.cascadeActive else { return }
         _ = engine.slamPress()
