@@ -74,6 +74,15 @@ final class RealPlayUITests: XCTestCase {
             let bottom = app.coordinate(withNormalizedOffset: .zero)
                 .withOffset(CGVector(dx: cx, dy: frame.maxY - frame.height * 0.12))
 
+            // When PRESS is charged, slam so crush + settle land on camera.
+            let slam = app.buttons["Slam press"].firstMatch
+            if slam.exists, slam.isHittable {
+                slam.tap()
+                gestures += 1
+                Thread.sleep(forTimeInterval: 0.55)
+                continue
+            }
+
             // Bias toward stacking so gravity / land / clear / overflow show up.
             switch gestures % 9 {
             case 0, 1, 2:

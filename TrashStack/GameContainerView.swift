@@ -113,10 +113,10 @@ struct GameContainerView: View {
                 }
 
                 // Gap + chrome strip fully below the dumpster frame (never flush to the lip).
-                Color.clear.frame(height: 28)
+                Color.clear.frame(height: 36)
                 powerRow
                     .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 8)
                     .frame(maxWidth: .infinity)
                     .layoutPriority(1)
                     .background(NeonTheme.playChrome)

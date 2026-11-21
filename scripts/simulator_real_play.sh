@@ -132,9 +132,20 @@ done
 MUSIC="$PROJECT_ROOT/TrashStack/Resources/Audio/game_loop.wav"
 
 # Trim XCTest bootstrap so play starts within ~10s of the exported video.
-# Prefer the app's first-game-frame wall epoch; else keep a short leader (boots into .game).
+# Prefer Documents stamp (reliable), then string defaults, then float defaults.
+# simctl `defaults read` of a Double often returns empty — never rely on it alone.
 SS="0"
-GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpoch 2>/dev/null || true)"
+GAME_EPOCH=""
+CONTAINER="$(xcrun simctl get_app_container "$DEVICE" "$BUNDLE_ID" data 2>/dev/null || true)"
+if [[ -n "${CONTAINER:-}" && -f "$CONTAINER/Documents/launch-timing.txt" ]]; then
+  GAME_EPOCH="$(grep -E '^game_first_frame_wall_epoch=' "$CONTAINER/Documents/launch-timing.txt" 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]')"
+fi
+if [[ -z "${GAME_EPOCH:-}" ]]; then
+  GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpochString 2>/dev/null | tr -d '[:space:]\"' || true)"
+fi
+if [[ -z "${GAME_EPOCH:-}" ]]; then
+  GAME_EPOCH="$(xcrun simctl spawn "$DEVICE" defaults read "$BUNDLE_ID" trashStack.firstGameFrameWallEpoch 2>/dev/null | tr -d '[:space:]\"' || true)"
+fi
 if [[ -n "${GAME_EPOCH:-}" && -n "${RECORD_START_EPOCH:-}" ]]; then
   SS="$(python3 - <<PY
 start=float("${RECORD_START_EPOCH}")
@@ -143,6 +154,40 @@ ss=max(0.0, game - start - 0.4)
 print(f"{min(ss, 90.0):.3f}")
 PY
 )"
+fi
+# Last resort: scan silent capture for the first dark play frame (skip springboard).
+if python3 -c "import sys; sys.exit(0 if float('${SS:-0}') < 1.0 else 1)" 2>/dev/null; then
+  DETECTED="$(python3 - "$RAW" <<'PY'
+import subprocess, sys, struct, zlib
+path = sys.argv[1]
+# Sample 1 fps; pick first frame whose mean luma is low (alley vs iOS springboard).
+for t in range(0, 100):
+    raw = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-ss", str(t), "-i", path,
+         "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", "64x128", "pipe:1"],
+        capture_output=True,
+    ).stdout
+    if len(raw) < 64 * 128 * 3:
+        continue
+    # Mean luma
+    s = 0
+    n = 64 * 128
+    for i in range(0, len(raw), 3):
+        r, g, b = raw[i], raw[i + 1], raw[i + 2]
+        s += 0.2126 * r + 0.7152 * g + 0.0722 * b
+    mean = s / n
+    # Springboard wallpapers are mid/light; play alley is dark.
+    if mean < 55:
+        print(f"{max(0, t - 1)}")
+        break
+else:
+    print("0")
+PY
+)"
+  if [[ -n "${DETECTED:-}" && "${DETECTED}" != "0" ]]; then
+    SS="$DETECTED"
+    echo "real-play trim fallback scanned play@${SS}s" >&2
+  fi
 fi
 echo "real-play trim start=${SS}s (record=$RECORD_START_EPOCH game=${GAME_EPOCH:-none})" >&2
 

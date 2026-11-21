@@ -1008,19 +1008,22 @@ public final class CompactorScene: SKScene {
             clearGhost()
             return
         }
+        // Same material field the falling tiles use — never a stale/wrong tint.
         let mat = p.def.material
         let tag = "ghost-\(p.id.rawValue)-\(p.rot)-\(p.x)-\(landY)-\(mat.rawValue)"
         if ghostRoot?.name == tag { return }
         clearGhost()
         let root = SKNode()
         root.name = tag
-        root.zPosition = 4
+        root.zPosition = 7
         root.alpha = 1
         (boardCrop ?? self).addChild(root)
         ghostRoot = root
         let cs = cellSize()
-        // Outline only — same material color as the falling piece (never a solid fill / wrong tint).
-        let stroke = plateColor(for: mat).withAlphaComponent(0.9)
+        // Translucent outline in the falling piece's plate color (no solid fill, no white/magenta drift).
+        let (r, g, b) = plateRGB(for: mat)
+        let stroke = SKColor(red: r, green: g, blue: b, alpha: 0.95)
+        let wash = SKColor(red: r, green: g, blue: b, alpha: 0.14)
         let shape = p.def.rotations[p.rot % p.def.rotations.count]
         let pad: CGFloat = 1.5
         for off in shape {
@@ -1034,9 +1037,11 @@ public final class CompactorScene: SKScene {
             )
             let outline = SKShapeNode(path: path)
             outline.strokeColor = stroke
-            outline.fillColor = .clear
-            outline.lineWidth = 2.4
+            outline.fillColor = wash
+            outline.lineWidth = 3.0
             outline.glowWidth = 0
+            outline.lineCap = .round
+            outline.lineJoin = .round
             outline.position = CGPoint(x: CGFloat(off[0]) * cs.width, y: -CGFloat(off[1]) * cs.height)
             root.addChild(outline)
         }
@@ -1752,11 +1757,16 @@ public final class CompactorScene: SKScene {
 
     /// One unmistakable plate color family per material (never keyed off texture name).
     private func plateColor(for material: Material) -> SKColor {
+        let (r, g, b) = plateRGB(for: material)
+        return SKColor(red: r, green: g, blue: b, alpha: 1)
+    }
+
+    private func plateRGB(for material: Material) -> (CGFloat, CGFloat, CGFloat) {
         switch material {
-        case .metal: return SKColor(red: 0.55, green: 0.62, blue: 0.78, alpha: 1)   // steel blue-gray
-        case .plastic: return SKColor(red: 0.95, green: 0.22, blue: 0.70, alpha: 1) // magenta-pink
-        case .paper: return SKColor(red: 0.92, green: 0.62, blue: 0.28, alpha: 1)   // kraft orange
-        case .glass: return SKColor(red: 0.15, green: 0.88, blue: 0.94, alpha: 1)   // cyan
+        case .metal: return (0.55, 0.62, 0.78)   // steel blue-gray
+        case .plastic: return (0.95, 0.22, 0.70) // magenta-pink
+        case .paper: return (0.92, 0.62, 0.28)   // kraft orange
+        case .glass: return (0.15, 0.88, 0.94)   // cyan
         }
     }
 
