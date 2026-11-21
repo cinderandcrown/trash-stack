@@ -2087,37 +2087,43 @@ if [[ -s "$OUT_DIR/05-game-over-revive.png" ]]; then
   fi
 fi
 
-# Optional extras — never abort after a good demo mp4.
-SOFT_SHOT_ONLY=1
-launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 4 || true
-assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png" || true
-SOFT_SHOT_ONLY=0
-launch_shot "base" "$OUT_DIR/06-base.png" 2 || true
-SOFT_SHOT_ONLY=1
-launch_shot "pass" "$OUT_DIR/07-pass.png" 2 || true
-SOFT_SHOT_ONLY=0
-launch_shot "shop" "$OUT_DIR/08-shop.png" 2 || true
-SOFT_SHOT_ONLY=1
-launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2 || true
-smoke_budget || true
-launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 3 || true
-assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png" || true
-launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 2 || true
-launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 2 || true
-smoke_budget || true
+# Optional extras — skip by default on CI so the host still has RAM for SE create.
+# Prior calm-fit run: Pro smoke+fit OK, then SE create OOMed the runner before upload.
+CALM_FIT_ONLY="${CALM_FIT_ONLY:-1}"
+if [[ "$CALM_FIT_ONLY" != "1" ]]; then
+  SOFT_SHOT_ONLY=1
+  launch_shot "recycle" "$OUT_DIR/04-recycle-combo.png" 4 || true
+  assert_no_missing_textures "$OUT_DIR/04-recycle-combo.png" || true
+  SOFT_SHOT_ONLY=0
+  launch_shot "base" "$OUT_DIR/06-base.png" 2 || true
+  SOFT_SHOT_ONLY=1
+  launch_shot "pass" "$OUT_DIR/07-pass.png" 2 || true
+  SOFT_SHOT_ONLY=0
+  launch_shot "shop" "$OUT_DIR/08-shop.png" 2 || true
+  SOFT_SHOT_ONLY=1
+  launch_shot "notif" "$OUT_DIR/09-notification-prompt.png" 2 || true
+  smoke_budget || true
+  launch_shot "daily" "$OUT_DIR/10-daily-dumpster.png" 3 || true
+  assert_no_missing_textures "$OUT_DIR/10-daily-dumpster.png" || true
+  launch_shot "share" "$OUT_DIR/11-daily-share-card.png" 2 || true
+  launch_shot "streak" "$OUT_DIR/12-streak-reward.png" 2 || true
+  smoke_budget || true
 
-launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 3 || true
-assert_no_missing_textures "$OUT_DIR/marketing/01-play.png" || true
-launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 3 || true
-assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png" || true
-launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 4 || true
-assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png" || true
-launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 2 || true
-launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 2 || true
-launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 2 || true
-launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3 || true
-assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png" || true
-smoke_budget || true
+  launch_shot "mkt-play" "$OUT_DIR/marketing/01-play.png" 3 || true
+  assert_no_missing_textures "$OUT_DIR/marketing/01-play.png" || true
+  launch_shot "mkt-crush" "$OUT_DIR/marketing/02-crush.png" 3 || true
+  assert_no_missing_textures "$OUT_DIR/marketing/02-crush.png" || true
+  launch_shot "mkt-recycle" "$OUT_DIR/marketing/03-recycle.png" 4 || true
+  assert_no_missing_textures "$OUT_DIR/marketing/03-recycle.png" || true
+  launch_shot "mkt-base" "$OUT_DIR/marketing/04-junkyard.png" 2 || true
+  launch_shot "mkt-pass" "$OUT_DIR/marketing/05-pass.png" 2 || true
+  launch_shot "mkt-shop" "$OUT_DIR/marketing/06-shop.png" 2 || true
+  launch_shot "mkt-daily" "$OUT_DIR/marketing/07-daily.png" 3 || true
+  assert_no_missing_textures "$OUT_DIR/marketing/07-daily.png" || true
+  smoke_budget || true
+else
+  echo "CALM_FIT_ONLY=1 — skipping optional meta/marketing stills (leave RAM for SE)" >&2
+fi
 
 # Pairwise SSIM distinctness (animated rain defeats byte-hash; SSIM < 0.95 required).
 python3 - "$OUT_DIR" <<'PY' || true

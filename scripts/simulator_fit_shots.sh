@@ -320,9 +320,9 @@ fi
   xcrun simctl list devices | grep "$DEVICE" || true
 } > "$FIT_DIR/${TAG}-device.txt"
 
-cold_launch_shot title "$FIT_DIR/${TAG}-title.png" 4.0
-cold_launch_shot game "$FIT_DIR/${TAG}-play.png" 4.5
-cold_launch_shot revive "$FIT_DIR/${TAG}-game-over.png" 5.5
+cold_launch_shot title "$FIT_DIR/${TAG}-title.png" 3.0
+cold_launch_shot game "$FIT_DIR/${TAG}-play.png" 3.5
+cold_launch_shot revive "$FIT_DIR/${TAG}-game-over.png" 4.0
 
 python3 - "$FIT_DIR" "$TAG" <<'PY'
 import pathlib, sys

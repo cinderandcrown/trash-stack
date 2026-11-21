@@ -174,7 +174,9 @@ jobs:
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
           mkdir -p smoke-artifacts
-          ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
+          # Calm+Fit path only — skip optional meta/marketing stills so SE create
+          # still has host RAM after ~60s recordVideo.
+          CALM_FIT_ONLY=1 ./scripts/simulator_smoke.sh "$DEVICE" "$app" smoke-artifacts
           test -s smoke-artifacts/gameplay-demo.mp4
           test -s smoke-artifacts/fit/pro-title.png
           test -s smoke-artifacts/fit/pro-play.png
@@ -203,32 +205,51 @@ jobs:
           test -s smoke-artifacts/fit/pro-play.png
           test -s smoke-artifacts/fit/pro-game-over.png
 
+      # Upload Pro evidence BEFORE SE. Prior run: smoke+fit succeeded, then SE create
+      # OOMed the runner and we lost every artifact (no upload ever ran).
+      - name: Upload Pro smoke artifacts
+        if: always() && steps.smoke_pro.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-store-review-evidence-pro
+          path: smoke-artifacts/
+          if-no-files-found: warn
+
       - name: Simulator fit shots SE (title / play / game-over only)
         id: smoke_se
-        timeout-minutes: 12
+        timeout-minutes: 10
         continue-on-error: true
         run: |
           set -euo pipefail
           app="$(find DerivedData/Build/Products -name 'TrashStack.app' -type d | head -1)"
           test -n "$app"
           mkdir -p smoke-artifacts/fit
-          # Cheap second-device pass — real simctl screenshots on SE (create if absent).
+          # Free host memory before a second device — Pro + recordVideo leftovers
+          # previously killed the runner during SE create (lost communication).
+          pro="${{ steps.tests.outputs.device }}"
+          xcrun simctl terminate "$pro" com.cinderandcrown.trashstack >/dev/null 2>&1 || true
+          xcrun simctl shutdown "$pro" >/dev/null 2>&1 || true
+          # Prefer an existing SE; only create if none match (generic iOS runtime).
           se="$(python3 scripts/pick_iphone_simulator.py \
             --prefer "iPhone SE (3rd generation)" --prefer "iPhone SE (3rd generation)" \
             --prefer "iPhone SE" --create --require-match)"
           echo "SE simulator: $se"
-          if [[ "$se" == "${{ steps.tests.outputs.device }}" ]]; then
+          if [[ "$se" == "$pro" ]]; then
             echo "SE UDID collided with Pro — refusing labeled SE evidence" >&2
             exit 1
           fi
           chmod +x scripts/simulator_fit_shots.sh
-          ./scripts/simulator_fit_shots.sh "$se" "$app" smoke-artifacts se
+          # Lean settle — SE is screenshot-only; keep wall clock under step budget.
+          SHOT_DEADLINE_S=8 SIMCTL_DEADLINE_S=10 \
+            ./scripts/simulator_fit_shots.sh "$se" "$app" smoke-artifacts se
           test -s smoke-artifacts/fit/se-title.png
           test -s smoke-artifacts/fit/se-play.png
           test -s smoke-artifacts/fit/se-game-over.png
           # Reject C&C splash labeled as title (too dark / no neon wordmark).
           python3 scripts/assert_fit_title.py smoke-artifacts/fit/se-title.png
           ls -la smoke-artifacts/fit/
+          # Park SE so the final upload step is not fighting a live sim.
+          xcrun simctl shutdown "$se" >/dev/null 2>&1 || true
 
       - name: Upload smoke artifacts
         if: always()
