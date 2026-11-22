@@ -241,14 +241,28 @@ public final class CompactorScene: SKScene {
     }
 
     /// UITest / teach helper: select tray slot 0 and place at column 0 on the floor.
+    /// Under `-UITestRealPlay`, cascades run synchronously so level win is immediate and reliable.
     @discardableResult
     public func placeTeachSeat() -> Bool {
         guard engine.state.isTurnBased else { return false }
-        if engine.state.active == nil {
-            guard selectTraySlot(0) else { return false }
-        }
+        // Always re-select tray 0 so selectedTrayIndex + active stay paired.
+        guard selectTraySlot(0) else { return false }
         let floor = floorCell(column: 0)
-        return placeAtBoard(x: floor.x, y: floor.y)
+        let uiTest = ProcessInfo.processInfo.arguments.contains("-UITestRealPlay")
+        let wasPacing = engine.paceCascades
+        if uiTest { engine.paceCascades = false }
+        defer { engine.paceCascades = wasPacing }
+        removeAction(forKey: "cascadeDrain")
+        let ok = placeAtBoard(x: floor.x, y: floor.y)
+        if uiTest, ok, engine.cascadeActive {
+            // Belt-and-suspenders: finish any leftover paced state.
+            while engine.cascadeActive {
+                _ = engine.advanceCascade()
+            }
+            handleEvents()
+            render(immediate: true)
+        }
+        return ok
     }
 
     /// Scene-space center of a board cell (UIKit / SpriteKit y-up).

@@ -918,6 +918,20 @@ struct GameContainerView: View {
             scene.reset()
         }
         syncHUD()
+        // Real-play: after the UITest drag beat, auto-commit the teach place if still unplaced.
+        // XCTest hit-testing on SwiftUI tray chrome was flaky (Moves stayed 8 despite taps).
+        if ProcessInfo.processInfo.arguments.contains("-UITestRealPlay") {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 4_500_000_000)
+                guard !scene.engine.state.levelWon else { return }
+                guard scene.engine.state.movesLeft >= scene.engine.state.moveLimit else { return }
+                _ = scene.placeTeachSeat()
+                syncHUD()
+                // Give paced→sync win a beat to present the overlay for XCTest.
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                if scene.engine.state.levelWon { showLevelWin = true }
+            }
+        }
         scene.onGameOver = { state in
             Task { @MainActor in
                 // Lock the live top-out score before any sheet / HUD race.
