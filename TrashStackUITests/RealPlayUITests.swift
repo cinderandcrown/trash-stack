@@ -36,53 +36,45 @@ final class RealPlayUITests: XCTestCase {
             "gameBoard must appear within ~10s of launch for real-play video"
         )
 
-        let tray0 = app.otherElements["traySlot0"].firstMatch.exists
-            ? app.otherElements["traySlot0"].firstMatch
-            : app.buttons["traySlot0"].firstMatch
+        let tray0 = app.buttons["traySlot0"].firstMatch
         XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist for Level 1")
-
-        // Give the board a moment to lay out floor accessibility seats + scene size.
-        Thread.sleep(forTimeInterval: 0.8)
+        Thread.sleep(forTimeInterval: 0.9)
 
         let frame = board.frame
-        // Level 1 teach seat: column 0 floor — left of the three metal tiles.
-        // Stay above the neon lip pad (~bottom 20%) so boardCell resolves.
         let drop = app.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(
                 dx: frame.minX + frame.width * 0.10,
-                dy: frame.minY + frame.height * 0.70
+                dy: frame.minY + frame.height * 0.78
             ))
 
-        // Drag from tray → board so SwiftUI DragGesture selects + places.
+        // Visible drag from tray → board (SwiftUI DragGesture / camera).
         let origin = tray0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        origin.press(forDuration: 0.2, thenDragTo: drop)
+        origin.press(forDuration: 0.25, thenDragTo: drop)
+        Thread.sleep(forTimeInterval: 0.45)
 
-        // If the drag only previewed, tap the floor seat / coordinate to lock.
-        Thread.sleep(forTimeInterval: 0.5)
-        let floor0 = app.otherElements["boardFloor0"].firstMatch
-        if floor0.exists {
-            // Accessibility seat is non-hittable; use its frame center via coordinate.
-            let f = floor0.frame
-            if f.width > 2, f.height > 2 {
-                app.coordinate(withNormalizedOffset: .zero)
-                    .withOffset(CGVector(dx: f.midX, dy: f.midY))
-                    .tap()
-            } else {
-                drop.tap()
-            }
-        } else {
-            // Tap tray then board (SpriteKit place path).
+        // Commit via floor seat (real placeAtBoard) if the drag only previewed.
+        let win = app.otherElements["levelWinOverlay"].firstMatch
+        if !win.exists {
             tray0.tap()
             Thread.sleep(forTimeInterval: 0.25)
-            let mid = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
-            mid.press(forDuration: 0.12, thenDragTo: drop)
+            let floor0 = app.buttons["boardFloor0"].firstMatch
+            if floor0.waitForExistence(timeout: 3), floor0.isHittable {
+                // Second beat on camera: drag tray → floor seat, then tap to lock.
+                origin.press(forDuration: 0.2, thenDragTo: floor0)
+                Thread.sleep(forTimeInterval: 0.2)
+                if !win.exists { floor0.tap() }
+            } else {
+                // SpriteKit path: select tray, drag across the board onto col 0 floor.
+                let mid = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
+                mid.press(forDuration: 0.15, thenDragTo: drop)
+                Thread.sleep(forTimeInterval: 0.2)
+                drop.tap()
+            }
         }
 
-        // Wait for metal clear → plastic chain → level win with stars.
-        let win = app.otherElements["levelWinOverlay"].firstMatch
         XCTAssertTrue(
-            win.waitForExistence(timeout: 20),
+            win.waitForExistence(timeout: 22),
             "Level 1 must finish after the teach place (clear + chain)"
         )
         XCTAssertTrue(
@@ -91,7 +83,6 @@ final class RealPlayUITests: XCTestCase {
                 || app.staticTexts.matching(NSPredicate(format: "label CONTAINS '★'")).count > 0,
             "stars should show on level clear"
         )
-        // Hold so muxed real-play captures stars on camera.
         Thread.sleep(forTimeInterval: 3.0)
     }
 }

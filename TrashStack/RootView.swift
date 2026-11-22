@@ -185,16 +185,17 @@ struct RootView: View {
             }
             if Self.isUITestRealPlay {
                 // Fresh New Game path only — no shot seeds, no how-to gate, no soft-swap.
-                // Boot straight into play so the real-play video is mostly gameplay.
+                // Boot straight into Shift Level 1 so the real-play video is teach drag-place.
                 profile.tutorialDone = true
                 profile.classicButtons = false
                 UserDefaults.standard.removeObject(forKey: "trashStack.shot")
                 UserDefaults.standard.removeObject(forKey: "trashStack.shotActive")
                 UserDefaults.standard.set(true, forKey: "tutorialDone")
+                UserDefaults.standard.set("1", forKey: "trashStack.shiftLevel")
                 holdIdentShot = false
                 showIdent = false
                 showNotifPrompt = false
-                playMode = .endless
+                playMode = .shift
                 screen = .game
                 LaunchTiming.markPlayTap()
                 LaunchTiming.markFirstTitleFrame()

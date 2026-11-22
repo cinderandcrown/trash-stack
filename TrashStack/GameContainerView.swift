@@ -91,10 +91,15 @@ struct GameContainerView: View {
                     .accessibilityIdentifier("gameBoard")
                     .background(
                         GeometryReader { geo in
-                            Color.clear.preference(
-                                key: BoardGlobalFrameKey.self,
-                                value: geo.frame(in: .global)
-                            )
+                            Color.clear
+                                .preference(
+                                    key: BoardGlobalFrameKey.self,
+                                    value: geo.frame(in: .global)
+                                )
+                                .onAppear { boardFrameGlobal = geo.frame(in: .global) }
+                                .onChange(of: geo.size) { _, _ in
+                                    boardFrameGlobal = geo.frame(in: .global)
+                                }
                         }
                     )
                     .onPreferenceChange(BoardGlobalFrameKey.self) { boardFrameGlobal = $0 }
@@ -103,9 +108,9 @@ struct GameContainerView: View {
                             .padding(.trailing, 6)
                             .padding(.top, 6)
                     }
-                    // Accessibility-only floor seats for real-play (do not steal SpriteKit hits).
+                    // Floor seats: tap-to-place when a tray piece is selected (also powers real-play).
                     .overlay {
-                        boardFloorAccessibilitySeats
+                        boardFloorDropSeats
                     }
                     .overlay(alignment: .top) {
                         if nearMiss || (lastState?.over == true) {
@@ -423,24 +428,40 @@ struct GameContainerView: View {
         }
     }
 
-    private var boardFloorAccessibilitySeats: some View {
-        GeometryReader { geo in
+    private var boardFloorDropSeats: some View {
+        let active = scene.engine.state.active != nil || selectedTray != nil
+        return GeometryReader { geo in
             let cols = max(1, scene.engine.state.board.config.cols)
             let cs = scene.cellSizePublic()
+            let seatW = max(36, cs.width * 0.95)
+            let seatH = max(36, cs.height * 0.95)
             let floorY = scene.engine.state.board.config.rows - 1
             ForEach(0..<cols, id: \.self) { col in
                 let pt = scene.scenePointForBoard(x: col, y: floorY)
-                let viewX = pt.x
-                let viewY = geo.size.height - pt.y
-                Color.clear
-                    .frame(width: max(24, cs.width * 0.9), height: max(24, cs.height * 0.9))
-                    .position(x: viewX, y: viewY)
-                    .accessibilityIdentifier("boardFloor\(col)")
-                    .accessibilityLabel("Board column \(col + 1)")
-                    .accessibilityAddTraits(.isButton)
+                let viewX = pt.x > 1 ? pt.x : (CGFloat(col) + 0.5) * (geo.size.width / CGFloat(cols))
+                // Prefer scene mapping; fall back to bottom band when the scene hasn't laid out.
+                let viewY = pt.y > 1 ? (geo.size.height - pt.y) : (geo.size.height * 0.78)
+                Button {
+                    if scene.engine.state.active == nil {
+                        let idx = selectedTray ?? 0
+                        _ = scene.selectTraySlot(idx)
+                        selectedTray = idx
+                    }
+                    _ = scene.placeAtBoard(x: col, y: floorY)
+                    syncHUD()
+                } label: {
+                    Color.clear
+                        .frame(width: seatW, height: seatH)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .position(x: viewX, y: viewY)
+                .accessibilityIdentifier("boardFloor\(col)")
+                .accessibilityLabel("Board column \(col + 1)")
             }
         }
-        .allowsHitTesting(false)
+        // Only intercept hits while a piece is selected — otherwise SpriteKit owns the board.
+        .allowsHitTesting(active)
     }
 
     private func traySlotView(_ idx: Int) -> some View {
