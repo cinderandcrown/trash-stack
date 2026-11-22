@@ -192,6 +192,7 @@ jobs:
           path: |
             smoke-artifacts/real-play.mp4
             smoke-artifacts/real-play-silent.mp4
+            smoke-artifacts/real-play-git-sha.txt
           if-no-files-found: warn
 
       # TODO(smoke-flake): simulator_smoke is non-blocking until io/bootstatus flakes

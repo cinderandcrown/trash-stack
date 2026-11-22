@@ -54,6 +54,9 @@ struct GameContainerView: View {
     @State private var teachHint: String? = nil
     @State private var starsEarned = 0
     @State private var showLevelWin = false
+    /// Stars waiting to show after CHAIN / fly juice finishes.
+    @State private var pendingWinStars: Int? = nil
+    @State private var winPresentTask: Task<Void, Never>? = nil
     @State private var boostMagnet = 0
     @State private var boostCrusher = 0
     @State private var boostSlam = 0
@@ -237,14 +240,6 @@ struct GameContainerView: View {
                 .zIndex(80)
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("levelWinOverlay")
-                .onAppear {
-                    // After stars are readable, open the map so the next level is one tap away.
-                    Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 1_400_000_000)
-                        guard showLevelWin else { return }
-                        openLevelMapAfterWin()
-                    }
-                }
             }
 
             if showSnatchTip {
@@ -802,7 +797,29 @@ struct GameContainerView: View {
         profile.persist()
         UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
         showLevelWin = false
+        pendingWinStars = nil
         screen = .shiftMap
+    }
+
+    /// Present LEVEL CLEAR only after on-board CHAIN has finished (or a safe fallback beat).
+    private func scheduleLevelWinOverlay(stars: Int) {
+        winPresentTask?.cancel()
+        winPresentTask = Task { @MainActor in
+            // Fly (~0.4s) + CHAIN hold (~0.9s). Combo callback may fire earlier.
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled, pendingWinStars != nil, scene.engine.state.levelWon else { return }
+            presentLevelWinOverlay(stars: stars)
+        }
+    }
+
+    private func presentLevelWinOverlay(stars: Int) {
+        guard !showLevelWin else { return }
+        pendingWinStars = nil
+        winPresentTask?.cancel()
+        winPresentTask = nil
+        showLevelWin = true
+        AudioService.shared.playSFX("levelup")
+        showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
     }
 
     private func syncHUD() {
@@ -1000,6 +1017,12 @@ struct GameContainerView: View {
                 raccoonMood = mood
             }
         }
+        scene.onComboFinished = {
+            Task { @MainActor in
+                guard let stars = pendingWinStars else { return }
+                presentLevelWinOverlay(stars: stars)
+            }
+        }
         scene.onEvents = { [weak scene] events in
             Task { @MainActor in
                 guard let scene else { return }
@@ -1042,14 +1065,9 @@ struct GameContainerView: View {
                         Task { await GameKitService.shared.reportAchievement(AchievementID.pressSlam) }
                     case .levelWon(let stars):
                         starsEarned = stars
-                        // Let CHAIN ×N finish on the board (~0.75s) before LEVEL CLEAR.
-                        Task { @MainActor in
-                            try? await Task.sleep(nanoseconds: 850_000_000)
-                            guard scene.engine.state.levelWon else { return }
-                            showLevelWin = true
-                            AudioService.shared.playSFX("levelup")
-                            showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
-                        }
+                        pendingWinStars = stars
+                        // Wait for fly-to-goal + CHAIN banner before LEVEL CLEAR covers the board.
+                        scheduleLevelWinOverlay(stars: stars)
                     case .placed:
                         AudioService.shared.playSFX("lock", pitch: 0.9)
                         HapticsService.shared.lock()

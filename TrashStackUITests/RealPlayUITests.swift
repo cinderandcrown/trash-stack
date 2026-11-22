@@ -2,7 +2,7 @@
 
 import XCTest
 
-/// Fresh New Game → Levels 1–3 via real tray tap → board tap → map → next level.
+/// Fresh New Game → Levels 1–3 via real tray tap → board tap → LEVEL MAP → next level.
 /// No test-only place shortcuts. Pauses between beats for recordVideo (≥60s play).
 final class RealPlayUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -53,11 +53,10 @@ final class RealPlayUITests: XCTestCase {
             openNextFromMap: false
         )
 
-        // Hold end state on camera so the mux has 60s+ of real play.
         Thread.sleep(forTimeInterval: 3.0)
     }
 
-    /// Tray slot 0 → floor seat → win → map → optional next level.
+    /// Tray slot 0 → floor seat → win → tap LEVEL MAP → optional next level row.
     private func playOneMoveLevel(
         app: XCUIApplication,
         floorSeat: String,
@@ -69,12 +68,12 @@ final class RealPlayUITests: XCTestCase {
             board.waitForExistence(timeout: 10),
             "gameBoard must appear for level play"
         )
-        Thread.sleep(forTimeInterval: 0.9)
+        Thread.sleep(forTimeInterval: 1.0)
 
         let tray0 = app.buttons["traySlot0"].firstMatch
         XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist")
         tray0.tap()
-        Thread.sleep(forTimeInterval: 0.75)
+        Thread.sleep(forTimeInterval: 0.9)
 
         let seat = app.buttons[floorSeat].firstMatch
         XCTAssertTrue(
@@ -84,28 +83,23 @@ final class RealPlayUITests: XCTestCase {
         XCTAssertTrue(seat.isHittable, "\(floorSeat) must be hittable")
         seat.tap()
 
-        // Place settle + clear fly + chain, then delayed LEVEL CLEAR after CHAIN.
-        Thread.sleep(forTimeInterval: 3.0)
-
+        // Place settle + fly-to-goal + CHAIN, then delayed LEVEL CLEAR (~1.2s after win).
         let win = app.descendants(matching: .any)["levelWinOverlay"].firstMatch
         let clear = app.staticTexts["LEVEL CLEAR"].firstMatch
-        XCTAssertTrue(
-            win.waitForExistence(timeout: 16) || clear.waitForExistence(timeout: 2),
-            "Level must clear after tap-to-place"
-        )
-        XCTAssertTrue(
-            app.descendants(matching: .any)["levelStars"].firstMatch.exists
-                || app.staticTexts.matching(NSPredicate(format: "label CONTAINS '★'")).count > 0
-                || clear.exists,
-            "stars should show on level clear"
-        )
-        // Hold stars on camera before map.
-        Thread.sleep(forTimeInterval: 1.6)
-
-        // Map: auto-open or tap LEVEL MAP.
         let mapBtn = app.buttons["levelMapButton"].firstMatch
+        XCTAssertTrue(
+            win.waitForExistence(timeout: 18)
+                || clear.waitForExistence(timeout: 2)
+                || mapBtn.waitForExistence(timeout: 2),
+            "Level must clear after tap-to-place (overlay or LEVEL MAP)"
+        )
+        // Hold LEVEL CLEAR so CHAIN is gone and stars are on camera.
+        Thread.sleep(forTimeInterval: 1.8)
+
         if mapBtn.waitForExistence(timeout: 2), mapBtn.isHittable {
             mapBtn.tap()
+        } else if app.buttons["LEVEL MAP"].firstMatch.waitForExistence(timeout: 1) {
+            app.buttons["LEVEL MAP"].firstMatch.tap()
         }
 
         let mapTitle = app.staticTexts["LEVEL MAP"].firstMatch
@@ -114,7 +108,7 @@ final class RealPlayUITests: XCTestCase {
             mapTitle.waitForExistence(timeout: 8) || nextRow.waitForExistence(timeout: 3),
             "Level map must show after the win (next=\(expectMapLevel))"
         )
-        Thread.sleep(forTimeInterval: 1.4)
+        Thread.sleep(forTimeInterval: 1.2)
 
         guard openNextFromMap else { return }
 

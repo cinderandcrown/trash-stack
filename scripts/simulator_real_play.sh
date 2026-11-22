@@ -104,20 +104,16 @@ if (( XC_EC != 0 )) && grep -Eqi 'isn.t a member|not found|does not contain|Unab
   set -e
 fi
 
-if (( XC_EC != 0 )); then
-  echo "Real-play UITest failed (ec=$XC_EC) — log tail:" >&2
-  tail -n 120 /tmp/real-play-xctest.log >&2 || true
-  finalize
-  trap - EXIT
-  exit "$XC_EC"
-fi
-
-# Surface gesture count so CI logs prove PLAY + board input happened.
-grep -E 'RealPlay gestures=|testRealPlaySession' /tmp/real-play-xctest.log | tail -n 20 >&2 || true
+# Always stop the recorder and mux — even when XCTest fails — so Magpie can review play.
+grep -E 'RealPlay gestures=|testRealPlaySession|error:' /tmp/real-play-xctest.log | tail -n 40 >&2 || true
 
 finalize
 trap - EXIT
 REC_PID=""
+
+# Stamp the commit this app was built from (same-job DerivedData).
+git -C "$PROJECT_ROOT" rev-parse HEAD > "$OUT_DIR/real-play-git-sha.txt" 2>/dev/null || true
+echo "real-play git sha: $(cat "$OUT_DIR/real-play-git-sha.txt" 2>/dev/null || echo unknown)" >&2
 
 if [[ ! -s "$RAW" ]]; then
   echo "real-play silent capture missing" >&2
@@ -257,4 +253,8 @@ else:
 PY
 
 echo "Wrote $OUT ($(wc -c < "$OUT") bytes)" >&2
+if (( XC_EC != 0 )); then
+  echo "Real-play UITest failed (ec=$XC_EC) — mux kept for review" >&2
+  tail -n 40 /tmp/real-play-xctest.log >&2 || true
+fi
 exit "$XC_EC"
