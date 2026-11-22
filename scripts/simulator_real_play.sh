@@ -203,20 +203,19 @@ PY
   echo "real-play trim last-resort SS=${SS}s (dur=${RAW_DUR})" >&2
 fi
 
-# simctl H.264 often tags a bogus 0.25 tbr and leaves multi-second PTS gaps between
-# unique frames (slideshow / ~1 fps). Re-time after trim: setpts=N/30/TB assigns each
-# decoded frame a sequential 30 fps clock, then fps=30 locks CFR for the 70s window.
-# Never put -ss before -i on these files.
+# Preserve wall-clock pacing: reset PTS, then fps=30 holds/duplicates frames to fill
+# gaps (calm beats stay calm; place/clear/chain keep their real duration). Packing with
+# setpts=N/30/TB caused jumps. Never put -ss before -i on these files.
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[0:v]trim=start=${SS},setpts=N/30/TB,fps=30,trim=duration=70,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=70,asetpts=PTS-STARTPTS[aout]" \
-    -map "[vout]" -map "[aout]" -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
+    -filter_complex "[0:v]trim=start=${SS},setpts=PTS-STARTPTS,fps=30,trim=duration=55,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=55,asetpts=PTS-STARTPTS[aout]" \
+    -map "[vout]" -map "[aout]" -r 30 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
     -c:a aac -b:a 128k -ac 1 -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 elif [[ -n "$FFMPEG_BIN" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" \
-    -vf "trim=start=${SS},setpts=N/30/TB,fps=30,trim=duration=70,setpts=PTS-STARTPTS" \
-    -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an -movflags +faststart "$OUT" \
+    -vf "trim=start=${SS},setpts=PTS-STARTPTS,fps=30,trim=duration=55,setpts=PTS-STARTPTS" \
+    -r 30 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else
   cp -f "$RAW" "$OUT"
@@ -247,7 +246,7 @@ if probe and probe.get("streams"):
     pkts = int(s.get("nb_read_packets") or 0)
     dur = float(s.get("duration") or 0)
     print(f"real-play OK {path.name}: {sz} bytes packets={pkts} duration={dur:.1f}s")
-    if dur < 50:
+    if dur < 40:
         print(f"FAIL real-play too short ({dur:.1f}s)", file=sys.stderr)
         raise SystemExit(1)
     if pkts > 0 and pkts / max(dur, 1) < 12:

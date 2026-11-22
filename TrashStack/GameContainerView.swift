@@ -104,9 +104,12 @@ struct GameContainerView: View {
                     )
                     .onPreferenceChange(BoardGlobalFrameKey.self) { boardFrameGlobal = $0 }
                     .overlay(alignment: .topTrailing) {
-                        miniNextHold
-                            .padding(.trailing, 6)
-                            .padding(.top, 6)
+                        // Classic NEXT/HOLD only — turn-based uses the bottom tray.
+                        if !scene.engine.state.isTurnBased {
+                            miniNextHold
+                                .padding(.trailing, 6)
+                                .padding(.top, 6)
+                        }
                     }
                     // Tap-to-place seats (player feature): tap a tray piece, then tap a board cell.
                     .overlay {
@@ -125,9 +128,10 @@ struct GameContainerView: View {
                         }
                     }
                     .overlay(alignment: .top) {
-                        if showGestureHint {
+                        // One instruction only — never stack a generic tip over the level teach hint.
+                        if showGestureHint, teachHint == nil || teachHint?.isEmpty == true {
                             Text(scene.engine.state.isTurnBased
-                                 ? "Tap a tray piece · tap the board to place · drag works too"
+                                 ? "Tap a tray piece, then tap the board"
                                  : "Tap rotate · drag move · swipe ↓ drop · ↑ hold")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
@@ -144,14 +148,16 @@ struct GameContainerView: View {
                     classicPad
                 }
 
-                // Tray + boosters fully below the dumpster neon lip.
-                Color.clear.frame(height: 12)
-                turnBasedTray
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity)
-                    .layoutPriority(1)
-                    .background(NeonTheme.playChrome)
+                // Tray + boosters fully below the dumpster neon lip (turn-based only).
+                if scene.engine.state.isTurnBased {
+                    Color.clear.frame(height: 12)
+                    turnBasedTray
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity)
+                        .layoutPriority(1)
+                        .background(NeonTheme.playChrome)
+                }
             }
             .safeAreaPadding(.top, 8)
             .safeAreaPadding(.bottom, 10)
@@ -196,11 +202,11 @@ struct GameContainerView: View {
                             let next = min(20, scene.engine.state.levelId + 1)
                             profile.shiftProgress = max(profile.shiftProgress, next - 1)
                             profile.persist()
+                            screen = .shiftMap
+                            // Stash next level so map → play resumes there.
                             UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
-                            scene.startShiftLevel(next)
-                            syncHUD()
                         } label: {
-                            Text(scene.engine.state.levelId >= 20 ? "MAP" : "NEXT LEVEL")
+                            Text("LEVEL MAP")
                                 .font(.headline.weight(.black))
                                 .foregroundStyle(.black)
                                 .frame(maxWidth: .infinity)
@@ -209,16 +215,22 @@ struct GameContainerView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityIdentifier("nextLevelButton")
+                        .accessibilityIdentifier("levelMapButton")
                         Button {
                             showLevelWin = false
-                            screen = .shiftMap
+                            let next = min(20, scene.engine.state.levelId + 1)
+                            profile.shiftProgress = max(profile.shiftProgress, next - 1)
+                            profile.persist()
+                            UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
+                            scene.startShiftLevel(next)
+                            syncHUD()
                         } label: {
-                            Text("Level map")
+                            Text(scene.engine.state.levelId >= 20 ? "Done" : "Next level")
                                 .font(.caption.weight(.bold))
                                 .foregroundStyle(NeonTheme.muted)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier("nextLevelButton")
                     }
                     .padding(24)
                     .background(NeonTheme.playChrome)
@@ -227,6 +239,19 @@ struct GameContainerView: View {
                 }
                 .zIndex(80)
                 .accessibilityIdentifier("levelWinOverlay")
+                .onAppear {
+                    // Real-play / calm beat: show stars, then open the map.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_600_000_000)
+                        guard showLevelWin else { return }
+                        let next = min(20, scene.engine.state.levelId + 1)
+                        profile.shiftProgress = max(profile.shiftProgress, next - 1)
+                        profile.persist()
+                        UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
+                        showLevelWin = false
+                        screen = .shiftMap
+                    }
+                }
             }
 
             if showSnatchTip {
@@ -477,19 +502,38 @@ struct GameContainerView: View {
 
     private func traySlotView(_ idx: Int) -> some View {
         let piece = traySlots.indices.contains(idx) ? traySlots[idx] : nil
+        let selected = selectedTray == idx
+        let matColor: Color = {
+            guard let id = piece else { return NeonTheme.teal }
+            switch JunkCatalog.def(for: id).material {
+            case .metal: return Color(red: 0.78, green: 0.82, blue: 0.88)
+            case .plastic: return Color(red: 0.95, green: 0.28, blue: 0.72)
+            case .glass: return Color(red: 0.20, green: 0.90, blue: 0.95)
+            case .paper: return Color(red: 0.96, green: 0.62, blue: 0.22)
+            }
+        }()
         return ZStack {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(Color.white.opacity(selectedTray == idx ? 0.18 : 0.08))
-                .frame(width: 64, height: 64)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(selected ? 0.22 : 0.10))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .stroke(selected ? matColor : Color.white.opacity(0.18), lineWidth: selected ? 3 : 1)
+                )
+                .shadow(color: selected ? matColor.opacity(0.75) : .clear, radius: selected ? 12 : 0)
+                .frame(width: 78, height: 78)
             if let id = piece {
                 BundleImage(name: JunkCatalog.textureName(for: id))
                     .scaledToFit()
-                    .frame(width: 44, height: 44)
+                    .frame(width: 54, height: 54)
+                    .offset(y: selected ? -10 : 0)
             } else {
                 Text("—")
+                    .font(.title3.weight(.bold))
                     .foregroundStyle(NeonTheme.muted)
             }
         }
+        .offset(y: selected ? -8 : 0)
+        .animation(.spring(response: 0.28, dampingFraction: 0.72), value: selected)
         .contentShape(Rectangle())
         .onTapGesture {
             _ = scene.selectTraySlot(idx)
@@ -536,25 +580,31 @@ struct GameContainerView: View {
     }
 
     private var turnBasedTray: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
+            if let teachHint, !teachHint.isEmpty {
+                Text(teachHint)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(NeonTheme.teal)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .accessibilityIdentifier("teachHint")
+            }
             HStack {
                 Text("Moves \(movesLeft)")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(NeonTheme.muted)
                     .accessibilityIdentifier("movesLeft")
                 Spacer()
-                if let teachHint, !teachHint.isEmpty {
-                    Text(teachHint)
-                        .font(.caption2.weight(.semibold))
-                        .foregroundStyle(NeonTheme.teal)
-                        .lineLimit(1)
-                }
+                Text("TRAY")
+                    .font(.caption2.weight(.black))
+                    .foregroundStyle(NeonTheme.muted)
             }
-            HStack(spacing: 12) {
+            HStack(spacing: 16) {
                 ForEach(0..<3, id: \.self) { idx in
                     traySlotView(idx)
                 }
             }
+            .frame(maxWidth: .infinity)
             HStack(spacing: 8) {
                 boosterChip("Magnet", count: boostMagnet) {
                     if let mat = scene.engine.state.active?.material
@@ -732,11 +782,18 @@ struct GameContainerView: View {
         scene.startShiftLevel(1)
         syncHUD()
         displayScore = scene.engine.state.score
-        showToast(scene.engine.state.teachHint ?? "Tap a tray piece, then tap the board")
-        presentGestureHint()
+        // One instruction: teach hint lives under the tray; skip the conflicting top tip.
+        if scene.engine.state.teachHint == nil || scene.engine.state.teachHint?.isEmpty == true {
+            showToast("Tap a tray piece, then tap the board")
+            presentGestureHint()
+        } else {
+            showToast(scene.engine.state.teachHint!)
+        }
     }
 
     private func presentGestureHint() {
+        // Don't fight the level-1 teach line under the tray.
+        if let tip = scene.engine.state.teachHint, !tip.isEmpty { return }
         showGestureHint = true
         gestureHintTask?.cancel()
         gestureHintTask = Task { @MainActor in
@@ -833,9 +890,8 @@ struct GameContainerView: View {
         if !profile.tutorialDone, !isShot {
             showHowTo = true
             scene.isPaused = true
-        } else if !profile.classicButtons, !isShot {
-            presentGestureHint()
         }
+        // Gesture tip deferred until after startShiftLevel / syncHUD so L1 teachHint wins.
         let shot = shotPeek
         let auto = shot == "demo" || shot == "autoplay" || ProcessInfo.processInfo.arguments.contains("-autoplay")
         scene.autoplay = auto
@@ -913,6 +969,9 @@ struct GameContainerView: View {
             scene.reset()
         }
         syncHUD()
+        if !showHowTo, !profile.classicButtons, !isShot {
+            presentGestureHint()
+        }
         scene.onGameOver = { state in
             Task { @MainActor in
                 // Lock the live top-out score before any sheet / HUD race.

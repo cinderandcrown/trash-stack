@@ -67,13 +67,12 @@ public enum LevelCatalog {
                 id: 1, title: "First Sort", district: "Alley Mouth",
                 moveLimit: 8, starMoves: (6, 3),
                 goal: OrderTicket(id: "l1", label: "Recycle 4 metal", kind: .recycleMaterial, target: 4, material: .metal),
-                // One place teaches drag-and-place: can at col 0 clears metal, then plastic settles into a chain.
-                // plastic(4,f) sits on the floor (not floating) so the post-clear pack makes 4 plastic.
+                // Three metal cans on the floor (clearly visible). Empty seat at col 1.
+                // Plastics sit on the metal; plastic(5,f) waits so the settle makes a chain.
                 board: [
-                    metal(1, f), metal(2, f), metal(3, f),
-                    plastic(1, f - 1), plastic(2, f - 1), plastic(3, f - 1),
-                    plastic(4, f),
-                    paper(6, f),
+                    metal(2, f), metal(3, f), metal(4, f),
+                    plastic(2, f - 1), plastic(3, f - 1), plastic(4, f - 1),
+                    plastic(5, f),
                 ],
                 tray: [.can, .plank, .bottle],
                 teachHint: "Tap the can, then tap next to the three metal tiles"

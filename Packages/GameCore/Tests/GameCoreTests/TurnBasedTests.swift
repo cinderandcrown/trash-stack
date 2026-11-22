@@ -12,10 +12,10 @@ final class TurnBasedTests: XCTestCase {
         XCTAssertFalse(eng.state.boardHasFloatingTilesHelper)
         XCTAssertEqual(eng.state.tray.compactMap { $0 }.count, 3)
 
-        // Tray[0] is can — place at (0, floor) beside the three metal tiles.
+        // Tray[0] is can — place at (1, floor) beside the three metal tiles.
         XCTAssertTrue(eng.selectTray(0))
         let floor = eng.state.board.config.rows - 1
-        XCTAssertEqual(eng.setPreview(x: 0, y: floor), .fits)
+        XCTAssertEqual(eng.setPreview(x: 1, y: floor), .fits)
         XCTAssertTrue(eng.placeSelected())
 
         // Metal recycled; plastic settles into a chain clear; nothing floating.
@@ -34,10 +34,10 @@ final class TurnBasedTests: XCTestCase {
         eng.startLevel(LevelCatalog.level(id: 1), seed: 2)
         XCTAssertTrue(eng.selectTray(0))
         let floor = eng.state.board.config.rows - 1
-        // Occupied by pre-placed metal at (1, floor).
-        XCTAssertEqual(eng.setPreview(x: 1, y: floor), .blocked)
+        // Occupied by pre-placed metal at (2, floor).
+        XCTAssertEqual(eng.setPreview(x: 2, y: floor), .blocked)
         XCTAssertFalse(eng.placeSelected())
-        XCTAssertEqual(eng.state.board[1, floor]?.material, .metal)
+        XCTAssertEqual(eng.state.board[2, floor]?.material, .metal)
     }
 
     func testLevel1PlaceTriggersMetalThenPlasticChain() {
@@ -46,12 +46,12 @@ final class TurnBasedTests: XCTestCase {
         eng.startLevel(LevelCatalog.level(id: 1), seed: 11)
         XCTAssertTrue(eng.selectTray(0))
         let floor = eng.state.board.config.rows - 1
-        XCTAssertTrue(eng.setPreview(x: 0, y: floor) == .fits && eng.placeSelected())
+        XCTAssertTrue(eng.setPreview(x: 1, y: floor) == .fits && eng.placeSelected())
         // Goal met after metal clear; plastic chain also cleared in sync mode.
         XCTAssertTrue(eng.state.levelWon)
         XCTAssertGreaterThanOrEqual(eng.state.starsEarned, 1)
-        XCTAssertNil(eng.state.board[1, floor])
         XCTAssertNil(eng.state.board[2, floor])
+        XCTAssertNil(eng.state.board[3, floor])
         XCTAssertTrue(eng.boardHasNoFloatingTiles())
     }
 
