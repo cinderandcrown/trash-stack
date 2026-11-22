@@ -984,10 +984,13 @@ public final class CompactorScene: SKScene {
     private func updateComboCounter(forceHide: Bool = false) {
         let combo = engine.state.combo
         if forceHide || combo < 2 {
-            comboCounterNode?.run(SKAction.sequence([
-                SKAction.fadeOut(withDuration: 0.12),
-                SKAction.removeFromParent(),
-            ]))
+            if let node = comboCounterNode {
+                node.removeAllActions()
+                node.run(SKAction.sequence([
+                    SKAction.fadeOut(withDuration: 0.10),
+                    SKAction.removeFromParent(),
+                ]))
+            }
             comboCounterNode = nil
             return
         }
