@@ -2,8 +2,8 @@
 
 import XCTest
 
-/// Drives a fresh New Game with real board gestures while CI records the simulator.
-/// No `-trashStackShot`, no seeded boards, no demo/autoplay scene swaps.
+/// Fresh New Game → Levels 1–3 via real tray tap → board tap → LEVEL MAP → next level.
+/// No test-only place shortcuts. Pauses between beats for recordVideo (≥60s play).
 final class RealPlayUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -19,8 +19,6 @@ final class RealPlayUITests: XCTestCase {
         app.launchEnvironment["UI_TESTING"] = "1"
         app.launch()
 
-        // `-UITestRealPlay` boots straight into the game. If a title still appears
-        // (stale process), tap PLAY; otherwise wait on the board immediately.
         let play = app.buttons["playButton"].firstMatch.exists
             ? app.buttons["playButton"].firstMatch
             : app.buttons["PLAY"].firstMatch
@@ -33,106 +31,93 @@ final class RealPlayUITests: XCTestCase {
             gotIt.tap()
         }
 
-        let board = app.otherElements["gameBoard"].firstMatch
-        XCTAssertTrue(
-            board.waitForExistence(timeout: 8),
-            "gameBoard must appear within ~10s of launch for real-play video"
+        // —— Level 1: can beside three metal ——
+        try playOneMoveLevel(
+            app: app,
+            floorSeat: "boardFloor1",
+            expectMapLevel: 2
         )
 
-        // ~85s of steady inputs after board so clears + SLAM settle land on camera.
-        let deadline = Date().addingTimeInterval(85)
-        var gestures = 0
-        var sawGameOver = false
+        // —— Level 2: pink pipe beside three plastic ——
+        try playOneMoveLevel(
+            app: app,
+            floorSeat: "boardFloor3",
+            expectMapLevel: 3
+        )
 
-        while Date() < deadline {
-            if gestures % 4 == 0, isGameOverVisible(in: app) {
-                sawGameOver = true
-                break
-            }
+        // —— Level 3: bottle beside three glass ——
+        try playOneMoveLevel(
+            app: app,
+            floorSeat: "boardFloor3",
+            expectMapLevel: 4,
+            openNextFromMap: false
+        )
 
-            let frame: CGRect
-            if board.exists {
-                frame = board.frame
-            } else {
-                let w = app.frame.width
-                let h = app.frame.height
-                frame = CGRect(x: w * 0.08, y: h * 0.22, width: w * 0.84, height: h * 0.55)
-            }
-
-            let cx = frame.midX
-            let cy = frame.midY
-            let leftX = frame.minX + frame.width * 0.18
-            let rightX = frame.minX + frame.width * 0.82
-            let mid = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: cx, dy: cy))
-            let left = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: leftX, dy: cy))
-            let right = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: rightX, dy: cy))
-            let top = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: cx, dy: frame.minY + frame.height * 0.18))
-            let bottom = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(dx: cx, dy: frame.maxY - frame.height * 0.12))
-
-            // When PRESS is charged, slam so crush + settle land on camera.
-            let slam = app.buttons["Slam press"].firstMatch
-            if slam.exists, slam.isHittable {
-                slam.tap()
-                gestures += 1
-                Thread.sleep(forTimeInterval: 0.7)
-                continue
-            }
-            // Fallback: tap lower chrome where SLAM sits (SwiftUI hit-testing can miss the label).
-            if gestures % 6 == 5 {
-                let slamSpot = app.coordinate(withNormalizedOffset: .zero)
-                    .withOffset(CGVector(dx: app.frame.midX, dy: app.frame.maxY - 36))
-                slamSpot.tap()
-                Thread.sleep(forTimeInterval: 0.15)
-            }
-
-            // Bias toward stacking so gravity / land / clear / overflow show up.
-            switch gestures % 9 {
-            case 0, 1, 2:
-                mid.press(forDuration: 0.01, thenDragTo: left)
-            case 3:
-                mid.tap()
-            case 4, 5:
-                top.press(forDuration: 0.01, thenDragTo: bottom)
-            case 6:
-                mid.press(forDuration: 0.01, thenDragTo: right)
-                mid.tap()
-            default:
-                top.press(forDuration: 0.01, thenDragTo: bottom)
-            }
-            gestures += 1
-            Thread.sleep(forTimeInterval: 0.07)
-        }
-
-        if !sawGameOver {
-            sawGameOver = isGameOverVisible(in: app)
-        }
-        if sawGameOver {
-            Thread.sleep(forTimeInterval: 2.0)
-            let score = app.staticTexts["gameOverScore"].firstMatch
-            if score.exists {
-                let raw = score.label.replacingOccurrences(of: ",", with: "")
-                if let value = Int(raw) {
-                    XCTAssertGreaterThan(value, 0, "Game-over must show true final score, not 0")
-                }
-            }
-        }
-
-        // Printed into the xcodebuild log so CI proves PLAY + board input ran.
-        print("RealPlay gestures=\(gestures) gameOver=\(sawGameOver)")
-
-        // SpriteKit idle waits starve XCUITest — require a real session, not a gesture quota.
-        XCTAssertGreaterThanOrEqual(gestures, 15, "Expected real-play board input, got \(gestures)")
+        Thread.sleep(forTimeInterval: 3.0)
     }
 
-    private func isGameOverVisible(in app: XCUIApplication) -> Bool {
-        app.staticTexts["NEW BEST"].exists
-            || app.staticTexts["BIN FULL"].exists
-            || app.staticTexts["SO CLOSE"].exists
-            || app.otherElements["Game over"].exists
+    /// Tray slot 0 → floor seat → win → tap LEVEL MAP → optional next level row.
+    private func playOneMoveLevel(
+        app: XCUIApplication,
+        floorSeat: String,
+        expectMapLevel: Int,
+        openNextFromMap: Bool = true
+    ) throws {
+        let board = app.otherElements["gameBoard"].firstMatch
+        XCTAssertTrue(
+            board.waitForExistence(timeout: 10),
+            "gameBoard must appear for level play"
+        )
+        Thread.sleep(forTimeInterval: 1.0)
+
+        let tray0 = app.buttons["traySlot0"].firstMatch
+        XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist")
+        tray0.tap()
+        Thread.sleep(forTimeInterval: 0.9)
+
+        let seat = app.buttons[floorSeat].firstMatch
+        XCTAssertTrue(
+            seat.waitForExistence(timeout: 4),
+            "\(floorSeat) must appear after selecting a tray piece"
+        )
+        XCTAssertTrue(seat.isHittable, "\(floorSeat) must be hittable")
+        seat.tap()
+
+        // Place settle + fly-to-goal + CHAIN, then delayed LEVEL CLEAR (~1.2s after win).
+        let win = app.descendants(matching: .any)["levelWinOverlay"].firstMatch
+        let clear = app.staticTexts["LEVEL CLEAR"].firstMatch
+        let mapBtn = app.buttons["levelMapButton"].firstMatch
+        XCTAssertTrue(
+            win.waitForExistence(timeout: 18)
+                || clear.waitForExistence(timeout: 2)
+                || mapBtn.waitForExistence(timeout: 2),
+            "Level must clear after tap-to-place (overlay or LEVEL MAP)"
+        )
+        // Brief stars beat (CHAIN already finished before overlay).
+        Thread.sleep(forTimeInterval: 1.1)
+
+        if mapBtn.waitForExistence(timeout: 2), mapBtn.isHittable {
+            mapBtn.tap()
+        } else if app.buttons["LEVEL MAP"].firstMatch.waitForExistence(timeout: 1) {
+            app.buttons["LEVEL MAP"].firstMatch.tap()
+        }
+
+        let mapTitle = app.staticTexts["LEVEL MAP"].firstMatch
+        let nextRow = app.buttons["levelMap\(expectMapLevel)"].firstMatch
+        XCTAssertTrue(
+            mapTitle.waitForExistence(timeout: 8) || nextRow.waitForExistence(timeout: 3),
+            "Level map must show after the win (next=\(expectMapLevel))"
+        )
+        Thread.sleep(forTimeInterval: 0.8)
+
+        guard openNextFromMap else { return }
+
+        XCTAssertTrue(
+            nextRow.waitForExistence(timeout: 4),
+            "levelMap\(expectMapLevel) must be unlocked after prior clear"
+        )
+        XCTAssertTrue(nextRow.isHittable, "levelMap\(expectMapLevel) must be tappable")
+        nextRow.tap()
+        Thread.sleep(forTimeInterval: 0.9)
     }
 }

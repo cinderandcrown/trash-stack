@@ -22,12 +22,17 @@ public enum GameEvent: Sendable, Equatable {
     case spawned(JunkID)
     /// `hard` is true after a slam drop — bigger impact juice.
     case locked(hard: Bool)
+    /// Turn-based: a tray piece was placed on the board (no fall).
+    case placed(JunkID, at: BoardCoord)
     /// `coords` are board cells sucked into the chute (for VFX).
     case recycled(groups: Int, cells: Int, score: Int, scrap: Int, material: Material, coords: [BoardCoord])
     case pressed(cells: Int, score: Int, scrap: Int)
     case orderCompleted(OrderTicket)
     case snatchUsed
-    case magnetUsed // legacy alias unused
+    case magnetUsed
+    case crushed(BoardCoord)
+    case shuffled
+    case levelWon(stars: Int)
     case gameOver
     case leveledUp(Int)
     /// Incoming TRASH TALK junk — warning meter ticking, then rows land.
@@ -86,6 +91,22 @@ public struct GameState: Sendable, Equatable {
     public var junkWarnElapsed: Double
     public var junkWarnDuration: Double
 
+    // MARK: Turn-based puzzle fields
+    /// Tray of up to 3 pieces. Nil slots are empty until the tray is redealt.
+    public var tray: [JunkID?]
+    public var selectedTrayIndex: Int?
+    public var movesLeft: Int
+    public var moveLimit: Int
+    public var starsEarned: Int
+    public var levelId: Int
+    public var levelWon: Bool
+    public var teachHint: String?
+    public var boosters: BoosterInventory
+    public var lives: Int
+    public var dailyStepIndex: Int
+    public var isDailySort: Bool
+    public var isTurnBased: Bool
+
     public init(config: BoardConfig = .dumpster) {
         board = Board(config: config)
         active = nil
@@ -99,7 +120,7 @@ public struct GameState: Sendable, Equatable {
         backToBack = false
         magnetCharge = 0
         pressMeter = 0
-        // SLAM is earned — enough locks that a short real-play session still shows a crush.
+        // SLAM is earned — fill by placing pieces, then crush the bottom rows.
         pressMeterMax = 6
         snatchAvailable = true
         orders = []
@@ -109,15 +130,29 @@ public struct GameState: Sendable, Equatable {
         pendingJunkRows = 0
         junkWarnElapsed = 0
         junkWarnDuration = TrashTalkRules.junkWarningSec
+        tray = [nil, nil, nil]
+        selectedTrayIndex = nil
+        movesLeft = 0
+        moveLimit = 0
+        starsEarned = 0
+        levelId = 1
+        levelWon = false
+        teachHint = nil
+        boosters = BoosterInventory()
+        lives = 3
+        dailyStepIndex = 0
+        isDailySort = false
+        // Puzzle play flips this on via `startLevel` / `startDailySort`.
+        isTurnBased = false
     }
 }
 
 /// Pure Recycling Night Shift rules — no SpriteKit / UIKit.
 public struct GameEngine: Sendable {
-    public private(set) var state: GameState
-    private var bag: RNGBag
+    public internal(set) var state: GameState
+    var bag: RNGBag
     public var events: [GameEvent] = []
-    private var placeCount = 0
+    var placeCount = 0
 
     /// Pieces locked this run — used to keep TRASH TALK seeds in lockstep.
     public var lockCount: Int { placeCount }
@@ -127,11 +162,19 @@ public struct GameEngine: Sendable {
         bag = RNGBag(seed: seed)
         fillQueue()
         seedOrders(level: 1)
+        // App / scene call `startLevel` for puzzle play. Bare init keeps classic
+        // spawn so unit tests can exercise recycle/settle without a tray.
+        state.isTurnBased = false
         spawn()
     }
 
     public mutating func reset(seed: UInt64) {
+        if state.isTurnBased {
+            startLevel(LevelCatalog.level(id: max(1, state.levelId)), seed: seed)
+            return
+        }
         state = GameState(config: state.board.config)
+        state.isTurnBased = false
         bag = RNGBag(seed: seed)
         events = []
         placeCount = 0
@@ -416,14 +459,46 @@ public struct GameEngine: Sendable {
     /// Tests leave this false for synchronous resolve.
     public var paceCascades = false
     /// True while a paced cascade still has settle / follow-up waves pending.
-    public private(set) var cascadeActive = false
+    public internal(set) var cascadeActive = false
+    /// True after a turn-based place until the scene starts the first clear wave.
+    public internal(set) var deferredPlaceCascade = false
     /// Cells that just packed after the latest clear — scene eases sprites along these paths.
-    public private(set) var lastGravityMoves: [GravityMove] = []
+    public internal(set) var lastGravityMoves: [GravityMove] = []
     private var cascadeChain = 0
     private var cascadeHadAny = false
     private var cascadeFollowUpMin = 3
     /// After a lock, spawn once cascade settles. Slam cascades leave the active piece alone.
     private var cascadeNeedsSpawn = false
+
+    /// Block input after a paced place — first clear runs in `startDeferredPlaceCascade`.
+    mutating func armDeferredPlaceCascade() {
+        deferredPlaceCascade = true
+        cascadeActive = true
+        cascadeChain = 0
+        cascadeHadAny = false
+        cascadeFollowUpMin = 4
+        cascadeNeedsSpawn = false
+        lastGravityMoves = []
+    }
+
+    /// Scene calls this after the place-settle beat (~250–300ms).
+    @discardableResult
+    public mutating func startDeferredPlaceCascade() -> Bool {
+        guard deferredPlaceCascade else { return cascadeActive }
+        deferredPlaceCascade = false
+        beginPacedCascade(
+            firstWaveMinSize: RecycleMatcher.defaultMinSize,
+            followUpMinSize: 4,
+            needsSpawn: false
+        )
+        if !cascadeActive {
+            evaluateLevelOutcome()
+            if !state.levelWon, !state.over {
+                checkTrayFitsOrLose()
+            }
+        }
+        return cascadeActive
+    }
 
     private mutating func resolveAfterLock() {
         // Follow-ups stay at 4+ — triples must not vanish after an unrelated clear.
@@ -444,7 +519,7 @@ public struct GameEngine: Sendable {
     }
 
     /// Start paced cascade: clear matched cells, then pack gravity immediately so nothing floats.
-    private mutating func beginPacedCascade(firstWaveMinSize: Int, followUpMinSize: Int, needsSpawn: Bool) {
+    mutating func beginPacedCascade(firstWaveMinSize: Int, followUpMinSize: Int, needsSpawn: Bool) {
         cascadeChain = 0
         cascadeHadAny = false
         cascadeFollowUpMin = followUpMinSize
@@ -488,9 +563,17 @@ public struct GameEngine: Sendable {
         }
         let needsSpawn = cascadeNeedsSpawn
         cascadeActive = false
+        deferredPlaceCascade = false
         cascadeChain = 0
         cascadeNeedsSpawn = false
         finishAfterCascades(needsSpawn: needsSpawn)
+        // Turn-based Shift / Daily Sort: win or soft-lock only after chains finish.
+        if state.isTurnBased {
+            evaluateLevelOutcome()
+            if !state.levelWon, !state.over {
+                checkTrayFitsOrLose()
+            }
+        }
         return false
     }
 
@@ -545,7 +628,7 @@ public struct GameEngine: Sendable {
                 coords: coords
             ))
         }
-        if cascadeChain >= 3 {
+        if cascadeChain >= 2 {
             bumpOrder(kind: .recycleChain, amount: cascadeChain)
         }
         return true
@@ -554,7 +637,7 @@ public struct GameEngine: Sendable {
     /// Recycle waves after a settle (sync — unit tests / non-paced). First wave usually needs 4+;
     /// follow-ups can use 3+ so chains show up. Slam settle may start at 3.
     @discardableResult
-    private mutating func runRecycleCascades(firstWaveMinSize: Int, followUpMinSize: Int) -> Bool {
+    mutating func runRecycleCascades(firstWaveMinSize: Int, followUpMinSize: Int) -> Bool {
         cascadeChain = 0
         cascadeHadAny = false
         var any = false
@@ -577,7 +660,7 @@ public struct GameEngine: Sendable {
     }
 
     @discardableResult
-    private mutating func applyGravity() -> [GravityMove] {
+    mutating func applyGravity() -> [GravityMove] {
         let cols = state.board.config.cols
         let rows = state.board.config.rows
         var moves: [GravityMove] = []
@@ -646,7 +729,7 @@ public struct GameEngine: Sendable {
     }
 
     /// Prefer later destinations when the same cell packs twice (slam then clear).
-    private static func mergeGravityMoves(_ a: [GravityMove], _ b: [GravityMove]) -> [GravityMove] {
+    static func mergeGravityMoves(_ a: [GravityMove], _ b: [GravityMove]) -> [GravityMove] {
         var byDest: [String: GravityMove] = [:]
         for m in a { byDest["\(m.to.x),\(m.to.y)"] = m }
         for m in b { byDest["\(m.to.x),\(m.to.y)"] = m }
@@ -735,7 +818,7 @@ public struct GameEngine: Sendable {
         state.lines = max(state.lines, (state.level - 1) * Scoring.linesPerLevel)
     }
 
-    private mutating func bumpOrderMaterial(_ mat: Material, amount: Int) {
+    mutating func bumpOrderMaterial(_ mat: Material, amount: Int) {
         for i in state.orders.indices {
             guard !state.orders[i].done else { continue }
             if state.orders[i].kind == .recycleMaterial, state.orders[i].material == mat {
@@ -747,7 +830,7 @@ public struct GameEngine: Sendable {
         }
     }
 
-    private mutating func bumpOrder(kind: OrderTicket.Kind, amount: Int) {
+    mutating func bumpOrder(kind: OrderTicket.Kind, amount: Int) {
         for i in state.orders.indices {
             guard !state.orders[i].done, state.orders[i].kind == kind else { continue }
             if kind == .recycleChain {
@@ -859,6 +942,7 @@ public struct GameEngine: Sendable {
         state.active = active
         state.over = false
         cascadeActive = false
+        deferredPlaceCascade = false
         lastGravityMoves = []
         events = []
     }

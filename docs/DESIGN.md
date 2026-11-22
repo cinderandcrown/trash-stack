@@ -5,7 +5,7 @@ The game must feel **genuinely fun** and give people a reason to **come back dai
 
 ## Elevator pitch
 
-You work the **night shift** in a neon junkyard. Drop junk **items** into an 8×14 **compactor bin**, **recycle** material clusters, and **slam the press** when the meter is ready. Order tickets give each run a goal. Modes, Daily Dumpster, streaks, and the Junkyard base keep the night shift sticky — without nagging.
+You work the **night shift** in a neon junkyard. **Drag** junk **items** from a tray of 3 into an 8×14 **compactor bin** (no timer — place anywhere it fits), **recycle** material clusters of 4+, chain clears for bigger scores, and **slam the press** when you earn it. Levels, Daily Sort, streaks, and the Junkyard base keep the night shift sticky — without nagging.
 
 ## Board
 
@@ -30,17 +30,17 @@ Max straight span is **3** (no 1×4 / I-tetromino shapes). Materials: **metal, p
 
 **Forbidden:** UI text, code identifiers, or asset names that say classic falling-block trademarks, tetromino, “line clear”, or letter piece names **T / S / Z / I / O**.
 
-## Core loop
+## Core loop (turn-based)
 
-1. **Drop** junk items (drag move, tap rotate when non-square, swipe down to drop).
-2. **Recycle:** **4+** orthogonally connected same-material cells → sucked into the matching chute. Sticky excluded until pressed.
-3. **Settle** → possible **Recycle Chain** combos.
-4. **PRESS meter** fills on place. When full, tap **PRESS** to crush the **bottom 2 rows** into scrap (player-timed).
-5. **Order tickets** (1–3 / run) → XP, gems, Pass XP.
-6. **Snatch** once per run (raccoon helper).
-7. **Hazards** (later Shift levels): leaking battery, sticky goo; plus magnets / conveyor belts as districts unlock.
+1. **Tray of 3** — pick any piece, drag onto the board, take as long as you want. Ghost preview turns **red** if it does not fit. Pieces do **not** fall on a timer; no gravity on place.
+2. **Recycle:** **4+** orthogonally connected same-material cells → sucked into the matching chute. Sticky excluded until crushed.
+3. **Settle after clears only** (model-driven) → possible **chain** combos (chains score more).
+4. Empty tray → deal 3 new pieces. If nothing fits, earn a **Shuffle** rescue or the level is lost (retry free).
+5. **Levels** start with a pre-placed junk pile, a **move limit**, and **1–3 stars**. Level 1 teaches drag-and-place in a few seconds.
+6. **Earned boosters** (never paid): Magnet (one material), Crush (one tile), **SLAM** (bottom 2 rows).
+7. **Daily Sort** — fixed hand-made board, one logical solution, 3 lives, hint for the next forced move (does not place it).
 
-No full-row automatic “line clear.”
+No full-row automatic “line clear.” Never say “Tetris” in UI or copy.
 
 ## Core fun (feel)
 

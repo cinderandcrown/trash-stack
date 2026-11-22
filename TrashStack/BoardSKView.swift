@@ -39,11 +39,12 @@ struct BoardSKView: UIViewRepresentable {
         if view.scene !== scene {
             present(scene, in: view)
         }
-        // Keep the scene sized to the live view.
+        // Keep the scene sized to the live view — ignore sub-8pt HUD jitter so
+        // didChangeSize does not rebuild mid place-settle / fly-to-goal.
         let bounds = view.bounds
         if bounds.width > 10, bounds.height > 10 {
             let target = CGSize(width: bounds.width, height: bounds.height)
-            if abs(scene.size.width - target.width) > 1 || abs(scene.size.height - target.height) > 1 {
+            if abs(scene.size.width - target.width) > 8 || abs(scene.size.height - target.height) > 8 {
                 scene.size = target
             }
         }

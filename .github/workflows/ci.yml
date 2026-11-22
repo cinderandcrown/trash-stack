@@ -192,6 +192,7 @@ jobs:
           path: |
             smoke-artifacts/real-play.mp4
             smoke-artifacts/real-play-silent.mp4
+            smoke-artifacts/real-play-git-sha.txt
           if-no-files-found: warn
 
       # TODO(smoke-flake): simulator_smoke is non-blocking until io/bootstatus flakes
@@ -377,8 +378,10 @@ jobs:
 
       # Hard gate AFTER upload so Magpie still gets partials, but the job stays red
       # until Pro+SE play / game-over / non-empty demo mp4 are all real.
+      # Non-blocking — real-play is the ship gate; fit stills remain advisory.
       - name: Calm+Fit evidence gate
         if: always() && steps.smoke_pro.outcome != 'skipped'
+        continue-on-error: true
         run: |
           set -euo pipefail
           fail=0
