@@ -798,7 +798,7 @@ struct GameContainerView: View {
             scene.startDailySortPuzzle()
         } else if playMode == .shift {
             let raw = UserDefaults.standard.string(forKey: "trashStack.shiftLevel") ?? "1"
-            let id = Int(raw) ?? Int(raw.split(separator: "-").last.flatMap { Int($0) } ?? 1) ?? 1
+            let id = Int(raw) ?? raw.split(separator: "-").last.flatMap { Int($0) } ?? 1
             scene.startShiftLevel(max(1, id))
         } else if UserDefaults.standard.bool(forKey: "tt.weeklyRun") {
             scene.reset(seed: WeeklyTournament.seed())

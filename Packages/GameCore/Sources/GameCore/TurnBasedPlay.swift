@@ -27,6 +27,12 @@ public enum LevelOutcome: Sendable, Equatable {
 }
 
 extension GameEngine {
+    /// Opt into classic falling-piece mode (unit tests / legacy shots).
+    public mutating func enableClassicFallingMode() {
+        state.isTurnBased = false
+        state.isDailySort = false
+    }
+
     /// Start a hand-tuned Shift level (turn-based, prefilled board, move limit).
     public mutating func startLevel(_ def: LevelDef, seed: UInt64 = 0xC1A55) {
         state = GameState(config: state.board.config)

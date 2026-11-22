@@ -42,7 +42,7 @@ final class CompactorSceneSettleTests: XCTestCase {
         let cols = scene.engine.state.board.config.cols
         let rows = scene.engine.state.board.config.rows
         scene.engine.paceCascades = true
-        scene.engine.state.isTurnBased = false
+        scene.engine.enableClassicFallingMode()
         scene.engine.seedBoardForTesting(
             cells: [
                 (0, rows - 1, Cell(piece: .can, material: .metal)),
