@@ -805,8 +805,8 @@ struct GameContainerView: View {
     private func scheduleLevelWinOverlay(stars: Int) {
         winPresentTask?.cancel()
         winPresentTask = Task { @MainActor in
-            // Fly (~0.6s) + CHAIN (~0.9s). Prefer onComboFinished; this is the backstop.
-            try? await Task.sleep(nanoseconds: 1_650_000_000)
+            // Settle (~0.4s) + fly (~0.7s) + CHAIN (~0.9s). Prefer onComboFinished; this is the backstop.
+            try? await Task.sleep(nanoseconds: 2_100_000_000)
             guard !Task.isCancelled, pendingWinStars != nil, scene.engine.state.levelWon else { return }
             presentLevelWinOverlay(stars: stars)
         }

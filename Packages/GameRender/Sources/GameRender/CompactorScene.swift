@@ -148,9 +148,22 @@ public final class CompactorScene: SKScene {
     }
 
     public override func didChangeSize(_ oldSize: CGSize) {
-        if size.width > 10, size.height > 10, size != oldSize {
-            rebuild()
+        guard size.width > 10, size.height > 10, size != oldSize else { return }
+        // SwiftUI HUD updates (score/tray/moves) often nudge SKView bounds by a few
+        // points. A full rebuild() here was wiping place-settle + fly-to-goal mid-juice
+        // so clears looked like an instant vanish on camera.
+        let juicing = !placeSettles.isEmpty
+            || !recycleFlyers.isEmpty
+            || engine.deferredPlaceCascade
+            || engine.cascadeActive
+            || action(forKey: "cascadeDrain") != nil
+            || action(forKey: "placeThenCascade") != nil
+            || children.contains(where: { $0.name == "recycleFly" })
+        if juicing { return }
+        if abs(size.width - oldSize.width) < 8, abs(size.height - oldSize.height) < 8 {
+            return
         }
+        rebuild()
     }
 
     public func configureForProMotion(_ enabled: Bool) {
@@ -240,7 +253,8 @@ public final class CompactorScene: SKScene {
         // (paused scenes / deferred cascadeActive races with tickPacedCascade).
         placeCascadeGeneration &+= 1
         let gen = placeCascadeGeneration
-        let settleBeat = max(0.28, min(0.36, feel.settleBounceSec + 0.18))
+        // Wait for placePop (~0.34s) to finish before the first clear wave.
+        let settleBeat: TimeInterval = 0.40
         deferredCascadeDeadline = CACurrentMediaTime() + settleBeat
         DispatchQueue.main.asyncAfter(deadline: .now() + settleBeat) { [weak self] in
             self?.runDeferredPlaceCascadeIfNeeded(generation: gen)
@@ -275,28 +289,49 @@ public final class CompactorScene: SKScene {
     }
     private var placeSettles: [PlaceSettle] = []
 
-    /// Drop-in settle for newly placed cells — update()-driven so it reads on camera.
+    /// Drop-in settle for newly placed cells — SKAction (same clock as CHAIN) so it reads on camera.
     private func presentPlacePop(cells: [BoardCoord]) {
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
         let cs = cellSize()
+        let dur: TimeInterval = 0.34
         for c in cells {
             let visY = c.y - hid
             guard visY >= 0, visY < vis, visY < cellNodes.count, c.x < cellNodes[visY].count else { continue }
             guard let node = cellNodes[visY][c.x] else { continue }
             node.removeAllActions()
             let dest = positionFor(x: c.x, boardY: c.y)
-            let from = CGPoint(x: dest.x, y: dest.y + cs.height * 0.7)
+            let from = CGPoint(x: dest.x, y: dest.y + cs.height * 0.75)
             node.position = from
-            node.setScale(0.4)
-            node.alpha = 0.6
+            node.setScale(0.35)
+            node.alpha = 0.55
+            // Track so didChangeSize / render know juice is live.
             placeSettles.append(PlaceSettle(
                 node: node,
                 from: from,
                 to: dest,
                 startTime: animClock,
-                duration: 0.30
+                duration: dur
             ))
+            let drop = SKAction.group([
+                SKAction.move(to: dest, duration: dur),
+                SKAction.fadeAlpha(to: 1, duration: dur * 0.55),
+                SKAction.sequence([
+                    SKAction.scale(to: 1.12, duration: dur * 0.7),
+                    SKAction.scale(to: 1.0, duration: dur * 0.3),
+                ]),
+            ])
+            drop.timingMode = .easeOut
+            node.run(SKAction.sequence([
+                drop,
+                SKAction.run { [weak self, weak node] in
+                    guard let node else { return }
+                    node.position = dest
+                    node.setScale(1)
+                    node.alpha = 1
+                    self?.placeSettles.removeAll { $0.node === node }
+                },
+            ]), withKey: "placePop")
         }
         if let first = cells.first {
             spawnParticle(named: "SparkTeal", at: positionFor(x: first.x, boardY: first.y), count: 12)
@@ -304,39 +339,16 @@ public final class CompactorScene: SKScene {
     }
 
     private func tickPlaceSettles(at time: TimeInterval) {
-        guard !placeSettles.isEmpty else { return }
-        var kept: [PlaceSettle] = []
-        for s in placeSettles {
-            let u = min(1, (time - s.startTime) / max(0.001, s.duration))
-            let eased = 1 - pow(1 - u, 3)
-            s.node.position = CGPoint(
-                x: s.from.x + (s.to.x - s.from.x) * CGFloat(eased),
-                y: s.from.y + (s.to.y - s.from.y) * CGFloat(eased)
-            )
-            s.node.alpha = 0.6 + 0.4 * CGFloat(eased)
-            // Overshoot squash near the end.
-            if u < 0.7 {
-                s.node.setScale(0.4 + 0.85 * CGFloat(eased / 0.7))
-            } else {
-                let w = (u - 0.7) / 0.3
-                s.node.xScale = 1.15 - 0.15 * CGFloat(w)
-                s.node.yScale = 0.88 + 0.12 * CGFloat(w)
-            }
-            if u < 1 { kept.append(s) }
-            else {
-                s.node.position = s.to
-                s.node.setScale(1)
-                s.node.alpha = 1
-            }
-        }
-        placeSettles = kept
+        // SKAction owns the motion; this only drops finished entries if the completion missed.
+        _ = time
+        placeSettles.removeAll { $0.node.action(forKey: "placePop") == nil && $0.node.parent != nil && abs($0.node.xScale - 1) < 0.02 }
     }
 
     /// Advance remaining paced cascade waves on a readable beat, then settle win/lose.
     private func drainPacedCascadeWithActions() {
         removeAction(forKey: "cascadeDrain")
-        // Hold + fly (~0.14 + 0.40) before the next chain wave.
-        let beat: TimeInterval = 0.58
+        // Hold + fly (~0.18 + 0.48) before the next chain wave.
+        let beat: TimeInterval = 0.72
         let step = SKAction.sequence([
             SKAction.wait(forDuration: beat),
             SKAction.run { [weak self] in
@@ -1691,18 +1703,44 @@ public final class CompactorScene: SKScene {
                 placeSettles.removeAll { $0.node === cell }
             }
             addChild(flyer)
-            // Same animClock as update() ticks — never CACurrentMediaTime.
+            let hold: TimeInterval = 0.18
+            let fly: TimeInterval = 0.48
+            let stagger = TimeInterval(i) * 0.05
             recycleFlyers.append(RecycleFlyer(
                 node: flyer,
                 from: start,
                 to: goal,
-                startTime: animClock + Double(i) * 0.05,
-                hold: 0.16,
-                duration: 0.42
+                startTime: animClock + stagger,
+                hold: hold,
+                duration: fly
             ))
+            // SKAction — same clock as CHAIN; survives HUD layout jitter.
+            let lift = SKAction.group([
+                SKAction.moveBy(x: 0, y: cs.height * 0.45, duration: hold),
+                SKAction.scale(to: 1.4, duration: hold),
+            ])
+            let toGoal = SKAction.group([
+                SKAction.move(to: goal, duration: fly),
+                SKAction.scale(to: 0.2, duration: fly),
+                SKAction.sequence([
+                    SKAction.wait(forDuration: fly * 0.7),
+                    SKAction.fadeOut(withDuration: fly * 0.3),
+                ]),
+            ])
+            toGoal.timingMode = .easeIn
+            flyer.run(SKAction.sequence([
+                SKAction.wait(forDuration: stagger),
+                lift,
+                toGoal,
+                SKAction.run { [weak self, weak flyer] in
+                    flyer?.removeFromParent()
+                    self?.recycleFlyers.removeAll { $0.node === flyer }
+                },
+                SKAction.removeFromParent(),
+            ]), withKey: "recycleFly")
         }
         let particleCount = combo >= 3 ? min(60, 30 + coords.count * 3) : min(28, 10 + coords.count * 2)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) { [weak self] in
             self?.spawnParticle(named: "SparkTeal", at: goal, count: particleCount)
             if combo >= 2 {
                 self?.spawnParticle(named: "SparkMagenta", at: goal, count: particleCount / 2)
@@ -1711,42 +1749,9 @@ public final class CompactorScene: SKScene {
     }
 
     private func tickRecycleFlyers(at time: TimeInterval) {
-        guard !recycleFlyers.isEmpty else { return }
-        var kept: [RecycleFlyer] = []
-        for flyer in recycleFlyers {
-            let elapsed = time - flyer.startTime
-            if elapsed < 0 {
-                kept.append(flyer)
-                continue
-            }
-            if elapsed < flyer.hold {
-                // Pop up slightly while held.
-                let u = CGFloat(elapsed / max(0.001, flyer.hold))
-                flyer.node.setScale(1.25 + 0.2 * u)
-                flyer.node.position = CGPoint(
-                    x: flyer.from.x,
-                    y: flyer.from.y + cellSize().height * 0.4 * u
-                )
-                flyer.node.alpha = 1
-                kept.append(flyer)
-                continue
-            }
-            let flyElapsed = elapsed - flyer.hold
-            let u = min(1, flyElapsed / max(0.001, flyer.duration))
-            let eased = u * u // ease-in toward goal
-            flyer.node.position = CGPoint(
-                x: flyer.from.x + (flyer.to.x - flyer.from.x) * CGFloat(eased),
-                y: flyer.from.y + (flyer.to.y - flyer.from.y) * CGFloat(eased)
-            )
-            flyer.node.setScale(1.45 - 1.2 * CGFloat(eased))
-            flyer.node.alpha = u < 0.75 ? 1 : CGFloat(1 - (u - 0.75) / 0.25)
-            if u >= 1 {
-                flyer.node.removeFromParent()
-            } else {
-                kept.append(flyer)
-            }
-        }
-        recycleFlyers = kept
+        // SKAction owns the motion; prune finished entries.
+        _ = time
+        recycleFlyers.removeAll { $0.node.parent == nil }
     }
 
     private func hitStop(seconds: Double) {
@@ -1886,6 +1891,10 @@ public final class CompactorScene: SKScene {
                         }
                     }
                     let dest = positionFor(x: x, boardY: boardY)
+                    // Never snap a live place-settle — that was teleporting trays on camera.
+                    if node.action(forKey: "placePop") != nil {
+                        continue
+                    }
                     if immediate {
                         node.removeAction(forKey: "settle")
                         node.position = dest
