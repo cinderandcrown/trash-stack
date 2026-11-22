@@ -2,7 +2,7 @@
 
 import XCTest
 
-/// Drives Level 1 turn-based play: tray drag → place → clear → win with stars.
+/// Drives Level 1 turn-based play: tray drag → place → clear → chain → win with stars.
 final class RealPlayUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -36,78 +36,62 @@ final class RealPlayUITests: XCTestCase {
             "gameBoard must appear within ~10s of launch for real-play video"
         )
 
-        let frame: CGRect
-        if board.exists {
-            frame = board.frame
-        } else {
-            let w = app.frame.width
-            let h = app.frame.height
-            frame = CGRect(x: w * 0.08, y: h * 0.22, width: w * 0.84, height: h * 0.55)
-        }
+        let tray0 = app.otherElements["traySlot0"].firstMatch.exists
+            ? app.otherElements["traySlot0"].firstMatch
+            : app.buttons["traySlot0"].firstMatch
+        XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist for Level 1")
 
-        // Level 1: select tray can, then drag on the board to column ~1 (beside metal 2–4).
-        let tray0 = app.buttons["traySlot0"].firstMatch
-        if tray0.waitForExistence(timeout: 4) {
-            tray0.tap()
-            Thread.sleep(forTimeInterval: 0.35)
-        }
-        let boardStart = app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
-        let place = app.coordinate(withNormalizedOffset: .zero)
+        // Give the board a moment to lay out floor accessibility seats + scene size.
+        Thread.sleep(forTimeInterval: 0.8)
+
+        let frame = board.frame
+        // Level 1 teach seat: column 0 floor — left of the three metal tiles.
+        // Stay above the neon lip pad (~bottom 20%) so boardCell resolves.
+        let drop = app.coordinate(withNormalizedOffset: .zero)
             .withOffset(CGVector(
-                dx: frame.minX + frame.width * 0.22,
-                dy: frame.maxY - frame.height * 0.12
+                dx: frame.minX + frame.width * 0.10,
+                dy: frame.minY + frame.height * 0.70
             ))
-        boardStart.press(forDuration: 0.2, thenDragTo: place)
-        Thread.sleep(forTimeInterval: 0.9)
 
-        // Keep placing from the tray so a clear / chain can land on camera.
-        let deadline = Date().addingTimeInterval(70)
-        var gestures = 1
-        while Date() < deadline {
-            if app.otherElements["levelWinOverlay"].exists
+        // Drag from tray → board so SwiftUI DragGesture selects + places.
+        let origin = tray0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        origin.press(forDuration: 0.2, thenDragTo: drop)
+
+        // If the drag only previewed, tap the floor seat / coordinate to lock.
+        Thread.sleep(forTimeInterval: 0.5)
+        let floor0 = app.otherElements["boardFloor0"].firstMatch
+        if floor0.exists {
+            // Accessibility seat is non-hittable; use its frame center via coordinate.
+            let f = floor0.frame
+            if f.width > 2, f.height > 2 {
+                app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: f.midX, dy: f.midY))
+                    .tap()
+            } else {
+                drop.tap()
+            }
+        } else {
+            // Tap tray then board (SpriteKit place path).
+            tray0.tap()
+            Thread.sleep(forTimeInterval: 0.25)
+            let mid = app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
+            mid.press(forDuration: 0.12, thenDragTo: drop)
+        }
+
+        // Wait for metal clear → plastic chain → level win with stars.
+        let win = app.otherElements["levelWinOverlay"].firstMatch
+        XCTAssertTrue(
+            win.waitForExistence(timeout: 20),
+            "Level 1 must finish after the teach place (clear + chain)"
+        )
+        XCTAssertTrue(
+            app.otherElements["levelStars"].exists
                 || app.staticTexts["LEVEL CLEAR"].exists
-                || app.otherElements["levelStars"].exists {
-                break
-            }
-            let slam = app.buttons["Slam press"].firstMatch
-            if slam.exists, slam.isHittable {
-                slam.tap()
-                gestures += 1
-                Thread.sleep(forTimeInterval: 0.5)
-                continue
-            }
-            let slot = app.buttons["traySlot\(gestures % 3)"].firstMatch
-            if slot.exists, slot.isHittable {
-                slot.tap()
-                Thread.sleep(forTimeInterval: 0.2)
-            }
-            let targets: [CGFloat] = [0.18, 0.35, 0.50, 0.65, 0.80]
-            let tx = targets[gestures % targets.count]
-            let drop = app.coordinate(withNormalizedOffset: .zero)
-                .withOffset(CGVector(
-                    dx: frame.minX + frame.width * tx,
-                    dy: frame.maxY - frame.height * (0.10 + Double(gestures % 3) * 0.08)
-                ))
-            let origin = slot.exists
-                ? slot.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-                : app.coordinate(withNormalizedOffset: .zero)
-                    .withOffset(CGVector(dx: frame.midX, dy: frame.midY))
-            origin.press(forDuration: 0.12, thenDragTo: drop)
-            gestures += 1
-            Thread.sleep(forTimeInterval: 0.45)
-        }
-
-        XCTAssertGreaterThanOrEqual(gestures, 1, "real-play must drag at least one piece")
-        // Win overlay is ideal; if time runs out, board + gestures still prove turn-based play.
-        let won = app.otherElements["levelWinOverlay"].waitForExistence(timeout: 2)
-            || app.staticTexts["LEVEL CLEAR"].exists
-        if won {
-            XCTAssertTrue(
-                app.otherElements["levelStars"].exists || app.staticTexts.matching(NSPredicate(format: "label CONTAINS '★'")).count > 0
-                    || true,
-                "stars should show on level clear"
-            )
-        }
+                || app.staticTexts.matching(NSPredicate(format: "label CONTAINS '★'")).count > 0,
+            "stars should show on level clear"
+        )
+        // Hold so muxed real-play captures stars on camera.
+        Thread.sleep(forTimeInterval: 3.0)
     }
 }

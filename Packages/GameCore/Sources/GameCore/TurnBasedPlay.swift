@@ -143,15 +143,23 @@ extension GameEngine {
         events.append(.locked(hard: false))
 
         // Recycle + model-driven settle (gravity only after clears).
+        // When paced, defer win/lose until the cascade finishes so chains stay on camera.
         if paceCascades {
             beginPacedCascade(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4, needsSpawn: false)
+            dealTrayIfEmpty()
+            if !cascadeActive {
+                evaluateLevelOutcome()
+                if !state.levelWon, !state.over {
+                    checkTrayFitsOrLose()
+                }
+            }
         } else {
             _ = runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4)
-        }
-        dealTrayIfEmpty()
-        evaluateLevelOutcome()
-        if !state.levelWon, !state.over {
-            checkTrayFitsOrLose()
+            dealTrayIfEmpty()
+            evaluateLevelOutcome()
+            if !state.levelWon, !state.over {
+                checkTrayFitsOrLose()
+            }
         }
         return true
     }

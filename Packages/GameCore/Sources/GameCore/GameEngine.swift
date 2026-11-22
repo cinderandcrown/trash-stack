@@ -534,6 +534,13 @@ public struct GameEngine: Sendable {
         cascadeChain = 0
         cascadeNeedsSpawn = false
         finishAfterCascades(needsSpawn: needsSpawn)
+        // Turn-based Shift / Daily Sort: win or soft-lock only after chains finish.
+        if state.isTurnBased {
+            evaluateLevelOutcome()
+            if !state.levelWon, !state.over {
+                checkTrayFitsOrLose()
+            }
+        }
         return false
     }
 
@@ -588,7 +595,7 @@ public struct GameEngine: Sendable {
                 coords: coords
             ))
         }
-        if cascadeChain >= 3 {
+        if cascadeChain >= 2 {
             bumpOrder(kind: .recycleChain, amount: cascadeChain)
         }
         return true

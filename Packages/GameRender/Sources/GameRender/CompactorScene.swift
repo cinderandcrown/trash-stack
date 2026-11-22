@@ -210,6 +210,29 @@ public final class CompactorScene: SKScene {
         return true
     }
 
+    /// Scene-space center of a board cell (UIKit / SpriteKit y-up).
+    public func scenePointForBoard(x: Int, y: Int) -> CGPoint {
+        positionFor(x: x, boardY: y)
+    }
+
+    /// Floor cell under a column — used by tray drag / real-play targeting.
+    public func floorCell(column: Int) -> (x: Int, y: Int) {
+        let cols = engine.state.board.config.cols
+        let x = max(0, min(cols - 1, column))
+        return (x, engine.state.board.config.rows - 1)
+    }
+
+    public func gridOriginPublic() -> CGPoint { gridOrigin() }
+    public func cellSizePublic() -> CGSize { cellSize() }
+
+    /// Move the turn-based ghost without placing.
+    public func previewAtBoard(x: Int, y: Int) {
+        guard engine.state.isTurnBased, engine.state.active != nil else { return }
+        _ = engine.setPreview(x: x, y: y)
+        snapActivePose()
+        render(immediate: true)
+    }
+
     /// Board cell under a scene point (for tray drag drop).
     public func boardCell(at scenePoint: CGPoint) -> (x: Int, y: Int)? {
         let origin = gridOrigin()
@@ -2069,8 +2092,16 @@ public final class CompactorScene: SKScene {
 
         if engine.state.isTurnBased {
             if engine.state.active != nil {
-                // Tap = rotate; release after drag = try place.
+                // Short tap on a fitting seat places; otherwise tap rotates.
+                // Longer drag release always tries to place at the finger cell.
                 if dist < 28, elapsed < 0.35 {
+                    if let cell = boardCell(at: p) {
+                        _ = engine.setPreview(x: cell.x, y: cell.y)
+                        if engine.state.active?.fits(engine.state.board) == true {
+                            _ = placeAtBoard(x: cell.x, y: cell.y)
+                            return
+                        }
+                    }
                     _ = engine.rotatePreview(clockwise: start.x >= midX)
                     snapActivePose()
                     render(immediate: true)

@@ -59,6 +59,8 @@ struct GameContainerView: View {
     @State private var boostSlam = 0
     @State private var boostShuffle = 0
     @State private var selectedTray: Int? = nil
+    /// Global frame of the SK board — tray drag converts finger → board cell with this.
+    @State private var boardFrameGlobal: CGRect = .zero
 
     private var isPaused: Bool { pauseGate.isPaused }
 
@@ -87,10 +89,23 @@ struct GameContainerView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                     .accessibilityIdentifier("gameBoard")
+                    .background(
+                        GeometryReader { geo in
+                            Color.clear.preference(
+                                key: BoardGlobalFrameKey.self,
+                                value: geo.frame(in: .global)
+                            )
+                        }
+                    )
+                    .onPreferenceChange(BoardGlobalFrameKey.self) { boardFrameGlobal = $0 }
                     .overlay(alignment: .topTrailing) {
                         miniNextHold
                             .padding(.trailing, 6)
                             .padding(.top, 6)
+                    }
+                    // Accessibility-only floor seats for real-play (do not steal SpriteKit hits).
+                    .overlay {
+                        boardFloorAccessibilitySeats
                     }
                     .overlay(alignment: .top) {
                         if nearMiss || (lastState?.over == true) {
@@ -408,6 +423,86 @@ struct GameContainerView: View {
         }
     }
 
+    private var boardFloorAccessibilitySeats: some View {
+        GeometryReader { geo in
+            let cols = max(1, scene.engine.state.board.config.cols)
+            let cs = scene.cellSizePublic()
+            let floorY = scene.engine.state.board.config.rows - 1
+            ForEach(0..<cols, id: \.self) { col in
+                let pt = scene.scenePointForBoard(x: col, y: floorY)
+                let viewX = pt.x
+                let viewY = geo.size.height - pt.y
+                Color.clear
+                    .frame(width: max(24, cs.width * 0.9), height: max(24, cs.height * 0.9))
+                    .position(x: viewX, y: viewY)
+                    .accessibilityIdentifier("boardFloor\(col)")
+                    .accessibilityLabel("Board column \(col + 1)")
+                    .accessibilityAddTraits(.isButton)
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func traySlotView(_ idx: Int) -> some View {
+        let piece = traySlots.indices.contains(idx) ? traySlots[idx] : nil
+        return ZStack {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(selectedTray == idx ? 0.18 : 0.08))
+                .frame(width: 64, height: 64)
+            if let id = piece {
+                BundleImage(name: JunkCatalog.textureName(for: id))
+                    .scaledToFit()
+                    .frame(width: 44, height: 44)
+            } else {
+                Text("—")
+                    .foregroundStyle(NeonTheme.muted)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            _ = scene.selectTraySlot(idx)
+            selectedTray = idx
+            syncHUD()
+            AudioService.shared.playSFX("ui")
+        }
+        .gesture(
+            DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                .onChanged { value in
+                    if scene.engine.state.selectedTrayIndex != idx {
+                        _ = scene.selectTraySlot(idx)
+                        selectedTray = idx
+                        syncHUD()
+                    }
+                    guard boardFrameGlobal.width > 10 else { return }
+                    let local = CGPoint(
+                        x: value.location.x - boardFrameGlobal.minX,
+                        y: value.location.y - boardFrameGlobal.minY
+                    )
+                    // SpriteKit scene is y-up; SwiftUI global is y-down.
+                    let scenePt = CGPoint(x: local.x, y: boardFrameGlobal.height - local.y)
+                    if let cell = scene.boardCell(at: scenePt) {
+                        scene.previewAtBoard(x: cell.x, y: cell.y)
+                    }
+                }
+                .onEnded { value in
+                    guard boardFrameGlobal.width > 10 else { return }
+                    let local = CGPoint(
+                        x: value.location.x - boardFrameGlobal.minX,
+                        y: value.location.y - boardFrameGlobal.minY
+                    )
+                    let scenePt = CGPoint(x: local.x, y: boardFrameGlobal.height - local.y)
+                    if let cell = scene.boardCell(at: scenePt) {
+                        _ = scene.placeAtBoard(x: cell.x, y: cell.y)
+                    }
+                    syncHUD()
+                }
+        )
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Tray piece \(idx + 1)")
+        .accessibilityIdentifier("traySlot\(idx)")
+        .accessibilityAddTraits(.isButton)
+    }
+
     private var turnBasedTray: some View {
         VStack(spacing: 8) {
             HStack {
@@ -425,29 +520,7 @@ struct GameContainerView: View {
             }
             HStack(spacing: 12) {
                 ForEach(0..<3, id: \.self) { idx in
-                    Button {
-                        _ = scene.selectTraySlot(idx)
-                        selectedTray = idx
-                        syncHUD()
-                        AudioService.shared.playSFX("ui")
-                    } label: {
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .fill(Color.white.opacity(selectedTray == idx ? 0.18 : 0.08))
-                                .frame(width: 64, height: 64)
-                            if let id = traySlots.indices.contains(idx) ? traySlots[idx] : nil {
-                                BundleImage(name: JunkCatalog.textureName(for: id))
-                                    .scaledToFit()
-                                    .frame(width: 44, height: 44)
-                            } else {
-                                Text("—")
-                                    .foregroundStyle(NeonTheme.muted)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Tray piece \(idx + 1)")
-                    .accessibilityIdentifier("traySlot\(idx)")
+                    traySlotView(idx)
                 }
             }
             HStack(spacing: 8) {
@@ -1178,6 +1251,13 @@ struct RepeatPadButton: View {
     }
 }
 
+private struct BoardGlobalFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        value = nextValue()
+    }
+}
+
 /// Short first-launch card — dismisses into live play with the classic pad visible underneath.
 struct HowToPlayOverlay: View {
     var onDismiss: () -> Void
@@ -1190,12 +1270,12 @@ struct HowToPlayOverlay: View {
                     .font(.system(.title2, design: .rounded).weight(.black))
                     .foregroundStyle(NeonTheme.teal)
                 VStack(alignment: .leading, spacing: 12) {
-                    howRow("DRAG", "Slide left/right on the board")
-                    howRow("TAP", "Left = rotate CCW · Right = CW")
-                    howRow("SWIPE ↓", "Fast = hard drop · Slow = soft")
-                    howRow("SWIPE ↑", "Hold the piece")
+                    howRow("TRAY", "Pick any of the 3 pieces")
+                    howRow("DRAG", "Drag it onto the board — take your time")
+                    howRow("GHOST", "Green fits · red means it won’t fit")
                     howRow("4+", "Match 4 of the same material to recycle")
-                    howRow("SLAM", "Fill the meter, then crush the bottom")
+                    howRow("CHAIN", "Clears can settle into more clears")
+                    howRow("SLAM", "Earn it, then crush the bottom 2 rows")
                 }
                 .padding(.horizontal, 8)
                 Text("Want buttons? Settings → Buttons")
