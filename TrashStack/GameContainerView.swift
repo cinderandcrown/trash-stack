@@ -805,8 +805,8 @@ struct GameContainerView: View {
     private func scheduleLevelWinOverlay(stars: Int) {
         winPresentTask?.cancel()
         winPresentTask = Task { @MainActor in
-            // Fly (~0.55s) + CHAIN hold (~0.9s). Combo callback may fire earlier.
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            // Fly (~0.6s) + CHAIN (~0.9s). Prefer onComboFinished; this is the backstop.
+            try? await Task.sleep(nanoseconds: 1_650_000_000)
             guard !Task.isCancelled, pendingWinStars != nil, scene.engine.state.levelWon else { return }
             presentLevelWinOverlay(stars: stars)
         }
@@ -817,11 +817,15 @@ struct GameContainerView: View {
         pendingWinStars = nil
         winPresentTask?.cancel()
         winPresentTask = nil
-        // Force-hide any leftover CHAIN so it cannot sit under the modal.
+        // Hide CHAIN first; wait one frame so it is gone before the modal covers the board.
         scene.updateComboCounterPublic(forceHide: true)
-        showLevelWin = true
-        AudioService.shared.playSFX("levelup")
-        showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard scene.engine.state.levelWon, !showLevelWin else { return }
+            showLevelWin = true
+            AudioService.shared.playSFX("levelup")
+            showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
+        }
     }
 
     private func syncHUD() {

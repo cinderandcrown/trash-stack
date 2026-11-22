@@ -96,6 +96,11 @@ public final class CompactorScene: SKScene {
     private var dangerRim: SKShapeNode?
     private var dangerHeartbeatAcc: TimeInterval = 0
 
+    /// Shared clock for place/fly juice — MUST match update() (not CACurrentMediaTime).
+    /// Mixing CACurrentMediaTime with SKScene.currentTime made u jump to 1 in one frame
+    /// (teleport place + vanish clear on recordVideo).
+    private var animClock: TimeInterval = 0
+
     /// Update-driven recycle flyers — do not rely on SKAction (must read on camera).
     private struct RecycleFlyer {
         var node: SKSpriteNode
@@ -274,7 +279,6 @@ public final class CompactorScene: SKScene {
     private func presentPlacePop(cells: [BoardCoord]) {
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
-        let now = CACurrentMediaTime()
         let cs = cellSize()
         for c in cells {
             let visY = c.y - hid
@@ -290,8 +294,8 @@ public final class CompactorScene: SKScene {
                 node: node,
                 from: from,
                 to: dest,
-                startTime: now,
-                duration: 0.28
+                startTime: animClock,
+                duration: 0.30
             ))
         }
         if let first = cells.first {
@@ -786,10 +790,12 @@ public final class CompactorScene: SKScene {
             handleEvents()
         }
 
+        // One clock for juice — spawn times and ticks share animClock.
+        animClock += TimeInterval(dt)
         // Continuous visual smoothing toward discrete logic pose.
         smoothActivePose(dt: dt)
-        tickPlaceSettles(at: currentTime)
-        tickRecycleFlyers(at: currentTime)
+        tickPlaceSettles(at: animClock)
+        tickRecycleFlyers(at: animClock)
         tickDangerRim(dt: Double(dt))
         tickPacedCascade(dt: Double(dt))
 
@@ -1015,8 +1021,8 @@ public final class CompactorScene: SKScene {
         label.run(SKAction.sequence([
             SKAction.scale(to: 1.14, duration: 0.08),
             SKAction.scale(to: 1.0, duration: 0.12),
-            SKAction.wait(forDuration: 0.70),
-            SKAction.fadeOut(withDuration: 0.20),
+            SKAction.wait(forDuration: 0.55),
+            SKAction.fadeOut(withDuration: 0.18),
             SKAction.removeFromParent(),
             SKAction.run { [weak self] in
                 if self?.comboCounterNode === label {
@@ -1655,7 +1661,6 @@ public final class CompactorScene: SKScene {
         let vis = engine.state.board.config.visibleRows
         let cs = cellSize()
         let plate = plateColor(for: material)
-        let now = CACurrentMediaTime()
         for (i, c) in coords.enumerated() {
             let visY = c.y - hid
             guard visY >= 0, visY < vis else { continue }
@@ -1683,14 +1688,14 @@ public final class CompactorScene: SKScene {
                 placeSettles.removeAll { $0.node === cell }
             }
             addChild(flyer)
-            // Drive motion in update() — SKAction alone was not reading on recordVideo.
+            // Same animClock as update() ticks — never CACurrentMediaTime.
             recycleFlyers.append(RecycleFlyer(
                 node: flyer,
                 from: start,
                 to: goal,
-                startTime: now + Double(i) * 0.05,
-                hold: 0.14,
-                duration: 0.40
+                startTime: animClock + Double(i) * 0.05,
+                hold: 0.16,
+                duration: 0.42
             ))
         }
         let particleCount = combo >= 3 ? min(60, 30 + coords.count * 3) : min(28, 10 + coords.count * 2)
