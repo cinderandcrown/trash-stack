@@ -93,8 +93,8 @@ final class RealPlayUITests: XCTestCase {
                 || mapBtn.waitForExistence(timeout: 2),
             "Level must clear after tap-to-place (overlay or LEVEL MAP)"
         )
-        // Hold LEVEL CLEAR so CHAIN is gone and stars are on camera.
-        Thread.sleep(forTimeInterval: 1.8)
+        // Brief stars beat (CHAIN already finished before overlay).
+        Thread.sleep(forTimeInterval: 1.1)
 
         if mapBtn.waitForExistence(timeout: 2), mapBtn.isHittable {
             mapBtn.tap()
@@ -108,7 +108,7 @@ final class RealPlayUITests: XCTestCase {
             mapTitle.waitForExistence(timeout: 8) || nextRow.waitForExistence(timeout: 3),
             "Level map must show after the win (next=\(expectMapLevel))"
         )
-        Thread.sleep(forTimeInterval: 1.2)
+        Thread.sleep(forTimeInterval: 0.8)
 
         guard openNextFromMap else { return }
 
@@ -118,6 +118,6 @@ final class RealPlayUITests: XCTestCase {
         )
         XCTAssertTrue(nextRow.isHittable, "levelMap\(expectMapLevel) must be tappable")
         nextRow.tap()
-        Thread.sleep(forTimeInterval: 1.2)
+        Thread.sleep(forTimeInterval: 0.9)
     }
 }
