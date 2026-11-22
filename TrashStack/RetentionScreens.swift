@@ -236,6 +236,9 @@ struct ShiftMapView: View {
                                             .lineLimit(2)
                                     }
                                     Spacer()
+                                    Text(unlocked ? "PLAY" : "LOCK")
+                                        .font(.caption.weight(.black))
+                                        .foregroundStyle(unlocked ? NeonTheme.teal : NeonTheme.muted)
                                     Image(systemName: unlocked ? "play.fill" : "lock.fill")
                                         .foregroundStyle(unlocked ? NeonTheme.teal : NeonTheme.muted)
                                 }
@@ -245,6 +248,9 @@ struct ShiftMapView: View {
                             }
                             .buttonStyle(.plain)
                             .disabled(!unlocked)
+                            .accessibilityElement(children: .ignore)
+                            .accessibilityLabel("Level \(level.id) \(level.title)")
+                            .accessibilityAddTraits(unlocked ? .isButton : [])
                             .accessibilityIdentifier("levelMap\(level.id)")
                         }
                     }

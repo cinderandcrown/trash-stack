@@ -2,8 +2,8 @@
 
 import XCTest
 
-/// Level 1 via the same tap-to-place path players use: tray tap → ghost → board tap.
-/// Pauses between beats so recordVideo captures place / clear / chain / win / map.
+/// Fresh New Game → Levels 1–3 via real tray tap → board tap → map → next level.
+/// No test-only place shortcuts. Pauses between beats for recordVideo (≥60s play).
 final class RealPlayUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -31,61 +31,99 @@ final class RealPlayUITests: XCTestCase {
             gotIt.tap()
         }
 
+        // —— Level 1: can beside three metal ——
+        try playOneMoveLevel(
+            app: app,
+            floorSeat: "boardFloor1",
+            expectMapLevel: 2
+        )
+
+        // —— Level 2: pink pipe beside three plastic ——
+        try playOneMoveLevel(
+            app: app,
+            floorSeat: "boardFloor3",
+            expectMapLevel: 3
+        )
+
+        // —— Level 3: bottle beside three glass ——
+        try playOneMoveLevel(
+            app: app,
+            floorSeat: "boardFloor3",
+            expectMapLevel: 4,
+            openNextFromMap: false
+        )
+
+        // Hold end state on camera so the mux has 60s+ of real play.
+        Thread.sleep(forTimeInterval: 3.0)
+    }
+
+    /// Tray slot 0 → floor seat → win → map → optional next level.
+    private func playOneMoveLevel(
+        app: XCUIApplication,
+        floorSeat: String,
+        expectMapLevel: Int,
+        openNextFromMap: Bool = true
+    ) throws {
         let board = app.otherElements["gameBoard"].firstMatch
         XCTAssertTrue(
-            board.waitForExistence(timeout: 8),
-            "gameBoard must appear for real-play video"
+            board.waitForExistence(timeout: 10),
+            "gameBoard must appear for level play"
         )
-        // Let the board + tray settle on camera.
-        Thread.sleep(forTimeInterval: 1.2)
+        Thread.sleep(forTimeInterval: 0.9)
 
         let tray0 = app.buttons["traySlot0"].firstMatch
         XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist")
-
-        // Beat 1 — select tray piece (lift + glow + ghost).
         tray0.tap()
-        Thread.sleep(forTimeInterval: 0.85)
+        Thread.sleep(forTimeInterval: 0.75)
 
-        // Beat 2 — tap empty floor seat beside the three metal tiles (col 1).
-        let floor1 = app.buttons["boardFloor1"].firstMatch
+        let seat = app.buttons[floorSeat].firstMatch
         XCTAssertTrue(
-            floor1.waitForExistence(timeout: 4),
-            "boardFloor1 tap seat must appear after selecting a tray piece"
+            seat.waitForExistence(timeout: 4),
+            "\(floorSeat) must appear after selecting a tray piece"
         )
-        XCTAssertTrue(floor1.isHittable, "boardFloor1 must be hittable for tap-to-place")
-        floor1.tap()
+        XCTAssertTrue(seat.isHittable, "\(floorSeat) must be hittable")
+        seat.tap()
 
-        // Beat 3 — place pop + metal clear fly-to-goal (~0.3s) + plastic chain (~0.3s).
-        Thread.sleep(forTimeInterval: 1.4)
+        // Place settle + clear fly + chain, then delayed LEVEL CLEAR after CHAIN.
+        Thread.sleep(forTimeInterval: 3.0)
 
-        // Beat 4 — level win + stars.
-        let win = app.otherElements["levelWinOverlay"].firstMatch
+        let win = app.descendants(matching: .any)["levelWinOverlay"].firstMatch
         let clear = app.staticTexts["LEVEL CLEAR"].firstMatch
         XCTAssertTrue(
             win.waitForExistence(timeout: 16) || clear.waitForExistence(timeout: 2),
-            "Level 1 must win after tap-to-place (metal clear + plastic chain)"
+            "Level must clear after tap-to-place"
         )
         XCTAssertTrue(
-            app.otherElements["levelStars"].exists
+            app.descendants(matching: .any)["levelStars"].firstMatch.exists
                 || app.staticTexts.matching(NSPredicate(format: "label CONTAINS '★'")).count > 0
                 || clear.exists,
             "stars should show on level clear"
         )
-        // Hold stars on camera, then auto-map or tap LEVEL MAP.
-        Thread.sleep(forTimeInterval: 1.8)
+        // Hold stars on camera before map.
+        Thread.sleep(forTimeInterval: 1.6)
 
+        // Map: auto-open or tap LEVEL MAP.
         let mapBtn = app.buttons["levelMapButton"].firstMatch
-        if mapBtn.waitForExistence(timeout: 1), mapBtn.isHittable {
+        if mapBtn.waitForExistence(timeout: 2), mapBtn.isHittable {
             mapBtn.tap()
         }
 
-        // Beat 5 — level map visible.
         let mapTitle = app.staticTexts["LEVEL MAP"].firstMatch
-        let mapL1 = app.buttons["levelMap1"].firstMatch
+        let nextRow = app.buttons["levelMap\(expectMapLevel)"].firstMatch
         XCTAssertTrue(
-            mapTitle.waitForExistence(timeout: 6) || mapL1.waitForExistence(timeout: 2),
-            "Level map must show after the win"
+            mapTitle.waitForExistence(timeout: 8) || nextRow.waitForExistence(timeout: 3),
+            "Level map must show after the win (next=\(expectMapLevel))"
         )
-        Thread.sleep(forTimeInterval: 2.2)
+        Thread.sleep(forTimeInterval: 1.4)
+
+        guard openNextFromMap else { return }
+
+        XCTAssertTrue(
+            nextRow.waitForExistence(timeout: 4),
+            "levelMap\(expectMapLevel) must be unlocked after prior clear"
+        )
+        XCTAssertTrue(nextRow.isHittable, "levelMap\(expectMapLevel) must be tappable")
+        nextRow.tap()
+        Thread.sleep(forTimeInterval: 1.2)
     }
 }

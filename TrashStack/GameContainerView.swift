@@ -198,13 +198,7 @@ struct GameContainerView: View {
                             .font(.caption)
                             .foregroundStyle(NeonTheme.muted)
                         Button {
-                            showLevelWin = false
-                            let next = min(20, scene.engine.state.levelId + 1)
-                            profile.shiftProgress = max(profile.shiftProgress, next - 1)
-                            profile.persist()
-                            screen = .shiftMap
-                            // Stash next level so map → play resumes there.
-                            UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
+                            openLevelMapAfterWin()
                         } label: {
                             Text("LEVEL MAP")
                                 .font(.headline.weight(.black))
@@ -217,9 +211,10 @@ struct GameContainerView: View {
                         .buttonStyle(.plain)
                         .accessibilityIdentifier("levelMapButton")
                         Button {
+                            let cleared = max(1, scene.engine.state.levelId)
+                            let next = min(20, cleared + 1)
                             showLevelWin = false
-                            let next = min(20, scene.engine.state.levelId + 1)
-                            profile.shiftProgress = max(profile.shiftProgress, next - 1)
+                            profile.shiftProgress = max(profile.shiftProgress, cleared)
                             profile.persist()
                             UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
                             scene.startShiftLevel(next)
@@ -236,20 +231,18 @@ struct GameContainerView: View {
                     .background(NeonTheme.playChrome)
                     .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
                     .padding(28)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityIdentifier("levelWinOverlay")
                 }
                 .zIndex(80)
+                .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("levelWinOverlay")
                 .onAppear {
-                    // Real-play / calm beat: show stars, then open the map.
+                    // After stars are readable, open the map so the next level is one tap away.
                     Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 1_600_000_000)
+                        try? await Task.sleep(nanoseconds: 1_400_000_000)
                         guard showLevelWin else { return }
-                        let next = min(20, scene.engine.state.levelId + 1)
-                        profile.shiftProgress = max(profile.shiftProgress, next - 1)
-                        profile.persist()
-                        UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
-                        showLevelWin = false
-                        screen = .shiftMap
+                        openLevelMapAfterWin()
                     }
                 }
             }
@@ -802,6 +795,16 @@ struct GameContainerView: View {
         }
     }
 
+    private func openLevelMapAfterWin() {
+        let cleared = max(1, scene.engine.state.levelId)
+        let next = min(20, cleared + 1)
+        profile.shiftProgress = max(profile.shiftProgress, cleared)
+        profile.persist()
+        UserDefaults.standard.set("\(next)", forKey: "trashStack.shiftLevel")
+        showLevelWin = false
+        screen = .shiftMap
+    }
+
     private func syncHUD() {
         hudScore = scene.engine.state.score
         hudLevel = scene.engine.state.levelId > 0 ? scene.engine.state.levelId : scene.engine.state.level
@@ -821,7 +824,7 @@ struct GameContainerView: View {
         boostSlam = scene.engine.state.boosters.slam
         boostShuffle = scene.engine.state.boosters.shuffle
         selectedTray = scene.engine.state.selectedTrayIndex
-        if scene.engine.state.levelWon { showLevelWin = true }
+        // Win overlay is scheduled after CHAIN finishes — never snap it on mid-combo.
         let wasNear = nearMiss
         nearMiss = scene.engine.isNearOverflow(threshold: scene.feel.nearMissRows)
         if nearMiss, !wasNear {
@@ -1039,9 +1042,14 @@ struct GameContainerView: View {
                         Task { await GameKitService.shared.reportAchievement(AchievementID.pressSlam) }
                     case .levelWon(let stars):
                         starsEarned = stars
-                        showLevelWin = true
-                        AudioService.shared.playSFX("levelup")
-                        showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
+                        // Let CHAIN ×N finish on the board (~0.75s) before LEVEL CLEAR.
+                        Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 850_000_000)
+                            guard scene.engine.state.levelWon else { return }
+                            showLevelWin = true
+                            AudioService.shared.playSFX("levelup")
+                            showToast(stars == 1 ? "Level clear · 1 star" : "Level clear · \(stars) stars")
+                        }
                     case .placed:
                         AudioService.shared.playSFX("lock", pitch: 0.9)
                         HapticsService.shared.lock()

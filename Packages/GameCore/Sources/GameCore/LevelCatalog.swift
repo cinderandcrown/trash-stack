@@ -81,15 +81,19 @@ public enum LevelCatalog {
                 id: 2, title: "Pink Pile", district: "Alley Mouth",
                 moveLimit: 10, starMoves: (7, 4),
                 goal: OrderTicket(id: "l2", label: "Recycle 4 plastic", kind: .recycleMaterial, target: 4, material: .plastic),
-                board: [plastic(1, f), plastic(2, f), plastic(3, f), metal(5, f), metal(6, f)],
-                tray: [.tire, .can, .plank]
+                // Three plastics on the floor; pink pipe (3-wide) taps in at col 3.
+                board: [plastic(0, f), plastic(1, f), plastic(2, f), metal(6, f), metal(7, f)],
+                tray: [.pipe, .can, .plank],
+                teachHint: "Tap the pink pipe, then tap next to the plastics"
             ),
             LevelDef(
                 id: 3, title: "Glass Lane", district: "Alley Mouth",
                 moveLimit: 10, starMoves: (7, 4),
                 goal: OrderTicket(id: "l3", label: "Recycle 4 glass", kind: .recycleMaterial, target: 4, material: .glass),
-                board: [glass(0, f), glass(1, f), glass(2, f), paper(4, f), paper(5, f), metal(7, f)],
-                tray: [.bottle, .can, .plank]
+                // Three glass on the floor; bottle (2-tall) seats at col 3.
+                board: [glass(0, f), glass(1, f), glass(2, f), paper(5, f), paper(6, f), metal(7, f)],
+                tray: [.bottle, .can, .plank],
+                teachHint: "Tap the bottle, then tap next to the glass"
             ),
             LevelDef(
                 id: 4, title: "Cardboard Corner", district: "Alley Mouth",

@@ -460,6 +460,8 @@ public struct GameEngine: Sendable {
     public var paceCascades = false
     /// True while a paced cascade still has settle / follow-up waves pending.
     public internal(set) var cascadeActive = false
+    /// True after a turn-based place until the scene starts the first clear wave.
+    public internal(set) var deferredPlaceCascade = false
     /// Cells that just packed after the latest clear — scene eases sprites along these paths.
     public internal(set) var lastGravityMoves: [GravityMove] = []
     private var cascadeChain = 0
@@ -467,6 +469,36 @@ public struct GameEngine: Sendable {
     private var cascadeFollowUpMin = 3
     /// After a lock, spawn once cascade settles. Slam cascades leave the active piece alone.
     private var cascadeNeedsSpawn = false
+
+    /// Block input after a paced place — first clear runs in `startDeferredPlaceCascade`.
+    mutating func armDeferredPlaceCascade() {
+        deferredPlaceCascade = true
+        cascadeActive = true
+        cascadeChain = 0
+        cascadeHadAny = false
+        cascadeFollowUpMin = 4
+        cascadeNeedsSpawn = false
+        lastGravityMoves = []
+    }
+
+    /// Scene calls this after the place-settle beat (~250–300ms).
+    @discardableResult
+    public mutating func startDeferredPlaceCascade() -> Bool {
+        guard deferredPlaceCascade else { return cascadeActive }
+        deferredPlaceCascade = false
+        beginPacedCascade(
+            firstWaveMinSize: RecycleMatcher.defaultMinSize,
+            followUpMinSize: 4,
+            needsSpawn: false
+        )
+        if !cascadeActive {
+            evaluateLevelOutcome()
+            if !state.levelWon, !state.over {
+                checkTrayFitsOrLose()
+            }
+        }
+        return cascadeActive
+    }
 
     private mutating func resolveAfterLock() {
         // Follow-ups stay at 4+ — triples must not vanish after an unrelated clear.
@@ -531,6 +563,7 @@ public struct GameEngine: Sendable {
         }
         let needsSpawn = cascadeNeedsSpawn
         cascadeActive = false
+        deferredPlaceCascade = false
         cascadeChain = 0
         cascadeNeedsSpawn = false
         finishAfterCascades(needsSpawn: needsSpawn)
@@ -909,6 +942,7 @@ public struct GameEngine: Sendable {
         state.active = active
         state.over = false
         cascadeActive = false
+        deferredPlaceCascade = false
         lastGravityMoves = []
         events = []
     }

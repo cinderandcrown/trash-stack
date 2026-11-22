@@ -94,12 +94,22 @@ extension GameEngine {
     }
 
     /// Move / rotate the preview piece. Does not place. Returns whether the pose fits.
+    /// When `rot` is nil, tries other rotations at the seat so tall pieces can still land.
     @discardableResult
     public mutating func setPreview(x: Int, y: Int, rot: Int? = nil) -> PlacementFit {
         guard state.isTurnBased, var p = state.active else { return .blocked }
         p.x = x
         p.y = y
-        if let rot { p.rot = rot }
+        if let rot {
+            p.rot = rot
+        } else if !p.fits(state.board) {
+            let n = p.def.rotations.count
+            let start = p.rot
+            for i in 0..<n {
+                p.rot = (start + i) % n
+                if p.fits(state.board) { break }
+            }
+        }
         state.active = p
         return p.fits(state.board) ? .fits : .blocked
     }
@@ -143,16 +153,11 @@ extension GameEngine {
         events.append(.locked(hard: false))
 
         // Recycle + model-driven settle (gravity only after clears).
-        // When paced, defer win/lose until the cascade finishes so chains stay on camera.
+        // When paced: arm a deferred cascade so the scene can show place-settle
+        // before the first clear wave (pieces must not vanish the instant they land).
         if paceCascades {
-            beginPacedCascade(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4, needsSpawn: false)
+            armDeferredPlaceCascade()
             dealTrayIfEmpty()
-            if !cascadeActive {
-                evaluateLevelOutcome()
-                if !state.levelWon, !state.over {
-                    checkTrayFitsOrLose()
-                }
-            }
         } else {
             _ = runRecycleCascades(firstWaveMinSize: RecycleMatcher.defaultMinSize, followUpMinSize: 4)
             dealTrayIfEmpty()

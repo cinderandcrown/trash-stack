@@ -64,6 +64,50 @@ final class TurnBasedTests: XCTestCase {
         }
     }
 
+    func testLevel2PipePlaceClearsPlastic() {
+        var eng = GameEngine(seed: 2)
+        eng.paceCascades = false
+        eng.startLevel(LevelCatalog.level(id: 2), seed: 2)
+        XCTAssertEqual(eng.state.tray[0], .pipe)
+        XCTAssertTrue(eng.selectTray(0))
+        let floor = eng.state.board.config.rows - 1
+        XCTAssertEqual(eng.setPreview(x: 3, y: floor), .fits)
+        XCTAssertTrue(eng.placeSelected())
+        XCTAssertTrue(eng.state.levelWon)
+    }
+
+    func testLevel3BottlePlaceClearsGlass() {
+        var eng = GameEngine(seed: 3)
+        eng.paceCascades = false
+        eng.startLevel(LevelCatalog.level(id: 3), seed: 3)
+        XCTAssertEqual(eng.state.tray[0], .bottle)
+        XCTAssertTrue(eng.selectTray(0))
+        let floor = eng.state.board.config.rows - 1
+        // Vertical bottle may not fit on the floor — setPreview tries other rots.
+        XCTAssertEqual(eng.setPreview(x: 3, y: floor), .fits)
+        XCTAssertTrue(eng.placeSelected())
+        XCTAssertTrue(eng.state.levelWon)
+    }
+
+    func testDeferredPlaceCascadeWaitsForScene() {
+        var eng = GameEngine(seed: 5)
+        eng.paceCascades = true
+        eng.startLevel(LevelCatalog.level(id: 1), seed: 5)
+        XCTAssertTrue(eng.selectTray(0))
+        let floor = eng.state.board.config.rows - 1
+        XCTAssertTrue(eng.setPreview(x: 1, y: floor) == .fits && eng.placeSelected())
+        XCTAssertTrue(eng.deferredPlaceCascade)
+        XCTAssertTrue(eng.cascadeActive)
+        // Piece still on the board until the scene starts the clear wave.
+        XCTAssertEqual(eng.state.board[1, floor]?.material, .metal)
+        XCTAssertFalse(eng.state.levelWon)
+        _ = eng.startDeferredPlaceCascade()
+        while eng.cascadeActive {
+            _ = eng.advanceCascade()
+        }
+        XCTAssertTrue(eng.state.levelWon)
+    }
+
     func testSettleAfterClearIsModelDriven() {
         var eng = GameEngine(seed: 3)
         eng.paceCascades = false
