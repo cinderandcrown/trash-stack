@@ -96,6 +96,17 @@ public final class CompactorScene: SKScene {
     private var dangerRim: SKShapeNode?
     private var dangerHeartbeatAcc: TimeInterval = 0
 
+    /// Update-driven recycle flyers — do not rely on SKAction (must read on camera).
+    private struct RecycleFlyer {
+        var node: SKSpriteNode
+        var from: CGPoint
+        var to: CGPoint
+        var startTime: TimeInterval
+        var hold: TimeInterval
+        var duration: TimeInterval
+    }
+    private var recycleFlyers: [RecycleFlyer] = []
+
     public override func didMove(to view: SKView) {
         let charcoal = SKColor(red: 0.05, green: 0.06, blue: 0.10, alpha: 1)
         backgroundColor = charcoal
@@ -250,46 +261,78 @@ public final class CompactorScene: SKScene {
         }
     }
 
-    /// Short settle on newly placed cells (~300ms) before any clear.
+    private struct PlaceSettle {
+        var node: SKSpriteNode
+        var from: CGPoint
+        var to: CGPoint
+        var startTime: TimeInterval
+        var duration: TimeInterval
+    }
+    private var placeSettles: [PlaceSettle] = []
+
+    /// Drop-in settle for newly placed cells — update()-driven so it reads on camera.
     private func presentPlacePop(cells: [BoardCoord]) {
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
+        let now = CACurrentMediaTime()
+        let cs = cellSize()
         for c in cells {
             let visY = c.y - hid
             guard visY >= 0, visY < vis, visY < cellNodes.count, c.x < cellNodes[visY].count else { continue }
             guard let node = cellNodes[visY][c.x] else { continue }
-            node.removeAction(forKey: "placePop")
-            node.setScale(0.35)
-            node.alpha = 0.55
-            // Drop-in from slightly above, then squash — reads as a land, not a teleport.
-            let dest = node.position
-            node.position = CGPoint(x: dest.x, y: dest.y + cellSize().height * 0.55)
-            let land = SKAction.sequence([
-                SKAction.group([
-                    SKAction.move(to: dest, duration: 0.14),
-                    SKAction.fadeAlpha(to: 1, duration: 0.10),
-                    SKAction.scale(to: 1.2, duration: 0.14),
-                ]),
-                SKAction.group([
-                    SKAction.scaleX(to: 1.12, duration: 0.07),
-                    SKAction.scaleY(to: 0.88, duration: 0.07),
-                ]),
-                SKAction.scale(to: 1.0, duration: 0.09),
-            ])
-            land.timingMode = .easeIn
-            node.run(land, withKey: "placePop")
+            node.removeAllActions()
+            let dest = positionFor(x: c.x, boardY: c.y)
+            let from = CGPoint(x: dest.x, y: dest.y + cs.height * 0.7)
+            node.position = from
+            node.setScale(0.4)
+            node.alpha = 0.6
+            placeSettles.append(PlaceSettle(
+                node: node,
+                from: from,
+                to: dest,
+                startTime: now,
+                duration: 0.28
+            ))
         }
         if let first = cells.first {
-            let pt = positionFor(x: first.x, boardY: first.y)
-            spawnParticle(named: "SparkTeal", at: pt, count: 12)
+            spawnParticle(named: "SparkTeal", at: positionFor(x: first.x, boardY: first.y), count: 12)
         }
+    }
+
+    private func tickPlaceSettles(at time: TimeInterval) {
+        guard !placeSettles.isEmpty else { return }
+        var kept: [PlaceSettle] = []
+        for s in placeSettles {
+            let u = min(1, (time - s.startTime) / max(0.001, s.duration))
+            let eased = 1 - pow(1 - u, 3)
+            s.node.position = CGPoint(
+                x: s.from.x + (s.to.x - s.from.x) * CGFloat(eased),
+                y: s.from.y + (s.to.y - s.from.y) * CGFloat(eased)
+            )
+            s.node.alpha = 0.6 + 0.4 * CGFloat(eased)
+            // Overshoot squash near the end.
+            if u < 0.7 {
+                s.node.setScale(0.4 + 0.85 * CGFloat(eased / 0.7))
+            } else {
+                let w = (u - 0.7) / 0.3
+                s.node.xScale = 1.15 - 0.15 * CGFloat(w)
+                s.node.yScale = 0.88 + 0.12 * CGFloat(w)
+            }
+            if u < 1 { kept.append(s) }
+            else {
+                s.node.position = s.to
+                s.node.setScale(1)
+                s.node.alpha = 1
+            }
+        }
+        placeSettles = kept
     }
 
     /// Advance remaining paced cascade waves on a readable beat, then settle win/lose.
     private func drainPacedCascadeWithActions() {
         removeAction(forKey: "cascadeDrain")
-        // Hold + fly (~0.10 + 0.28–0.40) before the next chain wave.
-        let beat = max(0.48, min(0.58, feel.recycleSuckSec + 0.18))
+        // Hold + fly (~0.14 + 0.40) before the next chain wave.
+        let beat: TimeInterval = 0.58
         let step = SKAction.sequence([
             SKAction.wait(forDuration: beat),
             SKAction.run { [weak self] in
@@ -745,6 +788,8 @@ public final class CompactorScene: SKScene {
 
         // Continuous visual smoothing toward discrete logic pose.
         smoothActivePose(dt: dt)
+        tickPlaceSettles(at: currentTime)
+        tickRecycleFlyers(at: currentTime)
         tickDangerRim(dt: Double(dt))
         tickPacedCascade(dt: Double(dt))
 
@@ -865,6 +910,11 @@ public final class CompactorScene: SKScene {
         render(immediate: false)
         // Never fire game-over mid-cascade — wait for settle.
         if engine.state.over, !engine.cascadeActive { notifyGameOverIfNeeded() }
+    }
+
+    /// SwiftUI calls this to clear CHAIN before LEVEL CLEAR covers the board.
+    public func updateComboCounterPublic(forceHide: Bool = false) {
+        updateComboCounter(forceHide: forceHide)
     }
 
     /// Advance paced recycle waves ~300ms apart so chains are readable.
@@ -1586,7 +1636,6 @@ public final class CompactorScene: SKScene {
 
     /// Fly cleared tiles toward the HUD goal (above the bin) — Candy Crush style.
     private func goalFlyTarget() -> CGPoint {
-        // Top-center of the SK scene (under SwiftUI score / goal).
         let w = max(size.width, 320)
         let h = max(size.height, 480)
         return CGPoint(x: w * 0.42, y: h * 0.94)
@@ -1599,78 +1648,97 @@ public final class CompactorScene: SKScene {
         combo: Int = 1,
         snaps: [BoardCoord: CellLook] = [:]
     ) {
-        // Ensure SpriteKit actions actually tick during the fly.
         if isPaused { isPaused = false }
-        if speed < 0.5 { speed = 1 }
+        speed = 1
         let goal = goalFlyTarget()
         let hid = engine.state.board.config.hiddenRows
         let vis = engine.state.board.config.visibleRows
         let cs = cellSize()
         let plate = plateColor(for: material)
+        let now = CACurrentMediaTime()
         for (i, c) in coords.enumerated() {
             let visY = c.y - hid
             guard visY >= 0, visY < vis else { continue }
             let start = positionFor(x: c.x, boardY: c.y)
             let ghostSize = snaps[c]?.size
                 ?? cellNodes[visY][c.x]?.size
-                ?? CGSize(width: max(8, cs.width - cellPad), height: max(8, cs.height - cellPad))
-            // Build a self-contained flyer (plate + icon) on the scene root.
+                ?? CGSize(width: max(12, cs.width - cellPad), height: max(12, cs.height - cellPad))
             let flyer = SKSpriteNode(color: plate, size: ghostSize)
             flyer.colorBlendFactor = 1
             flyer.alpha = 1
-            flyer.setScale(1.2)
+            flyer.setScale(1.25)
             flyer.position = start
             flyer.zPosition = 200
             flyer.name = "recycleFly"
             if let t = snaps[c]?.texture
                 ?? (cellNodes[visY][c.x]?.childNode(withName: "icon") as? SKSpriteNode)?.texture
                 ?? representativeTexture(for: material) {
-                let icon = SKSpriteNode(texture: t, size: CGSize(width: ghostSize.width * 0.7, height: ghostSize.height * 0.7))
+                let icon = SKSpriteNode(texture: t, size: CGSize(width: ghostSize.width * 0.72, height: ghostSize.height * 0.72))
                 icon.zPosition = 1
                 flyer.addChild(icon)
             }
-            // Hide the grid cell immediately so only the flyer is seen rising.
             if let cell = cellNodes[visY][c.x] {
                 cell.alpha = 0
-                cell.removeAction(forKey: "placePop")
-                cell.removeAction(forKey: "settle")
+                cell.removeAllActions()
+                placeSettles.removeAll { $0.node === cell }
             }
             addChild(flyer)
-            let stagger = Double(i) * 0.06
-            let hold = 0.12
-            let dur: TimeInterval = 0.38
-            // Arc: pop → hold → ease toward goal while shrinking.
-            let pop = SKAction.group([
-                SKAction.scale(to: 1.4, duration: 0.09),
-                SKAction.moveBy(x: 0, y: cs.height * 0.35, duration: 0.09),
-            ])
-            let fly = SKAction.group([
-                SKAction.move(to: goal, duration: dur),
-                SKAction.scale(to: 0.25, duration: dur),
-                SKAction.sequence([
-                    SKAction.wait(forDuration: dur * 0.72),
-                    SKAction.fadeOut(withDuration: dur * 0.28),
-                ]),
-            ])
-            fly.timingMode = .easeIn
-            flyer.run(SKAction.sequence([
-                SKAction.wait(forDuration: stagger),
-                pop,
-                SKAction.wait(forDuration: hold),
-                fly,
-                SKAction.removeFromParent(),
-            ]))
+            // Drive motion in update() — SKAction alone was not reading on recordVideo.
+            recycleFlyers.append(RecycleFlyer(
+                node: flyer,
+                from: start,
+                to: goal,
+                startTime: now + Double(i) * 0.05,
+                hold: 0.14,
+                duration: 0.40
+            ))
         }
         let particleCount = combo >= 3 ? min(60, 30 + coords.count * 3) : min(28, 10 + coords.count * 2)
-        run(SKAction.sequence([
-            SKAction.wait(forDuration: 0.55),
-            SKAction.run { [weak self] in
-                self?.spawnParticle(named: "SparkTeal", at: goal, count: particleCount)
-                if combo >= 2 {
-                    self?.spawnParticle(named: "SparkMagenta", at: goal, count: particleCount / 2)
-                }
-            },
-        ]))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+            self?.spawnParticle(named: "SparkTeal", at: goal, count: particleCount)
+            if combo >= 2 {
+                self?.spawnParticle(named: "SparkMagenta", at: goal, count: particleCount / 2)
+            }
+        }
+    }
+
+    private func tickRecycleFlyers(at time: TimeInterval) {
+        guard !recycleFlyers.isEmpty else { return }
+        var kept: [RecycleFlyer] = []
+        for flyer in recycleFlyers {
+            let elapsed = time - flyer.startTime
+            if elapsed < 0 {
+                kept.append(flyer)
+                continue
+            }
+            if elapsed < flyer.hold {
+                // Pop up slightly while held.
+                let u = CGFloat(elapsed / max(0.001, flyer.hold))
+                flyer.node.setScale(1.25 + 0.2 * u)
+                flyer.node.position = CGPoint(
+                    x: flyer.from.x,
+                    y: flyer.from.y + cellSize().height * 0.4 * u
+                )
+                flyer.node.alpha = 1
+                kept.append(flyer)
+                continue
+            }
+            let flyElapsed = elapsed - flyer.hold
+            let u = min(1, flyElapsed / max(0.001, flyer.duration))
+            let eased = u * u // ease-in toward goal
+            flyer.node.position = CGPoint(
+                x: flyer.from.x + (flyer.to.x - flyer.from.x) * CGFloat(eased),
+                y: flyer.from.y + (flyer.to.y - flyer.from.y) * CGFloat(eased)
+            )
+            flyer.node.setScale(1.45 - 1.2 * CGFloat(eased))
+            flyer.node.alpha = u < 0.75 ? 1 : CGFloat(1 - (u - 0.75) / 0.25)
+            if u >= 1 {
+                flyer.node.removeFromParent()
+            } else {
+                kept.append(flyer)
+            }
+        }
+        recycleFlyers = kept
     }
 
     private func hitStop(seconds: Double) {

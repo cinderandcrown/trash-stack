@@ -204,13 +204,13 @@ fi
 # setpts=N/30/TB caused jumps. Never put -ss before -i on these files.
 if [[ -n "$FFMPEG_BIN" && -f "$MUSIC" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" -stream_loop -1 -i "$MUSIC" \
-    -filter_complex "[0:v]trim=start=${SS},setpts=PTS-STARTPTS,fps=30,trim=duration=90,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=90,asetpts=PTS-STARTPTS[aout]" \
+    -filter_complex "[0:v]trim=start=${SS},setpts=PTS-STARTPTS,fps=30,trim=duration=110,setpts=PTS-STARTPTS[vout];[1:a]volume=0.34,atrim=start=${SS}:duration=110,asetpts=PTS-STARTPTS[aout]" \
     -map "[vout]" -map "[aout]" -r 30 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p \
     -c:a aac -b:a 128k -ac 1 -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 elif [[ -n "$FFMPEG_BIN" ]]; then
   "$FFMPEG_BIN" -hide_banner -y -i "$RAW" \
-    -vf "trim=start=${SS},setpts=PTS-STARTPTS,fps=30,trim=duration=90,setpts=PTS-STARTPTS" \
+    -vf "trim=start=${SS},setpts=PTS-STARTPTS,fps=30,trim=duration=110,setpts=PTS-STARTPTS" \
     -r 30 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p -an -movflags +faststart "$OUT" \
     >/tmp/real-play-mux.log 2>&1 || cp -f "$RAW" "$OUT"
 else
