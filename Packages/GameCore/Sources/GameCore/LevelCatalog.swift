@@ -76,7 +76,7 @@ public enum LevelCatalog {
                     paper(6, f),
                 ],
                 tray: [.can, .plank, .bottle],
-                teachHint: "Drag the can next to the three metal tiles"
+                teachHint: "Tap the can, then tap next to the three metal tiles"
             ),
             LevelDef(
                 id: 2, title: "Pink Pile", district: "Alley Mouth",

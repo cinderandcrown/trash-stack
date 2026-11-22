@@ -2,7 +2,7 @@
 
 import XCTest
 
-/// Drives Level 1 turn-based play: tray drag → place → clear → chain → win with stars.
+/// Level 1 via the same tap-to-place path players use: tray tap → board cell tap.
 final class RealPlayUITests: XCTestCase {
     override func setUpWithError() throws {
         continueAfterFailure = false
@@ -33,47 +33,35 @@ final class RealPlayUITests: XCTestCase {
         let board = app.otherElements["gameBoard"].firstMatch
         XCTAssertTrue(
             board.waitForExistence(timeout: 8),
-            "gameBoard must appear within ~10s of launch for real-play video"
+            "gameBoard must appear for real-play video"
         )
 
         let tray0 = app.buttons["traySlot0"].firstMatch
-        XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist for Level 1")
-        Thread.sleep(forTimeInterval: 0.6)
+        XCTAssertTrue(tray0.waitForExistence(timeout: 6), "tray slot 0 must exist")
 
-        let frame = board.frame
-        let drop = app.coordinate(withNormalizedOffset: .zero)
-            .withOffset(CGVector(
-                dx: frame.minX + frame.width * 0.10,
-                dy: frame.minY + frame.height * 0.78
-            ))
+        // Player path: tap tray piece → ghost → tap floor seat beside the metal.
+        tray0.tap()
+        Thread.sleep(forTimeInterval: 0.45)
 
-        // Visible drag-place beat on camera (tray → board floor).
-        let origin = tray0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
-        origin.press(forDuration: 0.3, thenDragTo: drop)
-
-        // Also tap the teach control if present (belt-and-suspenders with app-side auto-place).
-        let place = app.buttons["uitestPlaceTeach"].firstMatch
-        if place.waitForExistence(timeout: 2), place.isHittable {
-            place.tap()
-        }
-
-        // App auto-commits placeTeachSeat ~4.5s after bootstrap if still unplaced.
-        let win = app.otherElements["levelWinOverlay"].firstMatch
-        let clearLabel = app.staticTexts["LEVEL CLEAR"].firstMatch
-        let deadline = Date().addingTimeInterval(28)
-        while Date() < deadline {
-            if win.exists || clearLabel.exists { break }
-            Thread.sleep(forTimeInterval: 0.35)
-        }
-
+        let floor0 = app.buttons["boardFloor0"].firstMatch
         XCTAssertTrue(
-            win.exists || clearLabel.exists,
-            "Level 1 must finish after the teach place (clear + chain)"
+            floor0.waitForExistence(timeout: 4),
+            "boardFloor0 tap seat must appear after selecting a tray piece"
+        )
+        XCTAssertTrue(floor0.isHittable, "boardFloor0 must be hittable for tap-to-place")
+        floor0.tap()
+
+        // Clear → chain → level win (paced cascades need a few beats on camera).
+        let win = app.otherElements["levelWinOverlay"].firstMatch
+        let clear = app.staticTexts["LEVEL CLEAR"].firstMatch
+        XCTAssertTrue(
+            win.waitForExistence(timeout: 20) || clear.waitForExistence(timeout: 1),
+            "Level 1 must win after tap-to-place (metal clear + plastic chain)"
         )
         XCTAssertTrue(
             app.otherElements["levelStars"].exists
                 || app.staticTexts.matching(NSPredicate(format: "label CONTAINS '★'")).count > 0
-                || clearLabel.exists,
+                || clear.exists,
             "stars should show on level clear"
         )
         Thread.sleep(forTimeInterval: 3.0)

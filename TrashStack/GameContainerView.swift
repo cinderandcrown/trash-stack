@@ -108,9 +108,9 @@ struct GameContainerView: View {
                             .padding(.trailing, 6)
                             .padding(.top, 6)
                     }
-                    // Floor seats: tap-to-place when a tray piece is selected (also powers real-play).
+                    // Tap-to-place seats (player feature): tap a tray piece, then tap a board cell.
                     .overlay {
-                        boardFloorDropSeats
+                        boardTapToPlaceSeats
                     }
                     .overlay(alignment: .top) {
                         if nearMiss || (lastState?.over == true) {
@@ -127,7 +127,7 @@ struct GameContainerView: View {
                     .overlay(alignment: .top) {
                         if showGestureHint {
                             Text(scene.engine.state.isTurnBased
-                                 ? "Pick a tray piece · drag onto the board · tap to turn"
+                                 ? "Tap a tray piece · tap the board to place · drag works too"
                                  : "Tap rotate · drag move · swipe ↓ drop · ↑ hold")
                                 .font(.caption2.weight(.bold))
                                 .foregroundStyle(.white)
@@ -428,26 +428,35 @@ struct GameContainerView: View {
         }
     }
 
-    private var boardFloorDropSeats: some View {
-        let active = scene.engine.state.active != nil || selectedTray != nil
+    /// Real player tap-to-place: after a tray piece is selected, every visible cell is tappable.
+    private var boardTapToPlaceSeats: some View {
+        let placing = selectedTray != nil
         return GeometryReader { geo in
             let cols = max(1, scene.engine.state.board.config.cols)
+            let vis = max(1, scene.engine.state.board.config.visibleRows)
+            let hid = scene.engine.state.board.config.hiddenRows
             let cs = scene.cellSizePublic()
-            let seatW = max(36, cs.width * 0.95)
-            let seatH = max(36, cs.height * 0.95)
-            let floorY = scene.engine.state.board.config.rows - 1
-            ForEach(0..<cols, id: \.self) { col in
-                let pt = scene.scenePointForBoard(x: col, y: floorY)
+            let seatW = max(32, cs.width > 1 ? cs.width * 0.95 : geo.size.width / CGFloat(cols))
+            let seatH = max(32, cs.height > 1 ? cs.height * 0.95 : geo.size.height / CGFloat(vis) * 0.55)
+            ForEach(0..<(cols * vis), id: \.self) { i in
+                let col = i % cols
+                let visRow = i / cols
+                let boardY = hid + (vis - 1 - visRow)
+                let pt = scene.scenePointForBoard(x: col, y: boardY)
                 let viewX = pt.x > 1 ? pt.x : (CGFloat(col) + 0.5) * (geo.size.width / CGFloat(cols))
-                // Prefer scene mapping; fall back to bottom band when the scene hasn't laid out.
-                let viewY = pt.y > 1 ? (geo.size.height - pt.y) : (geo.size.height * 0.78)
+                let viewY: CGFloat = {
+                    if pt.y > 1 { return geo.size.height - pt.y }
+                    // Fallback band: bottom rows map near the dumpster floor.
+                    return geo.size.height * (0.22 + CGFloat(visRow) / CGFloat(vis) * 0.55)
+                }()
                 Button {
-                    if scene.engine.state.active == nil {
-                        let idx = selectedTray ?? 0
+                    guard let idx = selectedTray else { return }
+                    if scene.engine.state.selectedTrayIndex != idx {
                         _ = scene.selectTraySlot(idx)
-                        selectedTray = idx
                     }
-                    _ = scene.placeAtBoard(x: col, y: floorY)
+                    scene.previewAtBoard(x: col, y: boardY)
+                    _ = scene.placeAtBoard(x: col, y: boardY)
+                    selectedTray = scene.engine.state.selectedTrayIndex
                     syncHUD()
                 } label: {
                     Color.clear
@@ -456,12 +465,14 @@ struct GameContainerView: View {
                 }
                 .buttonStyle(.plain)
                 .position(x: viewX, y: viewY)
-                .accessibilityIdentifier("boardFloor\(col)")
+                .accessibilityIdentifier(boardY == scene.engine.state.board.config.rows - 1
+                    ? "boardFloor\(col)"
+                    : "boardCell_\(col)_\(boardY)")
                 .accessibilityLabel("Board column \(col + 1)")
             }
         }
-        // Only intercept hits while a piece is selected — otherwise SpriteKit owns the board.
-        .allowsHitTesting(active)
+        // Only steal hits while a tray piece is selected — otherwise SpriteKit owns drags.
+        .allowsHitTesting(placing)
     }
 
     private func traySlotView(_ idx: Int) -> some View {
@@ -543,22 +554,6 @@ struct GameContainerView: View {
                 ForEach(0..<3, id: \.self) { idx in
                     traySlotView(idx)
                 }
-            }
-            // Real-play / teach: always-hittable control in the tray chrome (not over the SKView).
-            if ProcessInfo.processInfo.arguments.contains("-UITestRealPlay") {
-                Button {
-                    _ = scene.placeTeachSeat()
-                    syncHUD()
-                } label: {
-                    Text("Place can")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(NeonTheme.teal)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("uitestPlaceTeach")
-                .accessibilityLabel("Place can on teach seat")
             }
             HStack(spacing: 8) {
                 boosterChip("Magnet", count: boostMagnet) {
@@ -737,7 +732,7 @@ struct GameContainerView: View {
         scene.startShiftLevel(1)
         syncHUD()
         displayScore = scene.engine.state.score
-        showToast(scene.engine.state.teachHint ?? "Drag a tray piece onto the board")
+        showToast(scene.engine.state.teachHint ?? "Tap a tray piece, then tap the board")
         presentGestureHint()
     }
 
@@ -918,20 +913,6 @@ struct GameContainerView: View {
             scene.reset()
         }
         syncHUD()
-        // Real-play: after the UITest drag beat, auto-commit the teach place if still unplaced.
-        // XCTest hit-testing on SwiftUI tray chrome was flaky (Moves stayed 8 despite taps).
-        if ProcessInfo.processInfo.arguments.contains("-UITestRealPlay") {
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 4_500_000_000)
-                guard !scene.engine.state.levelWon else { return }
-                guard scene.engine.state.movesLeft >= scene.engine.state.moveLimit else { return }
-                _ = scene.placeTeachSeat()
-                syncHUD()
-                // Give paced→sync win a beat to present the overlay for XCTest.
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                if scene.engine.state.levelWon { showLevelWin = true }
-            }
-        }
         scene.onGameOver = { state in
             Task { @MainActor in
                 // Lock the live top-out score before any sheet / HUD race.
@@ -1322,9 +1303,9 @@ struct HowToPlayOverlay: View {
                     .font(.system(.title2, design: .rounded).weight(.black))
                     .foregroundStyle(NeonTheme.teal)
                 VStack(alignment: .leading, spacing: 12) {
-                    howRow("TRAY", "Pick any of the 3 pieces")
-                    howRow("DRAG", "Drag it onto the board — take your time")
-                    howRow("GHOST", "Green fits · red means it won’t fit")
+                    howRow("TRAY", "Tap any of the 3 pieces")
+                    howRow("PLACE", "Tap a board spot — or drag it there")
+                    howRow("GHOST", "Preview fits · red means it won’t fit")
                     howRow("4+", "Match 4 of the same material to recycle")
                     howRow("CHAIN", "Clears can settle into more clears")
                     howRow("SLAM", "Earn it, then crush the bottom 2 rows")

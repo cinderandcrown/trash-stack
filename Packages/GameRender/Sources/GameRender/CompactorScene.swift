@@ -207,8 +207,7 @@ public final class CompactorScene: SKScene {
         hasVisualPose = false
         if engine.cascadeActive {
             cascadeSettleAcc = 0
-            // Drive paced waves with SKActions so clears/chains finish even when the
-            // display-link dt is sleepy under UITest / backgrounded simulator views.
+            // Drive paced waves with SKActions so chain clears stay readable on device.
             drainPacedCascadeWithActions()
         }
         render(immediate: false)
@@ -240,37 +239,12 @@ public final class CompactorScene: SKScene {
         run(SKAction.repeat(step, count: 10), withKey: "cascadeDrain")
     }
 
-    /// UITest / teach helper: select tray slot 0 and place at column 0 on the floor.
-    /// Under `-UITestRealPlay`, cascades run synchronously so level win is immediate and reliable.
-    @discardableResult
-    public func placeTeachSeat() -> Bool {
-        guard engine.state.isTurnBased else { return false }
-        // Always re-select tray 0 so selectedTrayIndex + active stay paired.
-        guard selectTraySlot(0) else { return false }
-        let floor = floorCell(column: 0)
-        let uiTest = ProcessInfo.processInfo.arguments.contains("-UITestRealPlay")
-        let wasPacing = engine.paceCascades
-        if uiTest { engine.paceCascades = false }
-        defer { engine.paceCascades = wasPacing }
-        removeAction(forKey: "cascadeDrain")
-        let ok = placeAtBoard(x: floor.x, y: floor.y)
-        if uiTest, ok, engine.cascadeActive {
-            // Belt-and-suspenders: finish any leftover paced state.
-            while engine.cascadeActive {
-                _ = engine.advanceCascade()
-            }
-            handleEvents()
-            render(immediate: true)
-        }
-        return ok
-    }
-
     /// Scene-space center of a board cell (UIKit / SpriteKit y-up).
     public func scenePointForBoard(x: Int, y: Int) -> CGPoint {
         positionFor(x: x, boardY: y)
     }
 
-    /// Floor cell under a column — used by tray drag / real-play targeting.
+    /// Floor cell under a column — used by tray drag / tap-to-place.
     public func floorCell(column: Int) -> (x: Int, y: Int) {
         let cols = engine.state.board.config.cols
         let x = max(0, min(cols - 1, column))
