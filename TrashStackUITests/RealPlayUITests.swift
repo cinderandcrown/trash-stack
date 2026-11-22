@@ -60,7 +60,8 @@ final class RealPlayUITests: XCTestCase {
             let floor0 = app.buttons["boardFloor0"].firstMatch
             if floor0.waitForExistence(timeout: 3), floor0.isHittable {
                 // Second beat on camera: drag tray → floor seat, then tap to lock.
-                origin.press(forDuration: 0.2, thenDragTo: floor0)
+                let floorCoord = floor0.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                origin.press(forDuration: 0.2, thenDragTo: floorCoord)
                 Thread.sleep(forTimeInterval: 0.2)
                 if !win.exists { floor0.tap() }
             } else {
