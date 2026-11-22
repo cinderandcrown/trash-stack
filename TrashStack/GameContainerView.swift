@@ -1252,7 +1252,8 @@ struct RepeatPadButton: View {
 }
 
 private struct BoardGlobalFrameKey: PreferenceKey {
-    static var defaultValue: CGRect = .zero
+    // PreferenceKey requires `static var`; mark unsafe for Swift 6 concurrency.
+    nonisolated(unsafe) static var defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
         value = nextValue()
     }
