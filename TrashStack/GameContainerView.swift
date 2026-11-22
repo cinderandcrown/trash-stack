@@ -544,6 +544,22 @@ struct GameContainerView: View {
                     traySlotView(idx)
                 }
             }
+            // Real-play / teach: always-hittable control in the tray chrome (not over the SKView).
+            if ProcessInfo.processInfo.arguments.contains("-UITestRealPlay") {
+                Button {
+                    _ = scene.placeTeachSeat()
+                    syncHUD()
+                } label: {
+                    Text("Place can")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(NeonTheme.teal)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("uitestPlaceTeach")
+                .accessibilityLabel("Place can on teach seat")
+            }
             HStack(spacing: 8) {
                 boosterChip("Magnet", count: boostMagnet) {
                     if let mat = scene.engine.state.active?.material

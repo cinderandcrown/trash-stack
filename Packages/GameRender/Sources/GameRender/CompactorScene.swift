@@ -204,10 +204,51 @@ public final class CompactorScene: SKScene {
             return false
         }
         handleEvents()
-        if engine.cascadeActive { cascadeSettleAcc = 0 }
         hasVisualPose = false
+        if engine.cascadeActive {
+            cascadeSettleAcc = 0
+            // Drive paced waves with SKActions so clears/chains finish even when the
+            // display-link dt is sleepy under UITest / backgrounded simulator views.
+            drainPacedCascadeWithActions()
+        }
         render(immediate: false)
         return true
+    }
+
+    /// Advance remaining paced cascade waves on a readable beat, then settle win/lose.
+    private func drainPacedCascadeWithActions() {
+        removeAction(forKey: "cascadeDrain")
+        let beat = max(0.28, min(0.35, feel.cascadeStepSec))
+        let step = SKAction.sequence([
+            SKAction.wait(forDuration: beat),
+            SKAction.run { [weak self] in
+                guard let self else { return }
+                guard self.engine.cascadeActive else {
+                    self.removeAction(forKey: "cascadeDrain")
+                    return
+                }
+                let more = self.engine.advanceCascade()
+                self.handleEvents()
+                self.render(immediate: !more)
+                self.updateComboCounter()
+                if !more {
+                    self.removeAction(forKey: "cascadeDrain")
+                    if self.engine.state.over { self.notifyGameOverIfNeeded() }
+                }
+            },
+        ])
+        run(SKAction.repeat(step, count: 10), withKey: "cascadeDrain")
+    }
+
+    /// UITest / teach helper: select tray slot 0 and place at column 0 on the floor.
+    @discardableResult
+    public func placeTeachSeat() -> Bool {
+        guard engine.state.isTurnBased else { return false }
+        if engine.state.active == nil {
+            guard selectTraySlot(0) else { return false }
+        }
+        let floor = floorCell(column: 0)
+        return placeAtBoard(x: floor.x, y: floor.y)
     }
 
     /// Scene-space center of a board cell (UIKit / SpriteKit y-up).
